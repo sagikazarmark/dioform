@@ -13,7 +13,7 @@ server = ["dep:dioxus-server", "dioxus-fullstack/server"]
 
 [dependencies]
 dioxus-core = "0.7"
-dioform = { path = "../dioform", version = "0.1.0" }
+dioform = { path = "../dioform", version = "0.1.1" }
 dioxus-fullstack = { version = "0.7", default-features = false }
 dioxus-server = { version = "0.7", optional = true }
 serde = { version = "1", features = ["derive"] }

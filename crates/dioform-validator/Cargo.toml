@@ -11,6 +11,6 @@ repository.workspace = true
 default = []
 
 [dependencies]
-dioform-core = { path = "../dioform-core", version = "0.1.0" }
-dioform-validation-adapter = { path = "../dioform-validation-adapter", version = "0.1.0" }
+dioform-core = { path = "../dioform-core", version = "0.1.1" }
+dioform-validation-adapter = { path = "../dioform-validation-adapter", version = "0.1.1" }
 validator = { version = "0.20", default-features = false }

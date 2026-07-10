@@ -13,8 +13,8 @@ serde = ["dioform-core/serde"]
 [dependencies]
 dioxus-core = "0.7"
 dioxus-html = { version = "0.7", default-features = false, features = ["serialize"] }
-dioform-core = { path = "../dioform-core", version = "0.1.0" }
-dioform-derive = { path = "../dioform-derive", version = "0.1.0" }
+dioform-core = { path = "../dioform-core", version = "0.1.1" }
+dioform-derive = { path = "../dioform-derive", version = "0.1.1" }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
