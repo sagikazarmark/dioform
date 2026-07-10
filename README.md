@@ -1,6 +1,6 @@
 # Dioform
 
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/sagikazarmark/dioform/ci.yaml?style=flat-square)](https://github.com/sagikazarmark/dioform/actions/workflows/ci.yaml)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/sagikazarmark/dioform/dagger.yaml?style=flat-square)](https://github.com/sagikazarmark/dioform/actions/workflows/dagger.yaml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sagikazarmark/dioform/badge?style=flat-square)](https://securityscorecards.dev/viewer/?uri=github.com/sagikazarmark/dioform)
 [![Crates.io](https://img.shields.io/crates/v/dioform?style=flat-square)](https://crates.io/crates/dioform)
 [![docs.rs](https://img.shields.io/docsrs/dioform?style=flat-square)](https://docs.rs/dioform)
