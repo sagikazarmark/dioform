@@ -1,0 +1,5 @@
+error: #[derive(Form)] does not support unit form models; add named fields so the form can derive addressable Field Paths
+ --> tests/derive_contract/fail/unit_struct.rs:6:8
+  |
+6 | struct UnitForm;
+  |        ^^^^^^^^

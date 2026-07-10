@@ -1,0 +1,5 @@
+error: #[derive(Form)] does not support enum form models; use a named struct root and treat enum values as Variant Fields until variant-inner traversal has explicit semantics
+ --> tests/derive_contract/fail/enum_model.rs:6:1
+  |
+6 | enum FormChoice {
+  | ^^^^

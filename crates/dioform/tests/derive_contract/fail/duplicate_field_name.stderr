@@ -1,0 +1,5 @@
+error: duplicate rendered field name `email` for fields `email` and `contact_email`
+ --> tests/derive_contract/fail/duplicate_field_name.rs:8:19
+  |
+8 |     #[form(name = "email")]
+  |                   ^^^^^^^

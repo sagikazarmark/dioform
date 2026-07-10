@@ -1,0 +1,10 @@
+error[E0599]: no method named `card_number` found for struct `FieldPath<Model, Value>` in the current scope
+  --> tests/derive_contract/fail/variant_inner_traversal.rs:18:10
+   |
+16 |       let card_number: FieldPath<CheckoutForm, String> = CheckoutForm::fields()
+   |  ________________________________________________________-
+17 | |         .payment()
+18 | |         .card_number();
+   | |         -^^^^^^^^^^^ method not found in `FieldPath<CheckoutForm, Payment>`
+   | |_________|
+   |

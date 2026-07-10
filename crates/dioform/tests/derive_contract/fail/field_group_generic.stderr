@@ -1,0 +1,5 @@
+error: #[derive(FieldGroup)] does not support generic field groups yet
+ --> tests/derive_contract/fail/field_group_generic.rs:6:20
+  |
+6 | struct GenericGroup<T> {
+  |                    ^^^

@@ -1,0 +1,3 @@
+# Add typed field group maps
+
+Dioform will model reusable **Field Groups** as typed **Field Group Maps** generated for group structs, with nested **Field Group Mounts** composed from parent **Field Paths** and explicit maps for forms with different shapes. This keeps reusable field composition first-class without requiring provider context, string path maps, dynamic schemas, or group-owned form state, while preserving explicit **Form Handles** and compile-time **Field Path** checks. Collection item groups and group-owned validation APIs are explicitly deferred; collection item groups need separate **Collection Item Identity** semantics, and group validation should use existing field and form validators until a deeper validation seam is justified.

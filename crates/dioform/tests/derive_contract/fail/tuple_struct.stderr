@@ -1,0 +1,5 @@
+error: #[derive(Form)] does not support tuple form models; use a named struct root because tuple field positions do not provide stable form field vocabulary
+ --> tests/derive_contract/fail/tuple_struct.rs:6:17
+  |
+6 | struct TupleForm(String);
+  |                 ^^^^^^^^

@@ -1,0 +1,3 @@
+# Use a separate Dioxus Fullstack submit adapter crate
+
+Dioform will provide first-party **Dioxus Fullstack Submit Adapter** behavior from a separate adapter crate rather than from **Form Core** or an optional feature on the `dioform` facade. This preserves the existing renderer-agnostic **Form Core** and keeps ordinary facade users insulated from Dioxus Fullstack transport dependency churn, while still letting Fullstack applications reuse **Dioxus-Managed Submission**, structured **Submit Errors**, stale submit-error protection, in-flight submission state, and typed **Submit Intent** behavior through a thin adapter surface.

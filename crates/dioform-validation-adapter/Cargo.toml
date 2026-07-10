@@ -1,0 +1,11 @@
+[package]
+name = "dioform-validation-adapter"
+version.workspace = true
+description = "Shared support for renderer-agnostic Dioform validation adapters."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+dioform-core = { path = "../dioform-core", version = "0.1.0" }

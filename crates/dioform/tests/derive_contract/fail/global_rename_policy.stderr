@@ -1,0 +1,5 @@
+error: unsupported #[form(rename_all = ...)] policy
+ --> tests/derive_contract/fail/global_rename_policy.rs:6:21
+  |
+6 | #[form(rename_all = "PascalCase")]
+  |                     ^^^^^^^^^^^^

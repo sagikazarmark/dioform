@@ -1,0 +1,3 @@
+# Use separate validation adapter crates
+
+First-party **Validation Adapters** will live in separate adapter crates, not as optional validation-library features on the `dioform` facade crate, and will target renderer-agnostic **Form Core** primitives where the external library has no renderer concern. This keeps the **Form Core** and **Facade Crate** free from external validation-library dependency churn, avoids feature-unification surprises for ordinary Dioxus users, lets each adapter follow the versioning and API shape of the validation library it integrates, and keeps validation integrations usable outside Dioxus-specific runtime code.

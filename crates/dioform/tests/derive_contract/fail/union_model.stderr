@@ -1,0 +1,5 @@
+error: #[derive(Form)] does not support union form models; use a named struct root with safe addressable fields
+ --> tests/derive_contract/fail/union_model.rs:8:1
+  |
+8 | union UnsafeForm {
+  | ^^^^^

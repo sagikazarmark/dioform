@@ -1,0 +1,5 @@
+error: unsupported #[form(...)] attribute
+ --> tests/derive_contract/fail/unsupported_attribute.rs:7:12
+  |
+7 |     #[form(widget = "text")]
+  |            ^^^^^^

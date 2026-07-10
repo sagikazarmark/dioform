@@ -1,0 +1,3 @@
+# Add core-scoped typed submit intent
+
+Dioform will model **Submit Intent** as a form-scoped typed **Form Core** concept, captured explicitly by intentful submit triggers and carried through submit-triggered validation, **Submission Snapshots**, submit errors, availability, attempt/status state, and application-facing in-flight state. Intent is not inferred from DOM submitter or rendered name/value data, not defaulted for intentful forms, and not included in **Form Observer** events or form-state snapshots by default; observers and snapshots keep raw intent application-local. This keeps multiple submit purposes for one **Form Draft** inside the submission lifecycle without weakening typed core boundaries or leaking application-defined intent values through diagnostics.

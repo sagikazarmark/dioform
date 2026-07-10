@@ -1,0 +1,71 @@
+error[E0638]: `..` required with variant marked as non-exhaustive
+  --> tests/observer_contract/fail/exhaustive_observer_matching.rs:15:9
+   |
+15 | /         FormObserverEvent::FieldUpdated {
+16 | |             field,
+17 | |             origin,
+18 | |             value,
+19 | |         } => {
+   | |_________^
+   |
+help: add `..` at the end of the field list to ignore all other fields
+   |
+19 |         , .. } => {
+   |         ++++
+
+error[E0004]: non-exhaustive patterns: `_` not covered
+  --> tests/observer_contract/fail/exhaustive_observer_matching.rs:4:11
+   |
+ 4 |     match event {
+   |           ^^^^^ pattern `_` not covered
+   |
+note: `FormObserverEvent` defined here
+  --> $WORKSPACE/crates/dioform-core/src/lib.rs
+   |
+   | pub enum FormObserverEvent {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the matched value is of type `FormObserverEvent`
+   = note: `FormObserverEvent` is marked as non-exhaustive, so a wildcard `_` is necessary to match exhaustively
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+   |
+ 9 ~         FormObserverEvent::Reinitialized { .. } => "reinitialized",
+10 ~         _ => todo!(),
+   |
+
+error[E0004]: non-exhaustive patterns: `_` not covered
+  --> tests/observer_contract/fail/exhaustive_observer_matching.rs:27:11
+   |
+27 |     match value {
+   |           ^^^^^ pattern `_` not covered
+   |
+note: `FormObserverValue` defined here
+  --> $WORKSPACE/crates/dioform-core/src/lib.rs
+   |
+   | pub enum FormObserverValue {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the matched value is of type `FormObserverValue`
+   = note: `FormObserverValue` is marked as non-exhaustive, so a wildcard `_` is necessary to match exhaustively
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+   |
+28 ~         FormObserverValue::Redacted => "redacted",
+29 ~         _ => todo!(),
+   |
+
+error[E0004]: non-exhaustive patterns: `_` not covered
+  --> tests/observer_contract/fail/exhaustive_observer_matching.rs:33:11
+   |
+33 |     match origin {
+   |           ^^^^^^ pattern `_` not covered
+   |
+note: `FieldUpdateOrigin` defined here
+  --> $WORKSPACE/crates/dioform-core/src/lib.rs
+   |
+   | pub enum FieldUpdateOrigin {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the matched value is of type `FieldUpdateOrigin`
+   = note: `FieldUpdateOrigin` is marked as non-exhaustive, so a wildcard `_` is necessary to match exhaustively
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+   |
+35 ~         FieldUpdateOrigin::User => "user",
+36 ~         _ => todo!(),
+   |

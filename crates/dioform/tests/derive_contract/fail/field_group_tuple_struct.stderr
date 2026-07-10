@@ -1,0 +1,5 @@
+error: #[derive(FieldGroup)] supports named structs only
+ --> tests/derive_contract/fail/field_group_tuple_struct.rs:6:18
+  |
+6 | struct TupleGroup(String);
+  |                  ^^^^^^^^

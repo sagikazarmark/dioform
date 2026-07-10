@@ -1,0 +1,8 @@
+error[E0599]: no method named `internal_token` found for struct `SessionFormFields` in the current scope
+  --> tests/derive_contract/fail/skipped_field_accessor.rs:15:34
+   |
+ 5 | #[derive(Form)]
+   |          ---- method `internal_token` not found for this struct
+...
+15 |     let _internal_token = fields.internal_token();
+   |                                  ^^^^^^^^^^^^^^ method not found in `SessionFormFields`

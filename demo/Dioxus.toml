@@ -1,0 +1,15 @@
+[application]
+name = "dioform-demo"
+default_platform = "fullstack"
+
+[web.app]
+title = "Dioform: docs by example"
+
+[web.watcher]
+watch_path = ["src", "assets", "style.css"]
+
+# Optimise the wasm bundle for size, matters most for the Cloudflare-SPA build
+# served by the Worker.
+[web.wasm_opt]
+level = "z"
+debug = false

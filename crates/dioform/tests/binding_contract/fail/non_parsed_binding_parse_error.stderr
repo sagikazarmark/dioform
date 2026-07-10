@@ -1,0 +1,5 @@
+error[E0599]: no method named `parse_error` found for struct `TextBinding<Model, Error>` in the current scope
+  --> tests/binding_contract/fail/non_parsed_binding_parse_error.rs:14:19
+   |
+14 |     let _ = email.parse_error();
+   |                   ^^^^^^^^^^^ method not found in `TextBinding<ContractForm>`

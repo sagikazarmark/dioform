@@ -1,0 +1,8 @@
+error[E0624]: method `secret` is private
+  --> tests/derive_contract/fail/private_field_accessor_outside_module.rs:18:26
+   |
+ 8 |     #[derive(Form)]
+   |              ---- private method defined here
+...
+18 |     let _secret = fields.secret();
+   |                          ^^^^^^ private method

@@ -1,0 +1,5 @@
+error[E0599]: no method named `_0` found for struct `FieldPath<Model, Value>` in the current scope
+  --> tests/derive_contract/fail/tuple_field_component_traversal.rs:11:74
+   |
+11 |     let x: FieldPath<LocationForm, i32> = LocationForm::fields().point()._0();
+   |                                                                          ^^ method not found in `FieldPath<LocationForm, (i32, i32)>`

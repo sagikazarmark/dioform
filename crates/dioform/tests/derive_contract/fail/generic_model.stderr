@@ -1,0 +1,5 @@
+error: #[derive(Form)] does not support generic form models yet
+ --> tests/derive_contract/fail/generic_model.rs:6:19
+  |
+6 | struct GenericForm<T> {
+  |                   ^^^

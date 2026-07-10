@@ -1,0 +1,5 @@
+error[E0599]: no method named `collection` found for struct `CollectionItemBinding<Model, Item, Error>` in the current scope
+  --> tests/derive_contract/fail/collection_item_nested_collection.rs:31:13
+   |
+31 |     section.collection(Section::fields().questions());
+   |             ^^^^^^^^^^ method not found in `CollectionItemBinding<SurveyForm, Section>`
