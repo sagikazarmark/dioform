@@ -3,7 +3,7 @@ name = "dioform-demo"
 default_platform = "fullstack"
 
 [web.app]
-title = "Dioform: docs by example"
+title = "dioform demo"
 
 [web.watcher]
 watch_path = ["src", "assets", "style.css"]
