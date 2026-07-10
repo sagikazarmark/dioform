@@ -164,7 +164,6 @@ fn Header() -> Element {
                     }
                     span { class: "min-w-0",
                         span { class: "block truncate text-sm font-semibold tracking-tight", "dioform" }
-                        span { class: "hidden text-xs text-base-content/60 sm:block", "Docs by example" }
                     }
                 }
                 a {
