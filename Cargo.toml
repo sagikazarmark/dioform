@@ -18,3 +18,10 @@ repository = "https://github.com/sagikazarmark/dioform"
 keywords = ["dioxus", "forms", "validation", "web"]
 categories = ["web-programming", "gui"]
 publish = true
+
+[workspace.metadata.release]
+sign-commit = true
+sign-tag = true
+shared-version = true
+tag-message = "Release {{version}}"
+tag-name = "v{{version}}"
