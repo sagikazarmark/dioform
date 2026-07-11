@@ -3,9 +3,9 @@
 //! Nothing here touches `dioform`: it is pure layout chrome so the `pages`
 //! and `examples` modules can stay focused on the library being demonstrated.
 
+use dioform::{CheckboxBinding, SelectBinding, TextBinding};
 use dioxus::prelude::*;
 use dioxus_code::{CodeTheme, Theme};
-use dioform::{CheckboxBinding, SelectBinding, TextBinding};
 
 /// Theme for every on-page code snippet. Defined once so all snippets match and
 /// the palette is trivial to swap. `system()` follows the viewer's light/dark

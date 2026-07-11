@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// The smallest useful form: one text field, managed submission, and a status
 /// line. `use_form` builds a `FormHandle` from an initial model; `form.text`

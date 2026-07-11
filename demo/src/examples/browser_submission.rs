@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// dioform supports three submit modes. **Managed** (`managed_submit`, shown
 /// live) prevents the default and runs the typed lifecycle. **Native browser**

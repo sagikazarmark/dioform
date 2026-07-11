@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// Application submit behavior returns structured `SubmitErrors`, targeted at a
 /// field or the whole form, separate from validation errors. They surface

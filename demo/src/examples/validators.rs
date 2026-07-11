@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// Two validator kinds. A **field validator** sees one field's value and guards
 /// it in isolation (email format). A **form validator** reads the whole model,

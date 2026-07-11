@@ -2,7 +2,7 @@
 source = "github.com/sagikazarmark/daggerverse-beta/rust"
 
 [modules.rust.settings]
-version = "1.96.1-slim-trixie"
+version = "1.97-slim-trixie"
 
 [modules.dagger-gha]
 source = "github.com/sagikazarmark/daggerverse-beta/dagger-gha"
