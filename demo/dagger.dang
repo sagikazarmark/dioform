@@ -3,9 +3,7 @@ type Demo {
   let dioxus: Dioxus!
   let workerBuild: WorkerBuild!
 
-  new(ws: Workspace!) {
-    let rustVersion = "1.97-trixie"
-
+  new(ws: Workspace!, rustVersion: String!) {
     # Shared base container: the official Rust image plus clang. clang is needed
     # to cross-compile the C sysroot pulled in by the `dioxus-code` snippet
     # highlighter (arborium/tree-sitter) for the wasm32 target. The `cc` crate

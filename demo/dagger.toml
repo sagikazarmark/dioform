@@ -2,6 +2,9 @@
 source = "."
 entrypoint = true
 
+[modules.demo.settings]
+rustVersion = "1.97-trixie"
+
 [modules.dagger-gha]
 source = "github.com/sagikazarmark/daggerverse-beta/dagger-gha"
 
