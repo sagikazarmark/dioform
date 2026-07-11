@@ -714,6 +714,76 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioform"
+version = "0.1.1"
+dependencies = [
+ "dioform-core",
+ "dioform-derive",
+ "dioxus-core",
+ "dioxus-html",
+ "futures-timer",
+]
+
+[[package]]
+name = "dioform-core"
+version = "0.1.1"
+
+[[package]]
+name = "dioform-demo"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "dioform",
+ "dioform-fullstack",
+ "dioform-garde",
+ "dioxus",
+ "dioxus-code",
+ "garde",
+ "gloo-net",
+ "serde",
+ "serde_json",
+ "tower-service",
+ "worker",
+ "worker-macros",
+]
+
+[[package]]
+name = "dioform-derive"
+version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "dioform-fullstack"
+version = "0.1.1"
+dependencies = [
+ "dioform",
+ "dioxus-core",
+ "dioxus-fullstack",
+ "dioxus-server",
+ "serde",
+]
+
+[[package]]
+name = "dioform-garde"
+version = "0.1.1"
+dependencies = [
+ "dioform-core",
+ "dioform-validation-adapter",
+ "garde",
+]
+
+[[package]]
+name = "dioform-validation-adapter"
+version = "0.1.1"
+dependencies = [
+ "dioform-core",
+]
+
+[[package]]
 name = "dioxus"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -906,76 +976,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
-]
-
-[[package]]
-name = "dioform"
-version = "0.2.0"
-dependencies = [
- "dioxus-core",
- "dioform-core",
- "dioform-derive",
- "dioxus-html",
- "futures-timer",
-]
-
-[[package]]
-name = "dioform-core"
-version = "0.2.0"
-
-[[package]]
-name = "dioform-demo"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dioxus",
- "dioxus-code",
- "dioform",
- "dioform-fullstack",
- "dioform-garde",
- "garde",
- "gloo-net",
- "serde",
- "serde_json",
- "tower-service",
- "worker",
- "worker-macros",
-]
-
-[[package]]
-name = "dioform-derive"
-version = "0.2.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "dioform-fullstack"
-version = "0.2.0"
-dependencies = [
- "dioxus-core",
- "dioform",
- "dioxus-fullstack",
- "dioxus-server",
- "serde",
-]
-
-[[package]]
-name = "dioform-garde"
-version = "0.2.0"
-dependencies = [
- "dioform-core",
- "dioform-validation-adapter",
- "garde",
-]
-
-[[package]]
-name = "dioform-validation-adapter"
-version = "0.2.0"
-dependencies = [
- "dioform-core",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
 use dioform_fullstack::SubmitBindingFullstackExt;
+use dioxus::prelude::*;
 
 use crate::server_api::check_signup_call;
 use crate::signup::SignupRejection;

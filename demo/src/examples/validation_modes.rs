@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// `ValidationMode` decides *when* registered validators run automatically. The
 /// same "at least 3 characters" rule feels different under each mode: type into

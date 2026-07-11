@@ -706,13 +706,15 @@ mod tests {
         core.register_async_form_validator_for_triggers("runtime", ValidationTrigger::Change)
     }
 
+    type BoxedTask = Pin<Box<dyn Future<Output = ()>>>;
+
     /// A test [`TaskSpawner`] that holds spawned futures until explicitly run and records
     /// cancellations. This is the second adapter that makes the spawner seam real: it exercises
     /// spawn, completion, and cancellation without a Dioxus runtime.
     #[derive(Default)]
     struct InlineSpawner {
-        pending: RefCell<BTreeMap<TaskId, Pin<Box<dyn Future<Output = ()>>>>>,
-        detached: RefCell<Vec<Pin<Box<dyn Future<Output = ()>>>>>,
+        pending: RefCell<BTreeMap<TaskId, BoxedTask>>,
+        detached: RefCell<Vec<BoxedTask>>,
         cancelled: RefCell<Vec<TaskId>>,
     }
 
@@ -738,8 +740,7 @@ mod tests {
                 // Poll detached submission tasks (the consumers that register interest in
                 // validation settling) before the keyed validation tasks (the producers that wake
                 // them), so a wake is never emitted before its waiter has registered.
-                let mut batch: Vec<(Option<TaskId>, Pin<Box<dyn Future<Output = ()>>>)> =
-                    Vec::new();
+                let mut batch: Vec<(Option<TaskId>, BoxedTask)> = Vec::new();
                 batch.extend(
                     std::mem::take(&mut *self.detached.borrow_mut())
                         .into_iter()

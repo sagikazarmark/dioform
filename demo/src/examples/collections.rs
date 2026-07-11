@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// A `CollectionBinding` owns a `Vec` field as repeatable rows with
 /// library-managed identity: no app-supplied keys. Every mutation is a method

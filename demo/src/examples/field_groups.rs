@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioform::prelude::*;
+use dioxus::prelude::*;
 
 /// `#[derive(FieldGroup)]` generates a typed field-group map so a reusable
 /// cluster of fields can be rendered once and mounted anywhere. Here the same

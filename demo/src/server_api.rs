@@ -16,9 +16,9 @@
 // The `#[server]` macro expands to `dioxus_fullstack::` paths, which dioxus
 // re-exports through its prelude under the `fullstack` feature, so the glob
 // import must be in scope wherever the macro is used.
+use dioform_fullstack::ServerSubmitOutcome;
 #[cfg(any(feature = "server", feature = "fullstack-web"))]
 use dioxus::prelude::*;
-use dioform_fullstack::ServerSubmitOutcome;
 
 use crate::signup::SignupRejection;
 
