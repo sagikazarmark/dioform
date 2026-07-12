@@ -1,11 +1,14 @@
 [package]
 name = "dioform-derive"
 version.workspace = true
-description = "Derive macro for Dioform typed field paths."
+description = "Derive macro for Dioform typed field paths"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 proc-macro = true

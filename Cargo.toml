@@ -1,23 +1,25 @@
 [workspace]
-members = [
-    "crates/dioform",
-    "crates/dioform-core",
-    "crates/dioform-derive",
-    "crates/dioform-fullstack",
-    "crates/dioform-garde",
-    "crates/dioform-validation-adapter",
-    "crates/dioform-validator",
-]
+members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/sagikazarmark/dioform"
+homepage = "https://github.com/sagikazarmark/dioform"
 keywords = ["dioxus", "forms", "validation", "web"]
 categories = ["web-programming", "gui"]
-publish = true
+
+[workspace.dependencies]
+dioform = { path = "crates/dioform", version = "0.1.1" }
+dioform-core = { path = "crates/dioform-core", version = "0.1.1" }
+dioform-derive = { path = "crates/dioform-derive", version = "0.1.1" }
+dioform-validation-adapter = { path = "crates/dioform-validation-adapter", version = "0.1.1" }
+
+dioxus-core = "0.7"
+serde = { version = "1", features = ["derive"] }
 
 [workspace.metadata.release]
 sign-commit = true

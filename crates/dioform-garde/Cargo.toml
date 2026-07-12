@@ -1,16 +1,20 @@
 [package]
 name = "dioform-garde"
 version.workspace = true
-description = "Renderer-agnostic garde validation adapter for Dioform Core."
+description = "Renderer-agnostic garde validation adapter for Dioform Core"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []
 
 [dependencies]
-dioform-core = { path = "../dioform-core", version = "0.1.1" }
-dioform-validation-adapter = { path = "../dioform-validation-adapter", version = "0.1.1" }
+dioform-core = { workspace = true }
+dioform-validation-adapter = { workspace = true }
+
 garde = { version = "0.23", default-features = false }

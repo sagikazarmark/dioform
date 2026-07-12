@@ -1,11 +1,11 @@
-# Dioform
+# dioform
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/sagikazarmark/dioform/dagger.yaml?style=flat-square)](https://github.com/sagikazarmark/dioform/actions/workflows/dagger.yaml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sagikazarmark/dioform/badge?style=flat-square)](https://securityscorecards.dev/viewer/?uri=github.com/sagikazarmark/dioform)
-[![Crates.io](https://img.shields.io/crates/v/dioform?style=flat-square)](https://crates.io/crates/dioform)
+[![crates.io](https://img.shields.io/crates/v/dioform?style=flat-square)](https://crates.io/crates/dioform)
 [![docs.rs](https://img.shields.io/docsrs/dioform?style=flat-square)](https://docs.rs/dioform)
 
-Headless form state and Dioxus bindings for statically typed Rust form models.
+**Headless typed form state and Dioxus bindings for Rust form models.**
 
 Dioform is a Rust-first **Headless Form Library**. It is not a dynamic schema
 form builder, styled component kit, or clone of every JavaScript form-library
@@ -13,15 +13,27 @@ feature. The primary API is a compile-time **Form Model** with typed
 `FieldPath<Model, Value>` values; rendered field names exist for HTML
 interoperability, not as the main addressing mechanism.
 
-The workspace is split into:
+## Features
+
+- **Typed field paths** — a compile-time form model with `FieldPath<Model, Value>` addressing, derived by `#[derive(Form)]`.
+- **Headless Dioxus bindings** — explicit `FormHandle` APIs, input bindings, parse blockers, and managed submission, with no styled components.
+- **Renderer-agnostic core** — form draft, validation, submission, reset, and reinitialization semantics live in `dioform-core`, independent of Dioxus.
+- **Validation modes and triggers** — blur/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
+- **Form-owned collections** — repeatable items with library-owned, opaque item identity.
+- **Reusable field groups** — `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
+- **Optional validation adapters** — `garde` and `validator` adapters that map external diagnostics into Dioform validation errors.
+
+## Workspace
 
 - `dioform-core`: renderer-agnostic form draft, field path, validation, submission, reset, reinitialization, async validation, debounce, stale-result, and observer semantics.
 - `dioform`: Dioxus-facing `FormConfig`, hooks, explicit `FormHandle` APIs, headless bindings, parse blockers, managed submission, async validation task spawning, debounced validation timers, cleanup guards, and an explicit `advanced` module for low-level core/runtime/serialization types.
 - `dioform-derive`: `#[derive(Form)]` and `#[derive(FieldGroup)]` support for named form structs.
+- `dioform-fullstack`: Dioxus Fullstack submit adapters mapping server payloads into structured submit errors.
 - `dioform-garde`: optional renderer-agnostic `garde` validation adapter for mapping external diagnostics into Dioform validation errors.
 - `dioform-validator`: optional renderer-agnostic `validator` validation adapter that flattens nested `validator` diagnostics into Dioform validation errors.
+- `dioform-validation-adapter`: shared support crate for building validation adapters.
 
-Input helpers are documented in [`docs/input-helpers.md`](docs/input-helpers.md). File fields are documented in [`docs/file-fields.md`](docs/file-fields.md). Collection fields are documented in [`docs/collection-fields.md`](docs/collection-fields.md). Async and debounced validation are documented in [`docs/async-validation.md`](docs/async-validation.md). Validation adapters are documented in [`docs/validation-adapters.md`](docs/validation-adapters.md). Reusable field groups are introduced below. The [`demo/`](demo) gallery demonstrates typed choices, typed select conversion, parsed numeric and date inputs, nested field paths, field-name overrides, true multi-select fields, form-owned repeatable line items, form-state snapshot restore, observer diagnostics, debounced async field and form validators, plus managed async submit flushing.
+Input helpers are documented in [`docs/input-helpers.md`](docs/input-helpers.md). File fields are documented in [`docs/file-fields.md`](docs/file-fields.md). Collection fields are documented in [`docs/collection-fields.md`](docs/collection-fields.md). Async and debounced validation are documented in [`docs/async-validation.md`](docs/async-validation.md). Validation adapters are documented in [`docs/validation-adapters.md`](docs/validation-adapters.md). Reusable field groups are introduced below.
 
 The [`demo/`](demo) directory is a docs-by-example gallery (a fullstack `dx serve` app) with an extensive, feature-by-feature set of live examples, each mounted next to the exact source that runs it, plus a set of realistic product forms. Run it with `dx serve` from `demo/`; see [`demo/README.md`](demo/README.md).
 
@@ -121,6 +133,8 @@ Design terminology lives in [`CONTEXT.md`](CONTEXT.md).
 
 The first release intentionally keeps form drafts form-owned, reinitialization explicit, input parsing separate from validation, collection item identity library-owned and opaque, and Dioxus access explicit through `FormHandle` as the primary path. Optional typed context access is documented in [`docs/form-context.md`](docs/form-context.md). Advanced escape hatches such as `FormHandle::write_advanced` are intentionally named as low-level APIs.
 
+## Development
+
 Minimum verification:
 
 - `cargo fmt --check`
@@ -139,6 +153,8 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
