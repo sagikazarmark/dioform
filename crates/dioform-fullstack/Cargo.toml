@@ -1,19 +1,23 @@
 [package]
 name = "dioform-fullstack"
 version.workspace = true
-description = "Dioxus Fullstack submit adapters for Dioform."
+description = "Dioxus Fullstack submit adapters for Dioform"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []
 server = ["dep:dioxus-server", "dioxus-fullstack/server"]
 
 [dependencies]
-dioxus-core = "0.7"
-dioform = { path = "../dioform", version = "0.1.1" }
+dioform = { workspace = true }
+
+dioxus-core = { workspace = true }
 dioxus-fullstack = { version = "0.7", default-features = false }
 dioxus-server = { version = "0.7", optional = true }
-serde = { version = "1", features = ["derive"] }
+serde = { workspace = true }

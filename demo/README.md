@@ -1,4 +1,4 @@
-# Dioform: Demo
+# demo
 
 A docs-by-example gallery for [`dioform`](https://github.com/sagikazarmark/dioform).
 Every page mounts a real feature next to the **exact source that runs it** (rendered with
@@ -63,13 +63,19 @@ and structured submit errors with stale-error clearing.
 **Realistic forms**: signup, checkout (conditional shipping), invoice (repeatable line items),
 and a nested project planner, combining several features per page.
 
-## Run it (native fullstack)
+## Prerequisites
 
-The app runs with the [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started/):
+The app runs with the [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started/)
+and uses npm for the Tailwind toolchain:
 
 ```sh
 cargo install dioxus-cli               # if needed
 npm install                            # once, for the Tailwind toolchain
+```
+
+## Run locally
+
+```sh
 npm run build                          # compile assets/style.css (or: npm run watch)
 dx serve --fullstack --features fullstack-web
 ```
@@ -80,7 +86,7 @@ dx serve --fullstack --features fullstack-web
 `npm run build` before the first `dx serve` and after editing RSX classes (`npm run watch`
 rebuilds on change).
 
-## Run it with Dagger
+## Run with Dagger
 
 [Dagger](https://dagger.io) builds and runs everything in containers: no local Node, `dx`, or
 Wrangler needed:
@@ -99,7 +105,7 @@ dagger call worker deploy \
   --api-token env://CLOUDFLARE_API_TOKEN
 ```
 
-CI deploys automatically ([`deploy.yaml`](../.github/workflows/deploy.yaml)): pushes to `main`
+CI deploys automatically ([`demo.yaml`](../.github/workflows/demo.yaml)): pushes to `main`
 roll out to production, and pull requests upload a preview version (its URLs posted as a PR
 comment). Both jobs need `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` repository secrets;
 preview only runs for same-repo PRs, since fork PRs can't read the secrets.

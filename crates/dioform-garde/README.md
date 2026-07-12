@@ -1,7 +1,9 @@
 # dioform-garde
 
-Renderer-agnostic [`garde`](https://crates.io/crates/garde) validation adapter for
-[Dioform Core](https://crates.io/crates/dioform-core).
+[![crates.io](https://img.shields.io/crates/v/dioform-garde?style=flat-square)](https://crates.io/crates/dioform-garde)
+[![docs.rs](https://img.shields.io/docsrs/dioform-garde?style=flat-square)](https://docs.rs/dioform-garde)
+
+**Renderer-agnostic [`garde`](https://crates.io/crates/garde) validation adapter for [Dioform Core](https://crates.io/crates/dioform-core).**
 
 This is an opt-in validation adapter: it depends on `dioform-core` and `garde`,
 but not on the Dioxus facade crate. The adapter registers one synchronous
@@ -18,6 +20,14 @@ validation translates Dioform's `FormValidatorContext` into the external
 See [`docs/validation-adapters.md`](https://github.com/sagikazarmark/dioform/blob/main/docs/validation-adapters.md)
 in the workspace for usage patterns and dependency guidance.
 
+## Install
+
+```toml
+[dependencies]
+dioform-garde = "0.1.1"
+garde = { version = "0.23", features = ["derive"] }
+```
+
 ## License
 
 Licensed under either of
@@ -26,6 +36,8 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
