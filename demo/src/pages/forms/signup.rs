@@ -1,7 +1,9 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
-use crate::ui::{PageHeader, StateGrid, field_checkbox, field_text};
+use super::{field_checkbox, field_text};
+use crate::components::PageHeader;
+use crate::examples::StateGrid;
 
 #[derive(Clone, Debug, Default, PartialEq, Form)]
 struct SignupForm {

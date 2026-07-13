@@ -1,5 +1,8 @@
 use dioxus::prelude::*;
 
+use crate::components::{
+    DocsCallout, ExampleSection, ExternalAction, InlineCode, PageHeader, snippet_theme,
+};
 use crate::examples::collection_validation::CollectionValidationExample;
 use crate::examples::collections::CollectionsExample;
 use crate::examples::field_groups::FieldGroupsExample;
@@ -8,7 +11,6 @@ use crate::examples::nested_paths::NestedPathsExample;
 use crate::examples::observers::ObserversExample;
 use crate::examples::serialization::SerializationExample;
 use crate::examples::state_meta::StateMetaExample;
-use crate::ui::{DocsCallout, ExampleSection, InlineCode, PageHeader, snippet_theme};
 use dioxus_code::{Code, code};
 
 #[component]
@@ -33,8 +35,10 @@ pub fn Collections() -> Element {
         }
         DocsCallout {
             title: "Collection fields",
-            doc_label: "docs/collection-fields.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/collection-fields.md",
+            action: Some(ExternalAction::new(
+                "docs/collection-fields.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/collection-fields.md",
+            )),
             "Item identity, the full mutation set, and collection state semantics are documented in the collection fields guide."
         }
     }
@@ -81,8 +85,10 @@ pub fn FileFields() -> Element {
         }
         DocsCallout {
             title: "File fields",
-            doc_label: "docs/file-fields.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/file-fields.md",
+            action: Some(ExternalAction::new(
+                "docs/file-fields.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/file-fields.md",
+            )),
             "Cardinality, file validators, and file-aware submission are documented in the file fields guide."
         }
     }
@@ -189,8 +195,10 @@ pub fn Observers() -> Element {
         }
         DocsCallout {
             title: "Form listeners",
-            doc_label: "docs/form-listeners.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/form-listeners.md",
+            action: Some(ExternalAction::new(
+                "docs/form-listeners.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/form-listeners.md",
+            )),
             "Field, form, blur, binding-lifecycle, debounced, and submit listeners are documented in the form listeners guide."
         }
     }
@@ -216,8 +224,10 @@ pub fn Serialization() -> Element {
         }
         DocsCallout {
             title: "Form state serialization",
-            doc_label: "docs/form-state-serialization.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/form-state-serialization.md",
+            action: Some(ExternalAction::new(
+                "docs/form-state-serialization.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/form-state-serialization.md",
+            )),
             "The snapshot contents and the collection-identity round trip are documented in the serialization guide."
         }
     }

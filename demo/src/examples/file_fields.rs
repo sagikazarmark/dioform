@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::{DemoPane, DemoSurface};
+
 /// Selected files are platform-owned, so dioform keeps them *outside* the
 /// typed draft and addresses them with a `FileFieldKey`. `form.file(key)` gives
 /// a binding for the `<input type="file">`; file validators are registered once
@@ -48,7 +50,6 @@ pub fn FileFieldsExample() -> Element {
 
     rsx! {
         form {
-            class: "space-y-3",
             onsubmit: move |event| {
                 let result = submit
                     .on_submit_with_files(event, |_submitted, _files| {
@@ -60,42 +61,54 @@ pub fn FileFieldsExample() -> Element {
                     other => format!("{other:?}"),
                 });
             },
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Caption (typed field)" }
-                input {
-                    class: "input input-bordered w-full",
-                    name: caption.name(),
-                    value: caption.value(),
-                    oninput: move |e| caption_oninput.on_input(e.value()),
-                }
-            }
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Avatar (file field)" }
-                input {
-                    class: "file-input file-input-bordered w-full",
-                    r#type: "file",
-                    accept: "image/*",
-                    name: avatar.name(),
-                    onchange: move |e| avatar_change.on_change(e),
-                    onblur: move |_| avatar_blur.on_blur(),
-                }
-            }
-            if selected.is_empty() {
-                p { class: "text-sm text-base-content/55", "No file selected." }
-            } else {
-                ul { class: "space-y-1 text-sm",
-                    for (i , file) in selected.iter().enumerate() {
-                        li { key: "{i}", class: "font-mono text-xs",
-                            "{file.name()}"
-                            span { class: "text-base-content/50", " · {file.media_type().unwrap_or(\"unknown\")}" }
+            DemoSurface {
+                primary: rsx! {
+                    DemoPane { label: "Upload",
+                        div { class: "space-y-3",
+                            label { class: "block",
+                                span { class: "mb-1 block text-sm font-medium", "Caption (typed field)" }
+                                input {
+                                    class: "input input-bordered w-full",
+                                    name: caption.name(),
+                                    value: caption.value(),
+                                    oninput: move |e| caption_oninput.on_input(e.value()),
+                                }
+                            }
+                            label { class: "block",
+                                span { class: "mb-1 block text-sm font-medium", "Avatar (file field)" }
+                                input {
+                                    class: "file-input file-input-bordered w-full",
+                                    r#type: "file",
+                                    accept: "image/*",
+                                    name: avatar.name(),
+                                    onchange: move |e| avatar_change.on_change(e),
+                                    onblur: move |_| avatar_blur.on_blur(),
+                                }
+                            }
+                            button { class: "btn btn-primary btn-sm", r#type: "submit", "Submit" }
                         }
                     }
-                }
+                },
+                secondary: rsx! {
+                    DemoPane { label: "Selected files",
+                        if selected.is_empty() {
+                            p { class: "text-sm text-base-content/55", "No file selected." }
+                        } else {
+                            ul { class: "space-y-1 text-sm",
+                                for (i , file) in selected.iter().enumerate() {
+                                    li { key: "{i}", class: "font-mono text-xs",
+                                        "{file.name()}"
+                                        span { class: "text-base-content/50", " · {file.media_type().unwrap_or(\"unknown\")}" }
+                                    }
+                                }
+                            }
+                        }
+                        if !status.read().is_empty() {
+                            p { class: "mt-3 text-sm text-base-content/75", "{status}" }
+                        }
+                    }
+                },
             }
-            button { class: "btn btn-primary btn-sm", r#type: "submit", "Submit" }
-        }
-        if !status.read().is_empty() {
-            p { class: "mt-3 text-sm text-base-content/75", "{status}" }
         }
     }
 }

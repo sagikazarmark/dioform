@@ -1,7 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
-use crate::ui::StateGrid;
+use super::StateGrid;
+use crate::components::{DemoPane, DemoSurface};
 
 /// Nested named structs compose typed paths with `FieldPath::join`, so field
 /// access stays fully typed all the way down. Rendered **field names** are a
@@ -45,61 +46,66 @@ pub fn NestedPathsExample() -> Element {
     let street_oninput = street.clone();
 
     rsx! {
-        div { class: "space-y-3",
-            input {
-                class: "input input-bordered w-full",
-                placeholder: "First name",
-                name: first_name.name(),
-                value: first_name.value(),
-                oninput: move |e| first_name_oninput.on_input(e.value()),
-            }
-            input {
-                class: "input input-bordered w-full",
-                placeholder: "Last name",
-                name: last_name.name(),
-                value: last_name.value(),
-                oninput: move |e| last_name_oninput.on_input(e.value()),
-            }
-            input {
-                class: "input input-bordered w-full",
-                placeholder: "Billing street",
-                name: street.name(),
-                value: street.value(),
-                oninput: move |e| street_oninput.on_input(e.value()),
-            }
-        }
-        div { class: "mt-5 border-t border-base-300 pt-4",
-            p { class: "mb-2 text-xs font-semibold uppercase tracking-wider text-base-content/45",
-                "rendered field name (HTML) ← → field identity (durable)"
-            }
-            StateGrid {
-                rows: vec![
-                    (
-                        "first_name",
-                        format!(
-                            "{}  ·  {}",
-                            first_name_path.field_name(),
-                            first_name_path.identity().as_str(),
-                        ),
-                    ),
-                    (
-                        "last_name",
-                        format!(
-                            "{}  ·  {}",
-                            last_name_path.field_name(),
-                            last_name_path.identity().as_str(),
-                        ),
-                    ),
-                    (
-                        "street",
-                        format!(
-                            "{}  ·  {}",
-                            street_path.field_name(),
-                            street_path.identity().as_str(),
-                        ),
-                    ),
-                ],
-            }
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Nested fields",
+                    div { class: "space-y-3",
+                        input {
+                            class: "input input-bordered w-full",
+                            placeholder: "First name",
+                            name: first_name.name(),
+                            value: first_name.value(),
+                            oninput: move |e| first_name_oninput.on_input(e.value()),
+                        }
+                        input {
+                            class: "input input-bordered w-full",
+                            placeholder: "Last name",
+                            name: last_name.name(),
+                            value: last_name.value(),
+                            oninput: move |e| last_name_oninput.on_input(e.value()),
+                        }
+                        input {
+                            class: "input input-bordered w-full",
+                            placeholder: "Billing street",
+                            name: street.name(),
+                            value: street.value(),
+                            oninput: move |e| street_oninput.on_input(e.value()),
+                        }
+                    }
+                }
+            },
+            secondary: rsx! {
+                DemoPane { label: "Rendered field name (HTML) ← → field identity (durable)",
+                    StateGrid {
+                        rows: vec![
+                            (
+                                "first_name",
+                                format!(
+                                    "{}  ·  {}",
+                                    first_name_path.field_name(),
+                                    first_name_path.identity().as_str(),
+                                ),
+                            ),
+                            (
+                                "last_name",
+                                format!(
+                                    "{}  ·  {}",
+                                    last_name_path.field_name(),
+                                    last_name_path.identity().as_str(),
+                                ),
+                            ),
+                            (
+                                "street",
+                                format!(
+                                    "{}  ·  {}",
+                                    street_path.field_name(),
+                                    street_path.identity().as_str(),
+                                ),
+                            ),
+                        ],
+                    }
+                }
+            },
         }
     }
 }

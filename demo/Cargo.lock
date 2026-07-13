@@ -675,6 +675,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
+name = "demo"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "dioform",
+ "dioform-fullstack",
+ "dioform-garde",
+ "dioxus",
+ "dioxus-code",
+ "garde",
+ "gloo-net",
+ "serde",
+ "serde_json",
+ "tower-service",
+ "worker",
+ "worker-macros",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,25 +746,6 @@ dependencies = [
 [[package]]
 name = "dioform-core"
 version = "0.1.1"
-
-[[package]]
-name = "dioform-demo"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dioform",
- "dioform-fullstack",
- "dioform-garde",
- "dioxus",
- "dioxus-code",
- "garde",
- "gloo-net",
- "serde",
- "serde_json",
- "tower-service",
- "worker",
- "worker-macros",
-]
 
 [[package]]
 name = "dioform-derive"

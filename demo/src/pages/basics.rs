@@ -1,10 +1,13 @@
 use dioxus::prelude::*;
 
 use crate::app::Route;
+use crate::components::{
+    DocsCallout, ExampleLayout, ExampleSection, ExternalAction, InlineCode, PageHeader,
+    snippet_theme,
+};
 use crate::examples::field_bindings::FieldBindingsExample;
 use crate::examples::minimal::MinimalExample;
 use crate::examples::parsed_inputs::ParsedInputsExample;
-use crate::ui::{DocsCallout, ExampleSection, InlineCode, PageHeader, snippet_theme};
 use dioxus_code::{Code, code};
 
 #[component]
@@ -62,8 +65,10 @@ pub fn Home() -> Element {
 
         DocsCallout {
             title: "Start with the README",
-            doc_label: "Repository & docs",
-            doc_href: "https://github.com/sagikazarmark/dioform",
+            action: Some(ExternalAction::new(
+                "Repository & docs",
+                "https://github.com/sagikazarmark/dioform",
+            )),
             "Every feature area links to the doc that owns it. The library is split into a renderer-agnostic core, a Dioxus facade, a derive crate, and optional validation adapters."
         }
     }
@@ -91,6 +96,7 @@ pub fn Minimal() -> Element {
             code: rsx! {
                 Code { src: code!("src/examples/minimal.rs"), theme: snippet_theme() }
             },
+            layout: ExampleLayout::Columns,
         }
     }
 }
@@ -144,8 +150,10 @@ pub fn ParsedInputs() -> Element {
         }
         DocsCallout {
             title: "Input helpers",
-            doc_label: "docs/input-helpers.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/input-helpers.md",
+            action: Some(ExternalAction::new(
+                "docs/input-helpers.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/input-helpers.md",
+            )),
             "Parsed bindings, blockers, and the raw-input/parse-error split are documented in the input helpers guide. Date parsing works the same way; see the Invoice form."
         }
     }

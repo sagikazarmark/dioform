@@ -2,7 +2,8 @@ use dioform::advanced::FormCore;
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
-use crate::ui::{PageHeader, field_checkbox, field_select, field_text};
+use super::{field_checkbox, field_select, field_text};
+use crate::components::PageHeader;
 
 #[derive(Clone, Debug, PartialEq, Form)]
 struct CheckoutForm {

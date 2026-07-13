@@ -1,7 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
-use crate::ui::StateGrid;
+use super::StateGrid;
+use crate::components::{DemoPane, DemoSurface};
 
 /// Parsed bindings keep the model typed while the `<input>` stays a string. The
 /// binding holds the raw text, the last successfully parsed value, and a
@@ -50,45 +51,53 @@ pub fn ParsedInputsExample() -> Element {
     let line_total = snapshot.quantity.saturating_mul(snapshot.unit_price_cents);
 
     rsx! {
-        div { class: "space-y-4",
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Quantity (u32)" }
-                input {
-                    class: "input input-bordered w-full",
-                    r#type: "number",
-                    min: "0",
-                    name: quantity.name(),
-                    value: quantity.value(),
-                    oninput: quantity.oninput(),
-                    onblur: quantity.onblur(),
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Parsed inputs",
+                    div { class: "space-y-4",
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Quantity (u32)" }
+                            input {
+                                class: "input input-bordered w-full",
+                                r#type: "number",
+                                min: "0",
+                                name: quantity.name(),
+                                value: quantity.value(),
+                                oninput: quantity.oninput(),
+                                onblur: quantity.onblur(),
+                            }
+                            if let Some(error) = quantity.parse_error() {
+                                p { class: "mt-1 text-sm text-error", "Parse error: {error.message()}" }
+                            }
+                        }
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Unit price: dollars in, cents stored" }
+                            input {
+                                class: "input input-bordered w-full",
+                                r#type: "text",
+                                name: price.name(),
+                                value: price.value(),
+                                oninput: price.oninput(),
+                                onblur: price.onblur(),
+                            }
+                            if let Some(error) = price.parse_error() {
+                                p { class: "mt-1 text-sm text-error", "Parse error: {error.message()}" }
+                            }
+                        }
+                    }
                 }
-                if let Some(error) = quantity.parse_error() {
-                    p { class: "mt-1 text-sm text-error", "Parse error: {error.message()}" }
+            },
+            secondary: rsx! {
+                DemoPane { label: "Typed model",
+                    StateGrid {
+                        rows: vec![
+                            ("quantity: u32", snapshot.quantity.to_string()),
+                            ("unit_price_cents: u32", snapshot.unit_price_cents.to_string()),
+                            ("line total", format!("${}", format_cents(line_total))),
+                        ],
+                    }
                 }
-            }
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Unit price: dollars in, cents stored" }
-                input {
-                    class: "input input-bordered w-full",
-                    r#type: "text",
-                    name: price.name(),
-                    value: price.value(),
-                    oninput: price.oninput(),
-                    onblur: price.onblur(),
-                }
-                if let Some(error) = price.parse_error() {
-                    p { class: "mt-1 text-sm text-error", "Parse error: {error.message()}" }
-                }
-            }
-        }
-        div { class: "mt-5 border-t border-base-300 pt-4",
-            StateGrid {
-                rows: vec![
-                    ("quantity: u32", snapshot.quantity.to_string()),
-                    ("unit_price_cents: u32", snapshot.unit_price_cents.to_string()),
-                    ("line total", format!("${}", format_cents(line_total))),
-                ],
-            }
+            },
         }
     }
 }

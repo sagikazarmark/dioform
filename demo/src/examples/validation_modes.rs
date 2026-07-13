@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::{DemoPane, DemoSurface};
+
 /// `ValidationMode` decides *when* registered validators run automatically. The
 /// same "at least 3 characters" rule feels different under each mode: type into
 /// both fields and watch when the error appears. On-change validates every
@@ -37,8 +39,7 @@ fn ModeCard(mode: ValidationMode, title: String, hint: String) -> Element {
     let errors = form.visible_field_validation_errors(AccountForm::fields().username());
 
     rsx! {
-        div { class: "rounded-xl border border-base-300 bg-base-100 p-4",
-            p { class: "text-sm font-semibold", "{title}" }
+        DemoPane { label: title,
             p { class: "mb-2 text-xs text-base-content/55", "{hint}" }
             input {
                 class: "input input-bordered input-sm w-full",
@@ -59,17 +60,21 @@ fn ModeCard(mode: ValidationMode, title: String, hint: String) -> Element {
 #[component]
 pub fn ValidationModesExample() -> Element {
     rsx! {
-        div { class: "grid gap-3 sm:grid-cols-2",
-            ModeCard {
-                mode: ValidationMode::on_change(),
-                title: "ValidationMode::on_change()",
-                hint: "Validates on every keystroke.",
-            }
-            ModeCard {
-                mode: ValidationMode::on_blur(),
-                title: "ValidationMode::on_blur() (default)",
-                hint: "Validates when the field loses focus.",
-            }
+        DemoSurface {
+            primary: rsx! {
+                ModeCard {
+                    mode: ValidationMode::on_change(),
+                    title: "ValidationMode::on_change()",
+                    hint: "Validates on every keystroke.",
+                }
+            },
+            secondary: rsx! {
+                ModeCard {
+                    mode: ValidationMode::on_blur(),
+                    title: "ValidationMode::on_blur() (default)",
+                    hint: "Validates when the field loses focus.",
+                }
+            },
         }
     }
 }

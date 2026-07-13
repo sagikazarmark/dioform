@@ -10,13 +10,15 @@ so the snippet you read is guaranteed to be the code you see running.
 The app mirrors the structure of the [`dioxus-clerk`](https://github.com/sagikazarmark/dioxus-clerk)
 demo:
 
-- `src/app.rs`: the `Route` enum (dioxus-router) and the shared shell (header, grouped
-  sidebar, mobile nav, footer).
+- `src/app.rs`: the `Route` enum (dioxus-router) and branded application shell.
+- `src/components/{code,common,examples,layout,nav}.rs`: project-agnostic
+  docs-gallery presentation grouped by responsibility. These modules stay free of demo and
+  `dioform` dependencies so they can later move into a shared crate.
 - `src/pages/`: one route component per page: prose, a docs link, and the example's source
   (via `code!`). Grouped by nav section (`basics`, `validation`, `fields`, `submission`,
   `server`, `forms`).
-- `src/examples/`: small, pure feature components. Each keeps the `dioform` API front and
-  center; layout chrome lives in `src/ui.rs`.
+- `src/examples/`: small feature components. Each keeps the `dioform` API front and center;
+  shared form-state presentation lives alongside them.
 - `src/server_api.rs`: the target-aware backend for the "Server validation" page, a Dioxus
   `#[server]` function on the native build, or a `fetch` to the Worker's `/api/*` route on the
   Cloudflare-SPA build.
@@ -24,8 +26,8 @@ demo:
   Worker route (serde-only, so it compiles for every target).
 - `src/worker.rs` / `src/lib.rs`: the Cloudflare Worker entry (`cdylib`); serves the static
   bundle and the `/api/*` routes.
-- `src/ui.rs`: presentation-only helpers (page headers, the live/source example card, shared
-  field inputs for the realistic forms).
+- `src/pages/forms/presentation.rs`: styled, application-owned inputs shared by the realistic
+  forms.
 
 ## Build targets
 
@@ -76,13 +78,13 @@ npm install                            # once, for the Tailwind toolchain
 ## Run locally
 
 ```sh
-npm run build                          # compile assets/style.css (or: npm run watch)
+npm run build                          # compile build/style.css (or: npm run watch)
 dx serve --fullstack --features fullstack-web
 ```
 
 `--features fullstack-web` is required: the plain `web` feature is the Cloudflare-SPA client
 (its backend calls target the Worker), while `fullstack-web` calls the local server functions.
-`assets/style.css` is generated from `style.css` (Tailwind + daisyUI) and is git-ignored, so run
+`build/style.css` is generated from `src/style.css` (Tailwind + daisyUI) and is git-ignored, so run
 `npm run build` before the first `dx serve` and after editing RSX classes (`npm run watch`
 rebuilds on change).
 
