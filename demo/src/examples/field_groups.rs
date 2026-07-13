@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::DemoSurface;
+
 /// `#[derive(FieldGroup)]` generates a typed field-group map so a reusable
 /// cluster of fields can be rendered once and mounted anywhere. Here the same
 /// `Address` group is mounted under two different paths, `billing` and
@@ -72,9 +74,9 @@ pub fn FieldGroupsExample() -> Element {
     let shipping = Address::mount(CheckoutForm::fields().shipping());
 
     rsx! {
-        div { class: "space-y-4",
-            {address_fields(&form, billing, "Billing address")}
-            {address_fields(&form, shipping, "Shipping address")}
+        DemoSurface {
+            primary: rsx! { {address_fields(&form, billing, "Billing address")} },
+            secondary: rsx! { {address_fields(&form, shipping, "Shipping address")} },
         }
     }
 }

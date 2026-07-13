@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::{DemoPane, DemoSurface};
+
 /// Listeners are application-owned side-effect hooks for semantic form events
 /// (autosave, analytics, dependent-field resets), kept out of validators. A
 /// **form-level** listener here logs every field replacement (by name, never by
@@ -55,45 +57,52 @@ pub fn ObserversExample() -> Element {
     let entries = log.read().clone();
 
     rsx! {
-        div { class: "space-y-3",
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Country (changing this resets region)" }
-                select {
-                    class: "select select-bordered w-full",
-                    name: country.name(),
-                    value: country.value(),
-                    onchange: move |e| country_onchange.on_change(e.value()),
-                    option { value: "us", selected: country.is_selected(&"us".to_string()), "United States" }
-                    option { value: "de", selected: country.is_selected(&"de".to_string()), "Germany" }
-                    option { value: "jp", selected: country.is_selected(&"jp".to_string()), "Japan" }
-                }
-            }
-            input {
-                class: "input input-bordered w-full",
-                placeholder: "Region",
-                name: region.name(),
-                value: region.value(),
-                oninput: move |e| region_oninput.on_input(e.value()),
-            }
-            input {
-                class: "input input-bordered w-full",
-                placeholder: "Note",
-                name: note.name(),
-                value: note.value(),
-                oninput: move |e| note_oninput.on_input(e.value()),
-            }
-        }
-        div { class: "mt-4 border-t border-base-300 pt-4",
-            p { class: "mb-2 text-xs font-semibold uppercase tracking-wider text-base-content/45", "Listener log" }
-            if entries.is_empty() {
-                p { class: "text-sm text-base-content/55", "Edit a field to see events." }
-            } else {
-                ul { class: "space-y-1 font-mono text-xs text-base-content/70",
-                    for (i , entry) in entries.iter().enumerate() {
-                        li { key: "{i}", "{entry}" }
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Address fields",
+                    div { class: "space-y-3",
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Country (changing this resets region)" }
+                            select {
+                                class: "select select-bordered w-full",
+                                name: country.name(),
+                                value: country.value(),
+                                onchange: move |e| country_onchange.on_change(e.value()),
+                                option { value: "us", selected: country.is_selected(&"us".to_string()), "United States" }
+                                option { value: "de", selected: country.is_selected(&"de".to_string()), "Germany" }
+                                option { value: "jp", selected: country.is_selected(&"jp".to_string()), "Japan" }
+                            }
+                        }
+                        input {
+                            class: "input input-bordered w-full",
+                            placeholder: "Region",
+                            name: region.name(),
+                            value: region.value(),
+                            oninput: move |e| region_oninput.on_input(e.value()),
+                        }
+                        input {
+                            class: "input input-bordered w-full",
+                            placeholder: "Note",
+                            name: note.name(),
+                            value: note.value(),
+                            oninput: move |e| note_oninput.on_input(e.value()),
+                        }
                     }
                 }
-            }
+            },
+            secondary: rsx! {
+                DemoPane { label: "Listener log",
+                    if entries.is_empty() {
+                        p { class: "text-sm text-base-content/55", "Edit a field to see events." }
+                    } else {
+                        ul { class: "space-y-1 font-mono text-xs text-base-content/70",
+                            for (i , entry) in entries.iter().enumerate() {
+                                li { key: "{i}", "{entry}" }
+                            }
+                        }
+                    }
+                }
+            },
         }
     }
 }

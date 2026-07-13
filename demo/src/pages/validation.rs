@@ -1,11 +1,13 @@
 use dioxus::prelude::*;
 
+use crate::components::{
+    DocsCallout, ExampleSection, ExternalAction, InlineCode, PageHeader, snippet_theme,
+};
 use crate::examples::adapter_validation::AdapterValidationExample;
 use crate::examples::async_validation::AsyncValidationExample;
 use crate::examples::error_summary::ErrorSummaryExample;
 use crate::examples::validation_modes::ValidationModesExample;
 use crate::examples::validators::ValidatorsExample;
-use crate::ui::{DocsCallout, ExampleSection, InlineCode, PageHeader, snippet_theme};
 use dioxus_code::{Code, code};
 
 #[component]
@@ -80,8 +82,10 @@ pub fn ErrorSummary() -> Element {
         }
         DocsCallout {
             title: "Whole-form error summaries",
-            doc_label: "docs/error-summary.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/error-summary.md",
+            action: Some(ExternalAction::new(
+                "docs/error-summary.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/error-summary.md",
+            )),
             "The aggregate accessors and how to map field identity back to a rendered name are documented in the error-summary guide."
         }
     }
@@ -113,8 +117,10 @@ pub fn AsyncValidation() -> Element {
         }
         DocsCallout {
             title: "Async & debounced validation",
-            doc_label: "docs/async-validation.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/async-validation.md",
+            action: Some(ExternalAction::new(
+                "docs/async-validation.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/async-validation.md",
+            )),
             "Task spawning, debounce, stale-result protection, submit-time flushing, and cleanup-safe late results are documented in the async validation guide."
         }
     }
@@ -142,8 +148,10 @@ pub fn AdapterValidation() -> Element {
         }
         DocsCallout {
             title: "Validation adapters",
-            doc_label: "docs/validation-adapters.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/validation-adapters.md",
+            action: Some(ExternalAction::new(
+                "docs/validation-adapters.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/validation-adapters.md",
+            )),
             "Both the garde and validator adapters, custom error mapping, path maps, and trigger choices are documented in the validation adapters guide."
         }
     }

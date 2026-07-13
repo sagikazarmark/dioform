@@ -1,15 +1,9 @@
 [application]
-name = "dioform-demo"
+name = "demo"
 default_platform = "fullstack"
 
 [web.app]
 title = "dioform demo"
 
 [web.watcher]
-watch_path = ["src", "assets", "style.css"]
-
-# Optimise the wasm bundle for size, matters most for the Cloudflare-SPA build
-# served by the Worker.
-[web.wasm_opt]
-level = "z"
-debug = false
+watch_path = ["src"]

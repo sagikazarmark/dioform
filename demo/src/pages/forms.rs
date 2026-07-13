@@ -3,9 +3,12 @@
 
 mod checkout;
 mod invoice;
+mod presentation;
 mod project_planner;
 mod signup;
 mod support;
+
+use presentation::{field_checkbox, field_select, field_text};
 
 pub use checkout::Checkout;
 pub use invoice::Invoice;

@@ -1,9 +1,11 @@
 use dioxus::prelude::*;
 
+use crate::components::{
+    DocsCallout, ExampleSection, ExternalAction, InlineCode, PageHeader, snippet_theme,
+};
 use crate::examples::browser_submission::BrowserSubmissionExample;
 use crate::examples::submit_errors::SubmitErrorsExample;
 use crate::examples::submit_intents::SubmitIntentsExample;
-use crate::ui::{DocsCallout, ExampleSection, InlineCode, PageHeader, snippet_theme};
 use dioxus_code::{Code, code};
 
 #[component]
@@ -28,8 +30,10 @@ pub fn SubmitIntents() -> Element {
         }
         DocsCallout {
             title: "Submit intent",
-            doc_label: "docs/submit-intent.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/submit-intent.md",
+            action: Some(ExternalAction::new(
+                "docs/submit-intent.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/submit-intent.md",
+            )),
             "Per-intent availability, status, visible errors, and intent-aware validators are documented in the submit intent guide."
         }
     }
@@ -57,8 +61,10 @@ pub fn BrowserSubmission() -> Element {
         }
         DocsCallout {
             title: "Browser submission modes",
-            doc_label: "docs/browser-submission.md",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/docs/browser-submission.md",
+            action: Some(ExternalAction::new(
+                "docs/browser-submission.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/browser-submission.md",
+            )),
             "The three submit modes and their ownership boundaries are documented in the browser submission guide."
         }
     }

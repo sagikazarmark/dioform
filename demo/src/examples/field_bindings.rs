@@ -1,7 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
-use crate::ui::StateGrid;
+use super::StateGrid;
+use crate::components::{DemoPane, DemoSurface};
 
 /// One form handle drives every input kind through a typed field path: text and
 /// textarea (`form.text` / `form.textarea`), a boolean checkbox
@@ -35,83 +36,91 @@ pub fn FieldBindingsExample() -> Element {
     let snapshot = form.snapshot();
 
     rsx! {
-        div { class: "space-y-4",
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Full name (text)" }
-                input {
-                    class: "input input-bordered w-full",
-                    name: name.name(),
-                    value: name.value(),
-                    oninput: name.oninput(),
-                    onblur: name.onblur(),
-                }
-            }
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Bio (textarea)" }
-                textarea {
-                    class: "textarea textarea-bordered w-full",
-                    name: bio.name(),
-                    value: bio.value(),
-                    oninput: bio.oninput(),
-                }
-            }
-            label { class: "block",
-                span { class: "mb-1 block text-sm font-medium", "Role (select)" }
-                select {
-                    class: "select select-bordered w-full",
-                    name: role.name(),
-                    value: role.value(),
-                    onchange: role.onchange(),
-                    option { value: "engineer", selected: role.is_selected(&"engineer".to_string()), "Engineer" }
-                    option { value: "designer", selected: role.is_selected(&"designer".to_string()), "Designer" }
-                    option { value: "founder", selected: role.is_selected(&"founder".to_string()), "Founder" }
-                }
-            }
-            fieldset {
-                span { class: "mb-1 block text-sm font-medium", "Plan (radio group)" }
-                div { class: "flex gap-2",
-                    for (value , label) in [("free", "Free"), ("team", "Team"), ("scale", "Scale")] {
-                        {
-                            let checked = plan.is_selected(&value.to_string());
-                            rsx! {
-                                label {
-                                    class: "btn btn-sm btn-outline",
-                                    class: if checked { "btn-primary" },
-                                    input {
-                                        class: "sr-only",
-                                        r#type: "radio",
-                                        name: plan.name(),
-                                        checked,
-                                        onclick: plan.onselect(value.to_string()),
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Bindings",
+                    div { class: "space-y-4",
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Full name (text)" }
+                            input {
+                                class: "input input-bordered w-full",
+                                name: name.name(),
+                                value: name.value(),
+                                oninput: name.oninput(),
+                                onblur: name.onblur(),
+                            }
+                        }
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Bio (textarea)" }
+                            textarea {
+                                class: "textarea textarea-bordered w-full",
+                                name: bio.name(),
+                                value: bio.value(),
+                                oninput: bio.oninput(),
+                            }
+                        }
+                        label { class: "block",
+                            span { class: "mb-1 block text-sm font-medium", "Role (select)" }
+                            select {
+                                class: "select select-bordered w-full",
+                                name: role.name(),
+                                value: role.value(),
+                                onchange: role.onchange(),
+                                option { value: "engineer", selected: role.is_selected(&"engineer".to_string()), "Engineer" }
+                                option { value: "designer", selected: role.is_selected(&"designer".to_string()), "Designer" }
+                                option { value: "founder", selected: role.is_selected(&"founder".to_string()), "Founder" }
+                            }
+                        }
+                        fieldset {
+                            span { class: "mb-1 block text-sm font-medium", "Plan (radio group)" }
+                            div { class: "flex gap-2",
+                                for (value , label) in [("free", "Free"), ("team", "Team"), ("scale", "Scale")] {
+                                    {
+                                        let checked = plan.is_selected(&value.to_string());
+                                        rsx! {
+                                            label {
+                                                class: "btn btn-sm btn-outline",
+                                                class: if checked { "btn-primary" },
+                                                input {
+                                                    class: "sr-only",
+                                                    r#type: "radio",
+                                                    name: plan.name(),
+                                                    checked,
+                                                    onclick: plan.onselect(value.to_string()),
+                                                }
+                                                "{label}"
+                                            }
+                                        }
                                     }
-                                    "{label}"
                                 }
                             }
                         }
+                        label { class: "flex items-center gap-2",
+                            input {
+                                class: "checkbox checkbox-primary",
+                                r#type: "checkbox",
+                                name: subscribe.name(),
+                                checked: subscribe.checked(),
+                                oninput: subscribe.onchange(),
+                            }
+                            span { class: "text-sm font-medium", "Subscribe to the newsletter (checkbox)" }
+                        }
                     }
                 }
-            }
-            label { class: "flex items-center gap-2",
-                input {
-                    class: "checkbox checkbox-primary",
-                    r#type: "checkbox",
-                    name: subscribe.name(),
-                    checked: subscribe.checked(),
-                    oninput: subscribe.onchange(),
+            },
+            secondary: rsx! {
+                DemoPane { label: "Form snapshot",
+                    StateGrid {
+                        rows: vec![
+                            ("full_name", snapshot.full_name.clone()),
+                            ("bio", snapshot.bio.clone()),
+                            ("role", snapshot.role.clone()),
+                            ("plan", snapshot.plan.clone()),
+                            ("subscribe", snapshot.subscribe.to_string()),
+                        ],
+                    }
                 }
-                span { class: "text-sm font-medium", "Subscribe to the newsletter (checkbox)" }
-            }
-        }
-        div { class: "mt-5 border-t border-base-300 pt-4",
-            StateGrid {
-                rows: vec![
-                    ("full_name", snapshot.full_name.clone()),
-                    ("bio", snapshot.bio.clone()),
-                    ("role", snapshot.role.clone()),
-                    ("plan", snapshot.plan.clone()),
-                    ("subscribe", snapshot.subscribe.to_string()),
-                ],
-            }
+            },
         }
     }
 }

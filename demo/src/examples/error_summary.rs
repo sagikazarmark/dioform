@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::{DemoPane, DemoSurface};
+
 /// `visible_validation_errors()` returns every stored error across the whole
 /// form (direct fields, collection children, form-level validators, and submit
 /// errors) as one flat, source-aware list. That is exactly what an accessible
@@ -73,47 +75,57 @@ pub fn ErrorSummaryExample() -> Element {
     let summary = form.visible_validation_errors();
 
     rsx! {
-        div { class: "space-y-3",
-            input {
-                class: "input input-bordered input-sm w-full",
-                placeholder: "Email",
-                name: email.name(),
-                value: email.value(),
-                oninput: move |e| email_oninput.on_input(e.value()),
-                onblur: move |_| email.on_blur(),
-            }
-            input {
-                class: "input input-bordered input-sm w-full",
-                placeholder: "Phone",
-                name: phone.name(),
-                value: phone.value(),
-                oninput: move |e| phone_oninput.on_input(e.value()),
-                onblur: move |_| phone.on_blur(),
-            }
-            input {
-                class: "input input-bordered input-sm w-full",
-                r#type: "number",
-                placeholder: "Age",
-                name: age.name(),
-                value: age.value(),
-                oninput: move |e| age_oninput.on_input(e.value()),
-                onblur: move |_| age.on_blur(),
-            }
-        }
-        if summary.is_empty() {
-            p { class: "mt-4 text-sm text-success", "No errors: the form is valid." }
-        } else {
-            div { class: "mt-4 rounded-xl border border-error/40 bg-error/5 p-4",
-                p { class: "text-sm font-semibold text-error", "{summary.len()} error(s)" }
-                ul { class: "mt-2 space-y-1",
-                    for snapshot in summary.iter() {
-                        li { class: "text-sm",
-                            span { class: "font-mono text-xs text-error/80", "{field_label(snapshot)}" }
-                            span { class: "text-base-content/75", ": {snapshot.error()}" }
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Contact fields",
+                    div { class: "space-y-3",
+                        input {
+                            class: "input input-bordered input-sm w-full",
+                            placeholder: "Email",
+                            name: email.name(),
+                            value: email.value(),
+                            oninput: move |e| email_oninput.on_input(e.value()),
+                            onblur: move |_| email.on_blur(),
+                        }
+                        input {
+                            class: "input input-bordered input-sm w-full",
+                            placeholder: "Phone",
+                            name: phone.name(),
+                            value: phone.value(),
+                            oninput: move |e| phone_oninput.on_input(e.value()),
+                            onblur: move |_| phone.on_blur(),
+                        }
+                        input {
+                            class: "input input-bordered input-sm w-full",
+                            r#type: "number",
+                            placeholder: "Age",
+                            name: age.name(),
+                            value: age.value(),
+                            oninput: move |e| age_oninput.on_input(e.value()),
+                            onblur: move |_| age.on_blur(),
                         }
                     }
                 }
-            }
+            },
+            secondary: rsx! {
+                DemoPane { label: "Error summary",
+                    if summary.is_empty() {
+                        p { class: "text-sm text-success", "No errors: the form is valid." }
+                    } else {
+                        div { class: "rounded-xl border border-error/40 bg-error/5 p-4",
+                            p { class: "text-sm font-semibold text-error", "{summary.len()} error(s)" }
+                            ul { class: "mt-2 space-y-1",
+                                for snapshot in summary.iter() {
+                                    li { class: "text-sm",
+                                        span { class: "font-mono text-xs text-error/80", "{field_label(snapshot)}" }
+                                        span { class: "text-base-content/75", ": {snapshot.error()}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
         }
     }
 }

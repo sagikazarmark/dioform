@@ -1,6 +1,8 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 
+use crate::components::{DemoPane, DemoSurface};
+
 /// dioform supports three submit modes. **Managed** (`managed_submit`, shown
 /// live) prevents the default and runs the typed lifecycle. **Native browser**
 /// (`browser_submit(action)`) hands the browser real `method`/`action`
@@ -45,36 +47,43 @@ pub fn BrowserSubmissionExample() -> Element {
     let can_submit = submit.can_submit();
 
     rsx! {
-        form {
-            class: "space-y-3",
-            onsubmit: move |event| {
-                let result = submit.on_submit(event, |_s| SubmitErrors::<SignupForm, String>::none());
-                message.set(format!("managed submit → {result:?}"));
+        DemoSurface {
+            primary: rsx! {
+                DemoPane { label: "Managed submit",
+                    form {
+                        class: "space-y-3",
+                        onsubmit: move |event| {
+                            let result = submit.on_submit(event, |_s| SubmitErrors::<SignupForm, String>::none());
+                            message.set(format!("managed submit → {result:?}"));
+                        },
+                        input {
+                            class: "input input-bordered w-full",
+                            r#type: "email",
+                            placeholder: "Email (required)",
+                            name: email.name(),
+                            value: email.value(),
+                            oninput: move |e| email_oninput.on_input(e.value()),
+                        }
+                        button {
+                            class: "btn btn-primary btn-sm",
+                            r#type: "submit",
+                            disabled: !can_submit,
+                            "Managed submit"
+                        }
+                    }
+                    p { class: "mt-2 text-xs text-base-content/55", "submit.can_submit() → {can_submit}" }
+                    if !message.read().is_empty() {
+                        p { class: "mt-1 text-sm text-base-content/75", "{message}" }
+                    }
+                }
             },
-            input {
-                class: "input input-bordered w-full",
-                r#type: "email",
-                placeholder: "Email (required)",
-                name: email.name(),
-                value: email.value(),
-                oninput: move |e| email_oninput.on_input(e.value()),
-            }
-            button {
-                class: "btn btn-primary btn-sm",
-                r#type: "submit",
-                disabled: !can_submit,
-                "Managed submit"
-            }
-        }
-        p { class: "mt-2 text-xs text-base-content/55", "submit.can_submit() → {can_submit}" }
-        if !message.read().is_empty() {
-            p { class: "mt-1 text-sm text-base-content/75", "{message}" }
-        }
-        div { class: "mt-4 border-t border-base-300 pt-4",
-            p { class: "mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/45", "Native browser fallback attributes" }
-            p { class: "font-mono text-xs text-base-content/70",
-                "method=\"{browser.method()}\" action=\"{browser.action()}\" · field name=\"{email.name()}\""
-            }
+            secondary: rsx! {
+                DemoPane { label: "Native browser fallback attributes",
+                    p { class: "font-mono text-xs text-base-content/70",
+                        "method=\"{browser.method()}\" action=\"{browser.action()}\" · field name=\"{email.name()}\""
+                    }
+                }
+            },
         }
     }
 }

@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::components::{
+    DocsCallout, ExampleSection, ExternalAction, InlineCode, PageHeader, snippet_theme,
+};
 use crate::examples::server_validation::ServerValidationExample;
-use crate::ui::{DocsCallout, ExampleSection, InlineCode, PageHeader, snippet_theme};
 use dioxus_code::{Code, code};
 
 #[component]
@@ -28,8 +30,10 @@ pub fn ServerValidation() -> Element {
         }
         DocsCallout {
             title: "The #[server] function",
-            doc_label: "src/server_api.rs",
-            doc_href: "https://github.com/sagikazarmark/dioform/blob/main/demo/src/server_api.rs",
+            action: Some(ExternalAction::new(
+                "src/server_api.rs",
+                "https://github.com/sagikazarmark/dioform/blob/main/demo/src/server_api.rs",
+            )),
             "The server side returns ServerSubmitOutcome::rejected / accepted. On the client the same call becomes a network request; on the server it runs the body."
         }
     }
