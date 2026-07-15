@@ -15,13 +15,13 @@ interoperability, not as the main addressing mechanism.
 
 ## Features
 
-- **Typed field paths** — a compile-time form model with `FieldPath<Model, Value>` addressing, derived by `#[derive(Form)]`.
-- **Headless Dioxus bindings** — explicit `FormHandle` APIs, input bindings, parse blockers, and managed submission, with no styled components.
-- **Renderer-agnostic core** — form draft, validation, submission, reset, and reinitialization semantics live in `dioform-core`, independent of Dioxus.
-- **Validation modes and triggers** — blur/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
-- **Form-owned collections** — repeatable items with library-owned, opaque item identity.
-- **Reusable field groups** — `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
-- **Optional validation adapters** — `garde` and `validator` adapters that map external diagnostics into Dioform validation errors.
+- **Typed field paths**: a compile-time form model with `FieldPath<Model, Value>` addressing, derived by `#[derive(Form)]`.
+- **Headless Dioxus bindings**: explicit `FormHandle` APIs, input bindings, parse blockers, and managed submission, with no styled components.
+- **Renderer-agnostic core**: form draft, validation, submission, reset, and reinitialization semantics live in `dioform-core`, independent of Dioxus.
+- **Validation modes and triggers**: blur/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
+- **Form-owned collections**: repeatable items with library-owned, opaque item identity.
+- **Reusable field groups**: `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
+- **Optional validation adapters**: `garde` and `validator` adapters that map external diagnostics into Dioform validation errors.
 
 ## Workspace
 
