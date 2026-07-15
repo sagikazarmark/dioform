@@ -49,7 +49,7 @@ pub fn Home() -> Element {
         PageHeader {
             eyebrow: "dioform",
             title: "Headless form state, typed to your model",
-            intro: "dioform keeps form state, validation, and submission in a form-owned draft addressed by compile-time FieldPath values. Your components own all the markup. Every page here mounts a real feature next to the exact source that runs it.",
+            intro: "dioform keeps form state, validation, and submission in a form-owned draft addressed by compile-time FieldPath values. Your components own all the markup. Focused feature pages mount real examples next to their exact source; realistic forms combine several features into complete pages.",
         }
 
         div { class: "mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3",

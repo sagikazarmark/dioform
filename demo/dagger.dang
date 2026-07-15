@@ -3,7 +3,7 @@ type Demo {
   let dioxus: Dioxus!
   let workerBuild: WorkerBuild!
 
-  new(ws: Workspace!, rustVersion: String!) {
+  new(rustVersion: String!) {
     # clang is needed to cross-compile the C sysroot pulled in
     # by the `dioxus-code` snippet highlighter (arborium/tree-sitter) for the wasm32 target.
     # The `cc` crate auto-selects clang for wasm32-unknown-unknown, so installing it is enough.
@@ -15,25 +15,25 @@ type Demo {
       .withExec(["apt-get", "update"])
       .withExec(["apt-get", "install", "-y", "--no-install-recommends", "clang"])
 
-      let cargoRegistryIndexCache = Dagger.cacheVolume("cargo-registry-index")
-      let cargoRegistryArchiveCache = Dagger.cacheVolume("cargo-registry-cache")
-      let cargoGitDbCache = Dagger.cacheVolume("cargo-git-db")
+    let cargoRegistryIndexCache = Dagger.cacheVolume("cargo-registry-index")
+    let cargoRegistryArchiveCache = Dagger.cacheVolume("cargo-registry-cache")
+    let cargoGitDbCache = Dagger.cacheVolume("cargo-git-db")
 
-      self.jsEnv = Dagger.javascriptEnvironment(install: true, locked: true)
-      self.dioxus = Dagger.dioxus(
-        container: rustContainer,
-        noCache: true, # Disabling target cache: if it gets evicted during a build, the build will fail.
-        cargoRegistryIndexCache: cargoRegistryIndexCache,
-        cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-        cargoGitDbCache: cargoGitDbCache,
-      )
-      self.workerBuild = Dagger.workerBuild(
-        container: rustContainer,
-        noCache: true, # Disabling target cache: if it gets evicted during a build, the build will fail.
-        cargoRegistryIndexCache: cargoRegistryIndexCache,
-        cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-        cargoGitDbCache: cargoGitDbCache,
-      )
+    self.jsEnv = Dagger.javascriptEnvironment(install: true, locked: true)
+    self.dioxus = Dagger.dioxus(
+      container: rustContainer,
+      noCache: true, # Disabling target cache: if it gets evicted during a build, the build will fail.
+      cargoRegistryIndexCache: cargoRegistryIndexCache,
+      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+      cargoGitDbCache: cargoGitDbCache,
+    )
+    self.workerBuild = Dagger.workerBuild(
+      container: rustContainer,
+      noCache: true, # Disabling target cache: if it gets evicted during a build, the build will fail.
+      cargoRegistryIndexCache: cargoRegistryIndexCache,
+      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+      cargoGitDbCache: cargoGitDbCache,
+    )
 
     self
   }

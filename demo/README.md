@@ -1,9 +1,10 @@
 # demo
 
 A docs-by-example gallery for [`dioform`](https://github.com/sagikazarmark/dioform).
-Every page mounts a real feature next to the **exact source that runs it** (rendered with
+Feature pages mount a real example next to the **exact source that runs it** (rendered with
 the compile-time `code!` macro from [`dioxus-code`](https://crates.io/crates/dioxus-code)),
-so the snippet you read is guaranteed to be the code you see running.
+so the snippet you read is guaranteed to be the code you see running. The realistic form
+pages combine multiple features and intentionally do not quote their full source.
 
 ## Structure
 
@@ -11,13 +12,14 @@ The app mirrors the structure of the [`dioxus-clerk`](https://github.com/sagikaz
 demo:
 
 - `src/app.rs`: the `Route` enum (dioxus-router) and branded application shell.
-- `src/components/{code,common,examples,layout,nav}.rs`: project-agnostic
+- `src/components{.rs,/...}`: project-agnostic
   docs-gallery presentation grouped by responsibility. These modules stay free of demo and
   `dioform` dependencies so they can later move into a shared crate.
-- `src/pages/`: one route component per page: prose, a docs link, and the example's source
-  (via `code!`). Grouped by nav section (`basics`, `validation`, `fields`, `submission`,
-  `server`, `forms`).
-- `src/examples/`: small feature components. Each keeps the `dioform` API front and center;
+- `src/pages{.rs,/...}`: route components grouped by nav section (`basics`, `validation`,
+  `fields`, `submission`, `server`, `forms`). Focused feature pages contain prose, docs links,
+  and example source via `code!`; realistic forms compose several features without quoting
+  their full source.
+- `src/examples{.rs,/...}`: small feature components. Each keeps the `dioform` API front and center;
   shared form-state presentation lives alongside them.
 - `src/server_api.rs`: the target-aware backend for the "Server validation" page, a Dioxus
   `#[server]` function on the native build, or a `fetch` to the Worker's `/api/*` route on the
@@ -67,19 +69,25 @@ and a nested project planner, combining several features per page.
 
 ## Prerequisites
 
-The app runs with the [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started/)
-and uses npm for the Tailwind toolchain:
+The root devenv shell supplies Rust, the `wasm32-unknown-unknown` target, npm,
+and a wasm-capable LLVM Clang. Install Dioxus CLI 0.7.9 separately; without
+devenv, install the other equivalent tools as well. Apple Clang cannot compile
+the `code!` highlighter for wasm.
 
 ```sh
-cargo install dioxus-cli               # if needed
-npm install                            # once, for the Tailwind toolchain
+rustup target add wasm32-unknown-unknown
+cargo install dioxus-cli --version 0.7.9 --locked
 ```
 
 ## Run locally
 
 ```sh
+cd demo
+npm ci
 npm run build                          # compile build/style.css (or: npm run watch)
-dx serve --fullstack --features fullstack-web
+dx serve --fullstack \
+  @client --platform web --no-default-features --features fullstack-web \
+  @server --platform server --no-default-features --features server
 ```
 
 `--features fullstack-web` is required: the plain `web` feature is the Cloudflare-SPA client
@@ -94,14 +102,16 @@ rebuilds on change).
 Wrangler needed:
 
 ```sh
+cd demo
 dagger check                # release builds of BOTH the native fullstack app and the Worker
-dagger call serve up        # native fullstack, tunnelled to a local port
+dagger call service up      # native fullstack, tunnelled to a local port
 dagger call worker dev up   # Cloudflare Worker via `wrangler dev`
 ```
 
 To deploy the Worker, pass the Cloudflare credentials explicitly:
 
 ```sh
+cd demo
 dagger call worker deploy \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --api-token env://CLOUDFLARE_API_TOKEN
@@ -115,6 +125,7 @@ preview only runs for same-repo PRs, since fork PRs can't read the secrets.
 ## Verify
 
 ```sh
+cd demo
 # Cloudflare-SPA client.
 cargo check --no-default-features --features web --target wasm32-unknown-unknown
 # Native fullstack client.
