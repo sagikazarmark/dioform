@@ -1,5 +1,6 @@
-//! Route components. Each page frames one or more `examples` components with
-//! prose, a docs link, and the example's own source (via `code!`).
+//! Route components grouped by navigation section. Focused feature pages frame
+//! live `examples` with prose and source; realistic forms compose features into
+//! complete product pages without quoting their full source.
 
 mod basics;
 mod fields;

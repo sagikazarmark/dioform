@@ -35,7 +35,11 @@ interoperability, not as the main addressing mechanism.
 
 Input helpers are documented in [`docs/input-helpers.md`](docs/input-helpers.md). File fields are documented in [`docs/file-fields.md`](docs/file-fields.md). Collection fields are documented in [`docs/collection-fields.md`](docs/collection-fields.md). Async and debounced validation are documented in [`docs/async-validation.md`](docs/async-validation.md). Validation adapters are documented in [`docs/validation-adapters.md`](docs/validation-adapters.md). Reusable field groups are introduced below.
 
-The [`demo/`](demo) directory is a docs-by-example gallery (a fullstack `dx serve` app) with an extensive, feature-by-feature set of live examples, each mounted next to the exact source that runs it, plus a set of realistic product forms. Run it with `dx serve` from `demo/`; see [`demo/README.md`](demo/README.md).
+The [`demo/`](demo) directory is a docs-by-example gallery with an extensive,
+feature-by-feature set of live examples mounted next to their exact source, plus
+realistic product forms that combine multiple features without quoting their
+full source. See [`demo/README.md`](demo/README.md) for the required CSS build
+and fullstack client/server command.
 
 The Dioxus facade defaults the shared validation error type to `String` for simple forms. Applications that need structured errors can choose their own `Error` type through `FormHandle<Model, Error>` or `FormConfig<Model, Error>`.
 

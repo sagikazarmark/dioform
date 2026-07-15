@@ -1,10 +1,10 @@
 //! dioform demo: binary entry point (native fullstack server + wasm SPA
 //! client).
 //!
-//! Every page mounts a real feature *and* renders that feature's own source
+//! Feature pages mount a real example *and* render that example's own source
 //! (via the compile-time `code!` macro), so the snippet you read is exactly the
 //! code that runs. The UI lives in [`app`] (router + shell), [`components`]
-//! (reusable presentation), [`pages`] (one route each), and [`examples`] (the
+//! (reusable presentation), [`pages`] (grouped by navigation section), and [`examples`] (the
 //! small components the pages both mount and quote).
 //!
 //! `dioxus::launch` runs both halves: on the wasm client it hydrates the app,
