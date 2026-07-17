@@ -68,6 +68,8 @@ pub enum Route {
     Invoice {},
     #[route("/forms/project-planner")]
     ProjectPlanner {},
+    #[route("/:..segments")]
+    NotFound { segments: Vec<String> },
 }
 
 #[component]
@@ -81,8 +83,13 @@ pub fn App() -> Element {
 /// Shared application shell for every demo route.
 #[component]
 fn DemoLayout() -> Element {
+    let mut hydrated = use_signal(|| false);
+    use_effect(move || hydrated.set(true));
+
     rsx! {
-        div { class: "min-h-screen bg-base-100 text-base-content",
+        div {
+            class: "min-h-screen bg-base-100 text-base-content",
+            "data-demo-hydrated": if hydrated() { "true" } else { "false" },
             DemoHeader {
                 home: Route::Home {},
                 mark: "df",
