@@ -103,6 +103,56 @@ type Demo {
   }
 
   """
+  Run end-to-end tests.
+  """
+  test(ws: Workspace!): Directory! @check {
+    let service = self.testService(ws)
+
+    self
+      .playwright(ws, service)
+      .withExec(["npm", "exec", "--", "playwright", "test", "--config", "playwright.config.ts"])
+      .directory("build/playwright")
+  }
+
+  """
+  Capture every demo page at mobile, tablet, and desktop resolutions.
+  """
+  screenshots(ws: Workspace!): Directory! {
+    let service = self.testService(ws)
+
+    self
+      .playwright(ws, service)
+      .withExec(["node", "screenshots.mjs"])
+      .directory("build/screenshots")
+  }
+
+  let testService(ws: Workspace!): Service! {
+    Dagger
+      .container
+      .from("debian:trixie-slim")
+      .withWorkdir("/opt/demo")
+      .withDirectory(".", self.build(ws))
+      .withEnvVariable("IP", "0.0.0.0")
+      .withEnvVariable("PORT", "8080")
+      .withExposedPort(8080)
+      .asService(args: ["./server"])
+  }
+
+  let playwright(ws: Workspace!, service: Service!): Container! {
+    self
+      .jsEnv
+      .container(ws)
+      .withMountedCache(
+        "${HOME}/.cache/ms-playwright",
+        Dagger.cacheVolume("ms-playwright"),
+        expand: true,
+      )
+      .withExec(["npm", "exec", "--", "playwright", "install", "chromium", "--with-deps"])
+      .withServiceBinding("demo", service)
+      .withEnvVariable("PLAYWRIGHT_BASE_URL", service.endpoint(scheme: "http"))
+  }
+
+  """
   Cloudflare Worker operations.
   """
   worker: Worker! {

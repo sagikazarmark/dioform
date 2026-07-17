@@ -44,9 +44,10 @@ pub fn AsyncValidationExample() -> Element {
     let username_oninput = username.clone();
 
     let checking = form.is_field_validating(HandleForm::fields().username());
+    let validation_errors = form.field_validation_errors(HandleForm::fields().username());
     let errors = form.visible_field_validation_errors(HandleForm::fields().username());
     let snapshot = form.snapshot();
-    let settled = !checking && errors.is_empty() && !snapshot.username.trim().is_empty();
+    let settled = !checking && validation_errors.is_empty() && !snapshot.username.trim().is_empty();
 
     rsx! {
         label { class: "block",

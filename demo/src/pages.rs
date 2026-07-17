@@ -5,6 +5,7 @@
 mod basics;
 mod fields;
 mod forms;
+mod not_found;
 mod server;
 mod submission;
 mod validation;
@@ -15,6 +16,7 @@ pub use fields::{
     Serialization, StateMeta,
 };
 pub use forms::{Checkout, Invoice, ProjectPlanner, Signup};
+pub use not_found::NotFound;
 pub use server::ServerValidation;
 pub use submission::{BrowserSubmission, SubmitErrors, SubmitIntents};
 pub use validation::{
