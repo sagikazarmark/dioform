@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -13,10 +13,10 @@ keywords = ["dioxus", "forms", "validation", "web"]
 categories = ["web-programming", "gui"]
 
 [workspace.dependencies]
-dioform = { path = "crates/dioform", version = "0.1.1" }
-dioform-core = { path = "crates/dioform-core", version = "0.1.1" }
-dioform-derive = { path = "crates/dioform-derive", version = "0.1.1" }
-dioform-validation-adapter = { path = "crates/dioform-validation-adapter", version = "0.1.1" }
+dioform = { path = "crates/dioform", version = "0.2.0" }
+dioform-core = { path = "crates/dioform-core", version = "0.2.0" }
+dioform-derive = { path = "crates/dioform-derive", version = "0.2.0" }
+dioform-validation-adapter = { path = "crates/dioform-validation-adapter", version = "0.2.0" }
 
 dioxus-core = "0.7"
 serde = { version = "1", features = ["derive"] }
