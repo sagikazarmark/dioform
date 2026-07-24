@@ -39,9 +39,23 @@ export const test = base.extend<{ browserHealth: void }>({
 export async function openExample(page: Page, path: string) {
   const response = await page.goto(path);
   expect(response?.status()).toBe(200);
-  await expect(page.locator('[data-demo-hydrated="true"]')).toBeVisible();
+  await waitForHydration(page);
 
-  return page.getByRole("region", { name: "Example demo" });
+  const demo = page.getByRole("region", { name: "Example demo" });
+  await expect(demo).toHaveCount(1);
+
+  return demo;
+}
+
+export async function waitForHydration(page: Page, timeout = 10_000) {
+  await expect(page.locator('[data-demo-hydrated="true"]')).toBeVisible({
+    timeout,
+  });
+
+  // Dioxus can briefly retain the SSR tree beside the hydrated client tree.
+  await expect(page.locator("[data-demo-hydrated]")).toHaveCount(1, {
+    timeout,
+  });
 }
 
 export { expect };
