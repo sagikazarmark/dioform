@@ -3,17 +3,10 @@
 devenv.local.nix
 devenv.local.yaml
 
-# Rust
-target/
-
-# JavaScript tooling used by examples
-node_modules/
-
-# Dioxus CLI output
-dist/
-
 # direnv
 .direnv
 
 # pre-commit
 .pre-commit-config.yaml
+
+target/
