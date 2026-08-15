@@ -56,14 +56,13 @@ pub fn CollectionValidationExample() -> Element {
         ul { class: "mt-4 space-y-3",
             for item in items.iter().cloned() {
                 {
-                    let index = item.index();
                     let name = item.text(Guest::fields().name());
                     let name_oninput = name.clone();
                     let errors = name.visible_validation_errors();
                     let remove = guests.clone();
                     let id = item.identity();
                     rsx! {
-                        li { key: "{index}",
+                        li { key: "{item.key()}",
                             div { class: "flex items-center gap-2",
                                 input {
                                     class: "input input-bordered input-sm flex-1",
