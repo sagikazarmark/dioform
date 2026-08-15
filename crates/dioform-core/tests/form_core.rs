@@ -30,6 +30,32 @@ fn name_path() -> FieldPath<ContactForm, String> {
     )
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Party {
+    name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Transaction {
+    counterparty: Option<Party>,
+}
+
+static EMPTY_PARTY_NAME: String = String::new();
+
+fn counterparty_name_path() -> FieldPath<Transaction, String> {
+    FieldPath::direct(
+        FieldIdentity::new("counterparty.name"),
+        "counterparty.name",
+        |model: &Transaction| {
+            model
+                .counterparty
+                .as_ref()
+                .map_or(&EMPTY_PARTY_NAME, |party| &party.name)
+        },
+        |model: &mut Transaction| &mut model.counterparty.get_or_insert_with(Party::default).name,
+    )
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegistrationForm {
     email: String,
@@ -7120,6 +7146,83 @@ fn reset_restores_baseline_values_and_clears_interaction_metadata() {
     assert!(!form.is_dirty());
     assert!(!form.is_field_touched(name_path()));
     assert!(!form.is_field_blurred(name_path()));
+}
+
+#[test]
+fn reset_field_is_a_no_op_when_an_optional_parent_is_absent() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&observed);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+    let field_versions = form.submit_validation_field_versions();
+
+    form.reset_field(counterparty_name_path());
+
+    assert_eq!(form.snapshot().counterparty, None);
+    assert!(!form.is_dirty());
+    assert_eq!(form.submit_validation_field_versions(), field_versions);
+    assert!(observed.borrow().is_empty());
+}
+
+#[test]
+fn reset_field_clears_interaction_state_when_the_value_matches_the_baseline() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Grace".to_owned(),
+        });
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&observed);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+    form.set_user_field(name_path(), "Grace".to_owned());
+    form.mark_field_blurred(name_path());
+    observed.borrow_mut().clear();
+
+    form.reset_field(name_path());
+
+    assert!(!form.is_field_touched(name_path()));
+    assert!(!form.is_field_blurred(name_path()));
+    assert!(observed.borrow().iter().any(|event| matches!(
+        event,
+        FormObserverEvent::FieldReset { field, .. }
+            if field.identity() == FieldIdentity::new("name")
+    )));
+}
+
+#[test]
+fn reset_field_clears_validation_state_without_materializing_an_optional_parent() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+    form.register_sync_field_validator(counterparty_name_path(), "required", |_, _| {
+        vec!["name required"]
+    });
+    form.validate_field(counterparty_name_path(), ValidationTrigger::Manual);
+
+    form.reset_field(counterparty_name_path());
+
+    assert_eq!(form.snapshot().counterparty, None);
+    assert!(
+        form.field_validation_errors(counterparty_name_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn reset_field_clears_submit_errors_without_materializing_an_optional_parent() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+    assert_eq!(
+        form.submit(|_| SubmitError::field(counterparty_name_path(), "server rejected")),
+        SubmitResult::Rejected
+    );
+
+    form.reset_field(counterparty_name_path());
+
+    assert_eq!(form.snapshot().counterparty, None);
+    assert!(
+        form.field_validation_errors(counterparty_name_path())
+            .is_empty()
+    );
 }
 
 #[test]

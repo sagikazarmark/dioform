@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, rc::Rc};
 
 use super::{
     CollectionItemIdentity, CollectionState, FieldIdentity, FormValidationError,
-    FormValidatorContext, ValidationErrorView, ValidationStatusView, ValidationTarget,
-    ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId, ValidatorSource,
-    validation_lifecycle,
+    FormValidatorContext, ValidationErrorView, ValidationStatus, ValidationStatusView,
+    ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId,
+    ValidatorSource, validation_lifecycle,
 };
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -409,6 +409,12 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
                 validator.lifecycle.clear();
             }
         }
+    }
+
+    pub(super) fn field_has_validation_state(&self, field: &FieldIdentity) -> bool {
+        self.field_validators.iter().any(|(key, validator)| {
+            &key.field == field && validator.lifecycle.status() != ValidationStatus::Unknown
+        })
     }
 
     pub(super) fn sorted_field_entries(

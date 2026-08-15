@@ -3225,15 +3225,33 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     /// cleared (dirty is derived and becomes clean once the value matches the baseline), and that
     /// field's field-scoped validator results and pending validation are cleared. Other fields,
     /// form-level validators, and submit state for other fields are left untouched.
+    ///
+    /// If the current field value already equals its baseline and has no field-scoped state, this is
+    /// a no-op. Value comparison happens before mutable path access so derived paths cannot
+    /// materialize absent parent values.
     pub fn reset_field<Value>(&mut self, path: FieldPath<Model, Value>)
     where
-        Value: Clone,
+        Value: Clone + PartialEq,
     {
         let field = FormObserverField::from_path(&path);
         let field_identity = field.identity();
+        let value_matches_baseline =
+            path.get(self.draft.current()) == path.get(self.draft.baseline());
 
-        let baseline = path.get(self.draft.baseline()).clone();
-        *path.get_mut(self.draft.current_mut()) = baseline;
+        if value_matches_baseline
+            && !self.field_store.has_reset_relevant_state(&field_identity)
+            && !self
+                .validation_chains
+                .field_has_validation_state(&field_identity)
+            && !self.submission.has_error_for_field(&field_identity)
+        {
+            return;
+        }
+
+        if !value_matches_baseline {
+            let baseline = path.get(self.draft.baseline()).clone();
+            *path.get_mut(self.draft.current_mut()) = baseline;
+        }
 
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();

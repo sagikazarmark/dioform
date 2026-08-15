@@ -61,6 +61,11 @@ impl FieldStore {
         self.metadata.entry(field.clone()).or_default()
     }
 
+    /// Returns whether a field has version or interaction state that a field reset must clear.
+    pub(crate) fn has_reset_relevant_state(&self, field: &FieldIdentity) -> bool {
+        self.version(field) != 0 || self.metadata(field) != FieldMetadata::default()
+    }
+
     // --- collections (state stored opaquely; mutation logic stays in Form Core) ---
 
     /// Borrows the collection state for a collection field, if it has been registered.

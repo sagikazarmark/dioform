@@ -2508,6 +2508,10 @@ fn dioxus_reset_field_emits_a_field_reset_observer_event() {
         core.observe(move |event| captured_events.borrow_mut().push(event.clone()));
     });
 
+    handle.set_field(
+        ProfileForm::fields().email(),
+        "edited@example.com".to_owned(),
+    );
     handle.reset_field(ProfileForm::fields().email());
 
     assert!(captured.borrow().iter().any(|event| matches!(

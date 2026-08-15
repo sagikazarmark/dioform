@@ -11,7 +11,7 @@
 //! transitions and holds the stored errors; it never reaches into the chain. **Submit Intent** is
 //! stored erased here, so the typed intent stays at the intent-scoped boundary.
 
-use crate::{StoredLastSubmitStatus, StoredSubmitError, SubmitIntentSnapshot};
+use crate::{FieldIdentity, StoredLastSubmitStatus, StoredSubmitError, SubmitIntentSnapshot};
 
 /// Owns the submit lifecycle state of one **Form Core**.
 pub(crate) struct SubmissionState<Error> {
@@ -114,6 +114,13 @@ impl<Error> SubmissionState<Error> {
     /// Returns whether any **Submit Error** is currently stored.
     pub(crate) fn has_errors(&self) -> bool {
         !self.errors.is_empty()
+    }
+
+    /// Returns whether a **Submit Error** is attached to one field.
+    pub(crate) fn has_error_for_field(&self, field: &FieldIdentity) -> bool {
+        self.errors
+            .iter()
+            .any(|error| error.target.as_field() == Some(field))
     }
 
     /// Replaces the stored **Submit Errors** with the outcome of one submission.

@@ -5313,13 +5313,17 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     /// untouched. In-flight async validation for the field is superseded by the field's new version
     /// and ignored on completion, so no explicit cancellation is needed.
     ///
+    /// If the current typed value already equals its baseline and has no field-scoped state,
+    /// form-core state is left unchanged; adapter-owned **Parse Error** and **Raw Input State** are
+    /// still cleared.
+    ///
     /// This slice targets direct **Field Paths**. Resetting a whole **Collection Field** or an
     /// individual collection-item child field is out of scope; use whole-form [`Self::reset`] for
     /// collections, since a single-field reset does not reconcile collection-item identities or
     /// item-scoped validator state.
     pub fn reset_field<Value>(&self, path: FieldPath<Model, Value>)
     where
-        Value: Clone,
+        Value: Clone + PartialEq,
     {
         let field = path.identity();
         self.write_core(|core| core.reset_field(path));
