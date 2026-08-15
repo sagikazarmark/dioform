@@ -44,13 +44,21 @@ under this decision gains a relation to `counterparty`. The rule therefore belon
 claiming joined paths "are interned for the lifetime of the process" is incorrect — `owned_segment` is
 a bare `.into()` and `join_static_path` allocates on every call — and is corrected as part of this work.
 
-The relation ships as one **symmetric** predicate in `dioform_core::__private`, doc-hidden, following
-`CollectionItemFieldAddress`. Both **Form Core** and the **Dioxus Adapter** need it and Rust has no
-cross-crate `pub(crate)`, but the payoff today is internal: two first-party crates agreeing on one
-rule. [ADR-0018](0018-decline-public-validation-adapter-trait.md) declined publishing a seam whose
-entire payoff was internal dedup; the same test applies here. Promote it to documented public when a
-second renderer adapter or a real application need appears. It stays a predicate — no `parent()`,
-`segments()`, or `depth()` accessors — so the representation remains swappable if
+The relation ships as one **symmetric** predicate in `dioform_core::__private`, doc-hidden. The
+precedent it follows from `CollectionItemFieldAddress` is the export — a doc-hidden `__private`
+re-export of a type two first-party crates share — not the type's shape: that one carries derived
+addressing data, while this one is a fieldless namespace holding a single associated function. Both
+**Form Core** and the **Dioxus Adapter** need it and Rust has no cross-crate `pub(crate)`, but the
+payoff today is internal: two first-party crates agreeing on one rule.
+[ADR-0018](0018-decline-public-validation-adapter-trait.md) declined publishing a seam whose entire
+payoff was internal dedup; the same test applies here. Promote it to documented public when a second
+renderer adapter or a real application need appears.
+
+A namespace rather than a `FieldIdentity` method, because `FieldIdentity` is public API: a method
+would have to be a `#[doc(hidden)] pub fn` on a type applications hold, which advertises the seam on
+the very surface this decision is keeping it off. Swappability does not decide this — a method would
+be equally swappable — so it is the export surface that does. It stays a predicate either way — no
+`parent()`, `segments()`, or `depth()` accessors — so the representation remains swappable if
 [ADR-0002](0002-use-library-owned-collection-item-identity.md)'s deferred map and array traversal ever
 make segments stop being `.`-splittable. One symmetric predicate rather than a directional pair,
 because every call site needs ancestor-or-descendant-or-equal and asking callers to reason about
@@ -137,10 +145,18 @@ conservative and avoids a validation dependency graph".
 **Validator re-runs widen the filter, not the pass count.** `validate_field_chain` is expensive per
 call: it runs `ensure_all_collection_item_validator_states()` and clones-and-sorts the validator table
 several times. Invoking it once per descendant multiplies all of that. The selection inside
-`sync_field_keys_for_chain` widens instead, so the cost stays one pass. The async step must stay
-per-field: `validate_field_chain` folds all keys into a single `valid` flag that gates async
-skip-versus-clear, so merging descendants into one chain would let a child's sync failure skip an
-ancestor's async validators.
+`sync_field_keys_for_chain` and `sync_collection_item_keys_for_chain` widens instead, so the cost
+stays one pass. Both widen: the item-child cases below are unreachable through the collection-item
+table alone.
+
+Widening the selection is what puts relatives in one chain, so the chain's *verdict* has to be
+narrowed to compensate. `validate_field_sync_chain` folds every key it ran into a single `valid`
+flag, and that flag gates async skip-versus-clear for the written field — so once relatives are in
+the chain, a child's failing sync validator would skip its parent's async validators, and through
+`with_async_start_sync_gate` would stop them starting at all. The flag therefore reports only the
+written field's own validators; relatives run for their errors and notifications, not for their vote.
+Widening the filter and keeping the async step per-field are in tension by construction, and this is
+where the tension is resolved.
 
 **Async validator restart propagates.** `replace_field_with_origin` invalidates async field validators
 model-wide and `mark_stale` clears their errors, while the adapter restarts only the written identity.
