@@ -2,12 +2,33 @@
 
 The first **Collection Field** slice supports direct `Vec<Item>` fields on a named **Form Model** and nested direct collection paths reached through named-struct **Field Path** composition. The form owns the vector value and assigns each current item a library-owned opaque **Collection Item Identity** so metadata, errors, parse blockers, and row keys follow the logical item across insertion, removal, and reordering. Use binding `key()` helpers or `CollectionItemIdentity::key()` for rendering keys instead of inspecting numeric identity internals.
 
-Use `FormHandle::collection(path)` to create a `CollectionBinding` for a direct `Vec<Item>` field path.
+Use `FormHandle::collection(path)` to create a `CollectionBinding` for a direct `Vec<Item>` field path. Render each row as its own component, keyed by the item's **Collection Item Identity**:
 
 ```rust
-let lines = form.collection(InvoiceForm::fields().lines());
+struct InvoiceScope;
 
-for item in lines.items() {
+#[component]
+fn InvoiceEditor() -> Element {
+    let form = provide_form_context::<InvoiceScope, _, _>(use_form(initial()));
+    let lines = form.collection(InvoiceForm::fields().lines());
+
+    rsx! {
+        for item in lines.items() {
+            InvoiceLineRow { key: "{item.key()}", item: item.identity() }
+        }
+    }
+}
+
+#[component]
+fn InvoiceLineRow(item: CollectionItemIdentity) -> Element {
+    let form = use_form_context::<InvoiceScope, InvoiceForm, String>();
+    let item = form
+        .collection(InvoiceForm::fields().lines())
+        .items()
+        .into_iter()
+        .find(|candidate| candidate.identity() == item)
+        .expect("the page renders one row per item the collection currently holds");
+
     let description = item.text(InvoiceLine::fields().description());
     let quantity = use_collection_item_number(
         item.clone(),
@@ -16,20 +37,27 @@ for item in lines.items() {
 
     rsx! {
         input {
-            key: "{item.key()}",
             name: description.name(),
             value: description.value(),
-            oninput: move |event| description.on_input(event.value()),
+            oninput: description.oninput(),
         }
         input {
             r#type: "number",
             name: quantity.name(),
             value: quantity.value(),
-            oninput: move |event| quantity.on_input(event.value()),
+            oninput: quantity.oninput(),
         }
     }
 }
 ```
+
+A row that calls a collection-item hook must be a component keyed by the item identity, because the hook's parse state lives in the scope that calls it:
+
+- A plain `fn` row helper called from the page's `for` loop runs its `use_` calls in the **page's** hook slots, indexed by loop order. Removing or reordering a row silently re-keys later rows' **Parse Blockers** to the wrong item.
+- A row component keyed by index has the same problem one level down: Dioxus reuses the scope that sits at that index, hook state and all.
+- `key: "{item.key()}"` (or `CollectionItemIdentity::key()`) ties the row's scope to the logical item, so its parse state moves with the item and is released with it.
+
+Row components take the identity as a prop and retrieve the handle as a **Form Context Consumer** under the page's **Form Context Scope** (see [Form Context Access](form-context.md)). Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
 
 For a collection under a nested named struct, compose the generated direct field paths with `FieldPath::join`:
 
@@ -43,7 +71,7 @@ let product_name = InvoiceLine::fields()
     .join(Product::fields().name());
 
 for item in form.collection(lines).items() {
-    let name = item.text(product_name);
+    let name = item.text(product_name.clone());
 
     assert_eq!(name.name(), "invoice.lines[0].product.name");
 }
@@ -53,7 +81,7 @@ The composed collection **Field Identity** remains static, such as `invoice.line
 
 Collection item child bindings use the current rendered index for their HTML-compatible **Field Name**, such as `lines[0].description`. Accessibility helpers and row keys use **Collection Item Identity** so they stay stable when the item moves.
 
-When a collection item child input owns parse state, prefer `use_collection_item_parsed_text`, `use_collection_item_parsed_text_with`, `use_collection_item_number`, or `use_collection_item_number_with` inside row components. These hooks keep the mounted Parse Blocker keyed by **Collection Item Identity** and child field identity while `name()` continues to reflect the latest rendered index.
+When a collection item child input owns parse state, prefer `use_collection_item_parsed_text`, `use_collection_item_parsed_text_with`, `use_collection_item_number`, or `use_collection_item_number_with` inside identity-keyed row components, as in the example above. These hooks keep the mounted Parse Blocker keyed by **Collection Item Identity** and child field identity while `name()` continues to reflect the latest rendered index.
 
 Supported in this slice:
 

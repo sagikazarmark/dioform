@@ -26,6 +26,9 @@ impl InvoiceLine {
     }
 }
 
+/// Form Context Scope for this page, so keyed row components can retrieve the handle.
+struct InvoiceScope;
+
 fn initial() -> InvoiceForm {
     InvoiceForm {
         customer: "Analytical Engines Ltd".into(),
@@ -83,12 +86,23 @@ fn build() -> FormHandle<InvoiceForm> {
     form
 }
 
-fn line_row(
-    collection: &CollectionBinding<InvoiceForm, InvoiceLine, String>,
-    item: CollectionItemBinding<InvoiceForm, InvoiceLine, String>,
-    line: InvoiceLine,
-    count: usize,
-) -> Element {
+/// One invoice line row.
+///
+/// Rows that call a collection-item hook must be components keyed by
+/// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
+/// index key would hand a reordered or removed row's parse state to whichever
+/// item lands on that index next.
+#[component]
+fn LineRow(item: CollectionItemIdentity, total_cents: u32) -> Element {
+    let form = use_form_context::<InvoiceScope, InvoiceForm, String>();
+    let collection = form.collection(InvoiceForm::fields().lines());
+    let items = collection.items();
+    let count = items.len();
+    let item = items
+        .into_iter()
+        .find(|candidate| candidate.identity() == item)
+        .expect("the page renders one row per line the collection currently holds");
+
     let f = InvoiceLine::fields();
     let index = item.index();
     let description = item.text(f.description());
@@ -105,7 +119,7 @@ fn line_row(
     let unit_oninput = unit.clone();
     let up = collection.clone();
     let down = collection.clone();
-    let remove = collection.clone();
+    let remove = collection;
     let id_up = item.identity();
     let id_down = item.identity();
     let id_remove = item.identity();
@@ -169,7 +183,7 @@ fn line_row(
                         p { class: "text-xs text-error", "{error}" }
                     }
                 }
-                p { class: "text-sm font-semibold", "Line total {money(line.total_cents())}" }
+                p { class: "text-sm font-semibold", "Line total {money(total_cents)}" }
             }
         }
     }
@@ -177,7 +191,7 @@ fn line_row(
 
 #[component]
 pub fn Invoice() -> Element {
-    let form = use_form_handle(build);
+    let form = provide_form_context::<InvoiceScope, _, _>(use_form_handle(build));
     let f = InvoiceForm::fields();
     let mut status = use_signal(String::new);
 
@@ -192,9 +206,8 @@ pub fn Invoice() -> Element {
     let form_for_reset = form.clone();
 
     let snapshot = form.snapshot();
-    let rows = snapshot.lines.clone();
     let items = lines.items();
-    let subtotal: u32 = rows.iter().map(InvoiceLine::total_cents).sum();
+    let subtotal: u32 = snapshot.lines.iter().map(InvoiceLine::total_cents).sum();
     let tax = subtotal / 10;
     let total = subtotal + tax;
 
@@ -244,9 +257,11 @@ pub fn Invoice() -> Element {
                             }
                         }
                         div { class: "space-y-2",
-                            for item in items.iter().cloned() {
-                                if let Some(line) = rows.get(item.index()).cloned() {
-                                    {line_row(&lines, item, line, rows.len())}
+                            for (index, item) in items.iter().enumerate() {
+                                LineRow {
+                                    key: "{item.key()}",
+                                    item: item.identity(),
+                                    total_cents: snapshot.lines.get(index).map_or(0, InvoiceLine::total_cents),
                                 }
                             }
                         }
