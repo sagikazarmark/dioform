@@ -347,7 +347,7 @@ The user-facing Dioxus crate that re-exports common core types and the derive ma
 _Avoid_: Core crate
 
 **Form Handle**:
-A Dioxus-facing, cheap-to-pass reference to form state and behavior returned by form hooks.
+A Dioxus-facing, cheap-to-pass reference to form state and behavior returned by form hooks. Its observable identity comprises the underlying form instance and its **Form ID Namespace**, so handles that share form state but derive different rendered IDs remain distinct.
 _Avoid_: Form core state
 
 **Form Context Scope**:
