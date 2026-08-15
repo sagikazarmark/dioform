@@ -91,6 +91,45 @@ struct InvoiceCollectionLine {
     quantity: u32,
 }
 
+#[derive(Clone, Debug, Default, Eq, Form, PartialEq)]
+struct NestedCustomerForm {
+    invoice: NestedCustomerInvoice,
+}
+
+#[derive(Clone, Debug, Default, Eq, Form, PartialEq)]
+struct NestedCustomerInvoice {
+    customer: NestedCustomer,
+    customer_account: NestedCustomer,
+}
+
+#[derive(Clone, Debug, Default, Eq, Form, PartialEq)]
+struct NestedCustomer {
+    name: String,
+}
+
+fn nested_customer_path() -> FieldPath<NestedCustomerForm, NestedCustomer> {
+    NestedCustomerForm::fields()
+        .invoice()
+        .join(NestedCustomerInvoice::fields().customer())
+}
+
+fn nested_customer_name_path() -> FieldPath<NestedCustomerForm, String> {
+    nested_customer_path().join(NestedCustomer::fields().name())
+}
+
+fn nested_customer_account_name_path() -> FieldPath<NestedCustomerForm, String> {
+    NestedCustomerForm::fields()
+        .invoice()
+        .join(NestedCustomerInvoice::fields().customer_account())
+        .join(NestedCustomer::fields().name())
+}
+
+fn nested_customer(name: &str) -> NestedCustomer {
+    NestedCustomer {
+        name: name.to_owned(),
+    }
+}
+
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct NestedInvoiceCollectionForm {
     invoice: NestedInvoice,
@@ -5409,6 +5448,178 @@ fn field_value_selectors_do_not_rerender_unrelated_field_readers() {
     assert_eq!(probe.terms_values.borrow().as_slice(), [false, true]);
 }
 
+struct NestedFieldSelectorProbe {
+    form: FormHandle<NestedCustomerForm>,
+    customer_values: RefCell<Vec<NestedCustomer>>,
+    customer_name_values: RefCell<Vec<String>>,
+    account_name_values: RefCell<Vec<String>>,
+}
+
+impl NestedFieldSelectorProbe {
+    fn new() -> Self {
+        Self {
+            form: FormHandle::new(NestedCustomerForm::default()),
+            customer_values: RefCell::new(Vec::new()),
+            customer_name_values: RefCell::new(Vec::new()),
+            account_name_values: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+fn nested_customer_value_selector_probe(probe: Rc<NestedFieldSelectorProbe>) -> Element {
+    let value = probe.form.field_value(nested_customer_path());
+
+    probe.customer_values.borrow_mut().push(value);
+
+    VNode::empty()
+}
+
+fn nested_customer_name_value_selector_probe(probe: Rc<NestedFieldSelectorProbe>) -> Element {
+    let value = probe.form.text(nested_customer_name_path()).value();
+
+    probe.customer_name_values.borrow_mut().push(value);
+
+    VNode::empty()
+}
+
+fn nested_customer_account_name_value_selector_probe(
+    probe: Rc<NestedFieldSelectorProbe>,
+) -> Element {
+    let value = probe.form.field_value(nested_customer_account_name_path());
+
+    probe.account_name_values.borrow_mut().push(value);
+
+    VNode::empty()
+}
+
+#[test]
+fn field_value_selectors_rerender_across_field_ancestry() {
+    let probe = Rc::new(NestedFieldSelectorProbe::new());
+    let mut customer_dom =
+        VirtualDom::new_with_props(nested_customer_value_selector_probe, Rc::clone(&probe));
+    let mut name_dom =
+        VirtualDom::new_with_props(nested_customer_name_value_selector_probe, Rc::clone(&probe));
+
+    customer_dom.rebuild_in_place();
+    name_dom.rebuild_in_place();
+
+    assert_eq!(probe.customer_name_values.borrow().as_slice(), [""]);
+
+    probe
+        .form
+        .set_user_field(nested_customer_path(), nested_customer("Ada"));
+    customer_dom.render_immediate_to_vec();
+    name_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.customer_name_values.borrow().as_slice(),
+        ["".to_owned(), "Ada".to_owned()]
+    );
+
+    probe
+        .form
+        .set_user_field(nested_customer_name_path(), "Grace".to_owned());
+    customer_dom.render_immediate_to_vec();
+    name_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.customer_values.borrow().as_slice(),
+        [
+            NestedCustomer::default(),
+            nested_customer("Ada"),
+            nested_customer("Grace"),
+        ]
+    );
+}
+
+#[test]
+fn field_value_selectors_do_not_rerender_a_sibling_outside_field_ancestry() {
+    let probe = Rc::new(NestedFieldSelectorProbe::new());
+    let mut account_dom = VirtualDom::new_with_props(
+        nested_customer_account_name_value_selector_probe,
+        Rc::clone(&probe),
+    );
+
+    account_dom.rebuild_in_place();
+
+    assert_eq!(probe.account_name_values.borrow().as_slice(), [""]);
+
+    probe
+        .form
+        .set_user_field(nested_customer_path(), nested_customer("Ada"));
+    account_dom.render_immediate_to_vec();
+
+    assert_eq!(probe.account_name_values.borrow().as_slice(), [""]);
+}
+
+struct NestedCollectionItemSelectorProbe {
+    form: FormHandle<NestedInvoiceCollectionForm>,
+    product_name: CollectionTextBinding<NestedInvoiceCollectionForm, NestedInvoiceLine>,
+    product_name_values: RefCell<Vec<String>>,
+}
+
+impl NestedCollectionItemSelectorProbe {
+    fn new() -> Self {
+        let form = FormHandle::new(nested_invoice_collection_form());
+        let lines = form.collection(
+            NestedInvoiceCollectionForm::fields()
+                .invoice()
+                .join(NestedInvoice::fields().lines()),
+        );
+        let product_name = lines.items()[0].text(
+            NestedInvoiceLine::fields()
+                .product()
+                .join(NestedProduct::fields().name()),
+        );
+
+        Self {
+            form,
+            product_name,
+            product_name_values: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+fn nested_collection_item_value_selector_probe(
+    probe: Rc<NestedCollectionItemSelectorProbe>,
+) -> Element {
+    let value = probe.product_name.value();
+
+    probe.product_name_values.borrow_mut().push(value);
+
+    VNode::empty()
+}
+
+#[test]
+fn collection_item_value_selectors_rerender_when_a_field_containing_the_collection_is_written() {
+    let probe = Rc::new(NestedCollectionItemSelectorProbe::new());
+    let mut product_name_dom = VirtualDom::new_with_props(
+        nested_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+
+    product_name_dom.rebuild_in_place();
+
+    assert_eq!(probe.product_name_values.borrow().as_slice(), ["Keyboard"]);
+
+    probe.form.set_user_field(
+        NestedInvoiceCollectionForm::fields().invoice(),
+        NestedInvoice {
+            lines: vec![NestedInvoiceLine {
+                product: NestedProduct {
+                    name: "Mouse".to_owned(),
+                },
+            }],
+        },
+    );
+    product_name_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.product_name_values.borrow().as_slice(),
+        ["Keyboard".to_owned(), "Mouse".to_owned()]
+    );
+}
+
 #[test]
 fn file_selection_selector_rerenders_when_selected_files_change() {
     let probe = Rc::new(FileSelectionSelectorProbe::new());
@@ -7722,6 +7933,105 @@ fn manual_async_validation_probe(probe: Rc<ManualAsyncValidationProbe>) -> Eleme
         });
 
     VNode::empty()
+}
+
+#[derive(Default)]
+struct NestedAsyncValidationProbe {
+    write_name: RefCell<Option<Box<ActionHandler>>>,
+    write_customer: RefCell<Option<Box<ActionHandler>>>,
+    runs: Cell<u32>,
+    error_counts: RefCell<Vec<usize>>,
+}
+
+fn nested_async_validation_probe(probe: Rc<NestedAsyncValidationProbe>) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<NestedCustomerForm, &'static str> =
+                FormHandle::new_with_error_type(NestedCustomerForm::default())
+                    .with_validation_mode(ValidationMode::on_change());
+            let runs_probe = Rc::clone(&probe);
+
+            form.field(nested_customer_name_path())
+                .async_validator("availability")
+                .on(ValidationTrigger::Change)
+                .check(move |value: String, _snapshot| {
+                    runs_probe.runs.set(runs_probe.runs.get() + 1);
+
+                    async move {
+                        if value.is_empty() {
+                            vec!["name_required"]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                });
+
+            form
+        }
+    });
+
+    let runtime = dioxus_core::Runtime::current();
+    let scope = runtime.current_scope_id();
+    let write_name = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.set_user_field(nested_customer_name_path(), String::new());
+            });
+        }
+    };
+    let write_customer = {
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.set_user_field(nested_customer_path(), NestedCustomer::default());
+            });
+        }
+    };
+    let error_count = form
+        .field_validation_errors(nested_customer_name_path())
+        .len();
+
+    probe.write_name.borrow_mut().replace(Box::new(write_name));
+    probe
+        .write_customer
+        .borrow_mut()
+        .replace(Box::new(write_customer));
+    probe.error_counts.borrow_mut().push(error_count);
+
+    VNode::empty()
+}
+
+fn run_probe_action(action: &RefCell<Option<Box<ActionHandler>>>) {
+    let action = action.borrow();
+    let action = action.as_ref().expect("probe action should be registered");
+
+    action();
+}
+
+#[test]
+fn async_validation_on_a_contained_field_restarts_when_its_container_is_written() {
+    let probe = Rc::new(NestedAsyncValidationProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_async_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    run_probe_action(&probe.write_name);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.runs.get(), 1);
+    assert_eq!(probe.error_counts.borrow().last(), Some(&1));
+
+    run_probe_action(&probe.write_customer);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.runs.get(), 2);
+    assert_eq!(probe.error_counts.borrow().last(), Some(&1));
 }
 
 #[derive(Default)]

@@ -1,3 +1,5 @@
+use dioform_core::__private::FieldAncestry;
+
 use super::{FieldIdentity, FormReactivity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,16 +78,24 @@ impl SelectorTransition {
                 );
                 notifications
             }
-            Self::FieldValueChanged(field) => vec![
-                SelectorNotification::WholeForm,
-                SelectorNotification::Snapshot,
-                SelectorNotification::Submit,
-                SelectorNotification::ValidationErrors,
-                SelectorNotification::VisibleValidationErrors,
-                SelectorNotification::FieldValue(field.clone()),
-                SelectorNotification::FieldValidationErrors(field.clone()),
-                SelectorNotification::VisibleFieldValidationErrors(field),
-            ],
+            Self::FieldValueChanged(field) => {
+                let mut notifications = vec![
+                    SelectorNotification::WholeForm,
+                    SelectorNotification::Snapshot,
+                    SelectorNotification::Submit,
+                    SelectorNotification::ValidationErrors,
+                    SelectorNotification::VisibleValidationErrors,
+                    SelectorNotification::FieldValue(field.clone()),
+                    SelectorNotification::FieldValidationErrors(field.clone()),
+                    SelectorNotification::VisibleFieldValidationErrors(field.clone()),
+                ];
+                extend_field_value_ancestry(
+                    &mut notifications,
+                    tracked_fields,
+                    std::slice::from_ref(&field),
+                );
+                notifications
+            }
             Self::FieldMetadataChanged(field) => vec![
                 SelectorNotification::WholeForm,
                 SelectorNotification::VisibleValidationErrors,
@@ -100,69 +110,43 @@ impl SelectorTransition {
                 SelectorNotification::FieldValidationErrors(field.clone()),
                 SelectorNotification::VisibleFieldValidationErrors(field),
             ],
-            Self::CollectionStructureChanged(collection) => {
-                let mut notifications = Vec::new();
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldValueChanged(collection).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::ValidationChanged.selector_notifications(tracked_fields),
-                );
-                notifications
-            }
-            Self::CollectionStructureUserChanged(collection) => {
-                let mut notifications = Vec::new();
-                extend_unique(
-                    &mut notifications,
+            Self::CollectionStructureChanged(collection) => Self::composite_notifications(
+                [Self::FieldValueChanged(collection.clone()).selector_notifications([])],
+                tracked_fields,
+                std::slice::from_ref(&collection),
+            ),
+            Self::CollectionStructureUserChanged(collection) => Self::composite_notifications(
+                [
                     Self::FieldValueChanged(collection.clone()).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldMetadataChanged(collection).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::ValidationChanged.selector_notifications(tracked_fields),
-                );
-                notifications
-            }
+                    Self::FieldMetadataChanged(collection.clone()).selector_notifications([]),
+                ],
+                tracked_fields,
+                std::slice::from_ref(&collection),
+            ),
             Self::CollectionItemFieldValueChanged { collection, field } => {
-                let mut notifications = Vec::new();
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldValueChanged(collection).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldValueChanged(field).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::ValidationChanged.selector_notifications(tracked_fields),
-                );
-                notifications
+                let written = [collection, field];
+
+                Self::composite_notifications(
+                    [
+                        Self::FieldValueChanged(written[0].clone()).selector_notifications([]),
+                        Self::FieldValueChanged(written[1].clone()).selector_notifications([]),
+                    ],
+                    tracked_fields,
+                    &written,
+                )
             }
             Self::CollectionItemFieldUserValueChanged { collection, field } => {
-                let mut notifications = Vec::new();
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldValueChanged(collection).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldValueChanged(field.clone()).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::FieldMetadataChanged(field).selector_notifications([]),
-                );
-                extend_unique(
-                    &mut notifications,
-                    Self::ValidationChanged.selector_notifications(tracked_fields),
-                );
-                notifications
+                let written = [collection, field];
+
+                Self::composite_notifications(
+                    [
+                        Self::FieldValueChanged(written[0].clone()).selector_notifications([]),
+                        Self::FieldValueChanged(written[1].clone()).selector_notifications([]),
+                        Self::FieldMetadataChanged(written[1].clone()).selector_notifications([]),
+                    ],
+                    tracked_fields,
+                    &written,
+                )
             }
             Self::ValidationChanged => {
                 let mut notifications = vec![
@@ -203,6 +187,61 @@ impl SelectorTransition {
                 SelectorNotification::ParseErrors,
                 SelectorNotification::FieldParseErrors(field),
             ],
+        }
+    }
+
+    /// Assembles a transition that is composed of several simpler ones over the same write.
+    ///
+    /// The legs are deduplicated against each other because they overlap by construction. The
+    /// ancestry expansion runs after them and outside [`extend_unique`]: it is the only part that
+    /// scales with the number of tracked identities, and `extend_unique` is a linear scan per item.
+    fn composite_notifications(
+        legs: impl IntoIterator<Item = Vec<SelectorNotification>>,
+        tracked_fields: impl IntoIterator<Item = FieldIdentity>,
+        written: &[FieldIdentity],
+    ) -> Vec<SelectorNotification> {
+        let tracked_fields: Vec<_> = tracked_fields.into_iter().collect();
+        let mut notifications = Vec::new();
+
+        for leg in legs {
+            extend_unique(&mut notifications, leg);
+        }
+
+        extend_unique(
+            &mut notifications,
+            Self::ValidationChanged.selector_notifications(tracked_fields.iter().cloned()),
+        );
+        extend_field_value_ancestry(&mut notifications, tracked_fields, written);
+        notifications
+    }
+}
+
+/// Wakes the value selector of every tracked identity in **Field Ancestry** with a written field.
+///
+/// Only value selectors are expanded. Every field mutation already emits a validation-changed
+/// transition that fans validation-error selectors out over every tracked identity, so expanding
+/// those here would add a redundant second wake on the write path; metadata and parse errors are
+/// scoped to the written field by the write itself.
+///
+/// Expansion filters the identities that are *already* tracked. It must never derive ancestors by
+/// splitting the written path and notifying them, because looking a field up in the reactivity map
+/// inserts it, which would grow that map with identities nothing ever read. The written fields
+/// themselves are skipped: their value selectors are already in `notifications`.
+fn extend_field_value_ancestry(
+    notifications: &mut Vec<SelectorNotification>,
+    tracked_fields: impl IntoIterator<Item = FieldIdentity>,
+    written: &[FieldIdentity],
+) {
+    for tracked in tracked_fields {
+        if written.contains(&tracked) {
+            continue;
+        }
+
+        if written
+            .iter()
+            .any(|field| FieldAncestry::relates(field, &tracked))
+        {
+            notifications.push(SelectorNotification::FieldValue(tracked));
         }
     }
 }
@@ -310,6 +349,35 @@ mod tests {
                 SelectorNotification::FieldMetadata(field.clone()),
                 SelectorNotification::FormValidationErrors,
                 SelectorNotification::VisibleFormValidationErrors,
+            ]
+        );
+    }
+
+    #[test]
+    fn field_value_change_wakes_tracked_value_selectors_in_field_ancestry() {
+        let customer = FieldIdentity::new("invoice.customer");
+        let name = FieldIdentity::new("invoice.customer.name");
+        let invoice = FieldIdentity::new("invoice");
+        let sibling = FieldIdentity::new("invoice.customer_account");
+
+        assert_eq!(
+            SelectorTransition::FieldValueChanged(customer.clone()).selector_notifications([
+                name.clone(),
+                invoice.clone(),
+                sibling,
+                customer.clone(),
+            ]),
+            vec![
+                SelectorNotification::WholeForm,
+                SelectorNotification::Snapshot,
+                SelectorNotification::Submit,
+                SelectorNotification::ValidationErrors,
+                SelectorNotification::VisibleValidationErrors,
+                SelectorNotification::FieldValue(customer.clone()),
+                SelectorNotification::FieldValidationErrors(customer.clone()),
+                SelectorNotification::VisibleFieldValidationErrors(customer),
+                SelectorNotification::FieldValue(name),
+                SelectorNotification::FieldValue(invoice),
             ]
         );
     }

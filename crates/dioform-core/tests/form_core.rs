@@ -135,6 +135,123 @@ fn invoice_page() -> InvoicePage {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Customer {
+    name: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct NestedLine {
+    customer: Customer,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct NestedInvoice {
+    customer: Customer,
+    customer_account: Customer,
+    lines: Vec<NestedLine>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct NestedPage {
+    invoice: NestedInvoice,
+}
+
+fn nested_invoice_path() -> FieldPath<NestedPage, NestedInvoice> {
+    FieldPath::direct(
+        FieldIdentity::new("invoice"),
+        "invoice",
+        |model: &NestedPage| &model.invoice,
+        |model: &mut NestedPage| &mut model.invoice,
+    )
+}
+
+fn invoice_customer_path() -> FieldPath<NestedInvoice, Customer> {
+    FieldPath::direct(
+        FieldIdentity::new("customer"),
+        "customer",
+        |invoice: &NestedInvoice| &invoice.customer,
+        |invoice: &mut NestedInvoice| &mut invoice.customer,
+    )
+}
+
+fn invoice_customer_account_path() -> FieldPath<NestedInvoice, Customer> {
+    FieldPath::direct(
+        FieldIdentity::new("customer_account"),
+        "customer_account",
+        |invoice: &NestedInvoice| &invoice.customer_account,
+        |invoice: &mut NestedInvoice| &mut invoice.customer_account,
+    )
+}
+
+fn customer_name_path() -> FieldPath<Customer, String> {
+    FieldPath::direct(
+        FieldIdentity::new("name"),
+        "name",
+        |customer: &Customer| &customer.name,
+        |customer: &mut Customer| &mut customer.name,
+    )
+}
+
+fn nested_customer_path() -> FieldPath<NestedPage, Customer> {
+    nested_invoice_path().join(invoice_customer_path())
+}
+
+fn nested_customer_name_path() -> FieldPath<NestedPage, String> {
+    nested_customer_path().join(customer_name_path())
+}
+
+fn nested_customer_account_name_path() -> FieldPath<NestedPage, String> {
+    nested_invoice_path()
+        .join(invoice_customer_account_path())
+        .join(customer_name_path())
+}
+
+fn invoice_lines_path() -> FieldPath<NestedInvoice, Vec<NestedLine>> {
+    FieldPath::direct(
+        FieldIdentity::new("lines"),
+        "lines",
+        |invoice: &NestedInvoice| &invoice.lines,
+        |invoice: &mut NestedInvoice| &mut invoice.lines,
+    )
+}
+
+fn nested_invoice_lines_path() -> FieldPath<NestedPage, Vec<NestedLine>> {
+    nested_invoice_path().join(invoice_lines_path())
+}
+
+fn line_customer_path() -> FieldPath<NestedLine, Customer> {
+    FieldPath::direct(
+        FieldIdentity::new("customer"),
+        "customer",
+        |line: &NestedLine| &line.customer,
+        |line: &mut NestedLine| &mut line.customer,
+    )
+}
+
+fn line_customer_name_path() -> FieldPath<NestedLine, String> {
+    line_customer_path().join(customer_name_path())
+}
+
+fn line_field_identity_for(item: CollectionItemIdentity, field: &'static str) -> FieldIdentity {
+    FieldIdentity::collection_item("invoice.lines", item, field)
+}
+
+fn nested_customer(name: &str) -> Customer {
+    Customer {
+        name: name.to_owned(),
+    }
+}
+
+fn nested_page_with_one_line() -> NestedPage {
+    NestedPage {
+        invoice: NestedInvoice {
+            lines: vec![NestedLine::default()],
+            ..NestedInvoice::default()
+        },
+    }
+}
+
 fn email_path() -> FieldPath<RegistrationForm, String> {
     FieldPath::direct(
         FieldIdentity::new("email"),
@@ -275,6 +392,22 @@ fn dirty_state_is_derived_from_current_values_and_baseline_values() {
 
     assert!(!form.is_dirty());
     assert!(!form.is_field_dirty(name_path()));
+}
+
+#[test]
+fn dirty_state_stays_a_value_comparison_across_field_ancestry() {
+    let mut form = FormCore::new(NestedPage::default());
+
+    form.set_field(nested_customer_path(), nested_customer("Ada"));
+
+    assert!(form.is_field_dirty(nested_customer_path()));
+    assert!(form.is_field_dirty(nested_customer_name_path()));
+    assert!(!form.is_field_dirty(nested_customer_account_name_path()));
+
+    form.set_field(nested_customer_name_path(), String::new());
+
+    assert!(!form.is_field_dirty(nested_customer_path()));
+    assert!(!form.is_field_dirty(nested_customer_name_path()));
 }
 
 #[test]
@@ -4785,6 +4918,228 @@ fn value_change_validation_runs_only_when_policy_is_configured() {
 }
 
 #[test]
+fn change_validation_on_a_contained_field_reruns_when_its_container_is_written() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default())
+            .with_validation_mode(ValidationMode::on_change());
+
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "required",
+        ValidationTrigger::Change,
+        |value, _context| {
+            if value.is_empty() {
+                vec!["name_required"]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+
+    form.set_user_field(nested_customer_path(), Customer::default());
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_name_path())[0].error(),
+        &"name_required"
+    );
+
+    form.set_user_field(nested_customer_path(), nested_customer("Ada"));
+
+    assert!(
+        form.field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn change_validation_on_a_container_reruns_when_a_field_it_contains_is_written() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default())
+            .with_validation_mode(ValidationMode::on_change());
+
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_path(),
+        "named",
+        ValidationTrigger::Change,
+        |customer, _context| {
+            if customer.name.is_empty() {
+                vec!["customer_unnamed"]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+
+    form.set_user_field(nested_customer_name_path(), String::new());
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_path())[0].error(),
+        &"customer_unnamed"
+    );
+
+    form.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert!(
+        form.field_validation_errors(nested_customer_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn change_validation_on_an_item_child_field_reruns_when_a_containing_field_is_written() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line())
+            .with_validation_mode(ValidationMode::on_change());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    form.register_sync_collection_item_field_validator_for_triggers(
+        nested_invoice_lines_path(),
+        line_customer_name_path(),
+        "required",
+        ValidationTrigger::Change,
+        |value, _context| {
+            if value.is_empty() {
+                vec!["name_required"]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+
+    form.set_user_field(
+        nested_invoice_path(),
+        NestedInvoice {
+            lines: vec![NestedLine::default()],
+            ..NestedInvoice::default()
+        },
+    );
+
+    assert_eq!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
+            [0]
+        .error(),
+        &"name_required"
+    );
+
+    form.set_user_field(
+        nested_invoice_path(),
+        NestedInvoice {
+            lines: vec![NestedLine {
+                customer: nested_customer("Ada"),
+            }],
+            ..NestedInvoice::default()
+        },
+    );
+
+    assert!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_sync_failure_in_field_ancestry_does_not_skip_the_written_fields_async_validators() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    let availability = form.register_async_field_validator_for_triggers(
+        nested_customer_path(),
+        "availability",
+        ValidationTrigger::Manual,
+    );
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "required",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["name_required"],
+    );
+
+    assert!(
+        form.begin_async_field_validation(
+            nested_customer_path(),
+            availability,
+            ValidationTrigger::Manual,
+        )
+        .is_some()
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_path(), availability),
+        Some(ValidationStatus::Pending)
+    );
+}
+
+#[test]
+fn change_validation_on_a_sibling_outside_field_ancestry_does_not_rerun() {
+    let runs = Rc::new(Cell::new(0));
+    let validator_runs = Rc::clone(&runs);
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default())
+            .with_validation_mode(ValidationMode::on_change());
+
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_account_name_path(),
+        "required",
+        ValidationTrigger::Change,
+        move |_value, _context| {
+            validator_runs.set(validator_runs.get() + 1);
+            Vec::new()
+        },
+    );
+
+    form.set_user_field(nested_customer_path(), nested_customer("Ada"));
+
+    assert_eq!(runs.get(), 0);
+}
+
+#[test]
+fn change_validation_on_an_item_child_field_reruns_when_its_container_is_written() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line())
+            .with_validation_mode(ValidationMode::on_change());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    form.register_sync_collection_item_field_validator_for_triggers(
+        nested_invoice_lines_path(),
+        line_customer_name_path(),
+        "required",
+        ValidationTrigger::Change,
+        |value, _context| {
+            if value.is_empty() {
+                vec!["name_required"]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+
+    assert!(form.set_user_collection_item_field(
+        nested_invoice_lines_path(),
+        item,
+        line_customer_path(),
+        Customer::default(),
+    ));
+
+    assert_eq!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
+            [0]
+        .error(),
+        &"name_required"
+    );
+
+    assert!(form.set_user_collection_item_field(
+        nested_invoice_lines_path(),
+        item,
+        line_customer_path(),
+        nested_customer("Ada"),
+    ));
+
+    assert!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
+            .is_empty()
+    );
+}
+
+#[test]
 fn submit_then_revalidate_mode_runs_change_validation_after_submit_attempt() {
     let runs = Rc::new(Cell::new(0));
     let validator_runs = Rc::clone(&runs);
@@ -6723,6 +7078,223 @@ fn changing_a_field_clears_stale_submit_errors_for_that_field() {
         form.field_validation_errors(password_path())[0].error(),
         &"password_weak"
     );
+}
+
+#[test]
+fn writing_a_containing_field_clears_stale_submit_errors_for_the_fields_it_contains() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            nested_customer_name_path().identity(),
+            "name_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    form.set_user_field(nested_customer_path(), nested_customer("Ada"));
+
+    assert!(
+        form.field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn writing_a_contained_field_clears_stale_submit_errors_for_the_field_containing_it() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            nested_customer_path().identity(),
+            "customer_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    form.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert!(
+        form.field_validation_errors(nested_customer_path())
+            .is_empty()
+    );
+    assert!(
+        !form
+            .submit_availability()
+            .blockers()
+            .contains(&SubmitBlocker::ValidationErrors)
+    );
+}
+
+#[test]
+fn writing_a_field_leaves_submit_errors_for_a_sibling_outside_field_ancestry() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            nested_customer_account_name_path().identity(),
+            "account_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    form.set_user_field(nested_customer_path(), nested_customer("Ada"));
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_account_name_path())[0].error(),
+        &"account_rejected"
+    );
+}
+
+#[test]
+fn in_flight_submit_errors_are_discarded_when_a_field_in_ancestry_with_the_target_changed() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    let submitted = match form.begin_submission() {
+        SubmitAttempt::Started(submitted) => submitted,
+        other => panic!("expected submission to start, got {other:?}"),
+    };
+
+    form.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert!(form.finish_submission_with_errors(
+        submitted,
+        vec![SubmitError::field_identity(
+            nested_customer_path().identity(),
+            "customer_rejected",
+        )],
+    ));
+
+    assert!(
+        form.field_validation_errors(nested_customer_path())
+            .is_empty()
+    );
+    assert!(form.validation_errors().is_empty());
+}
+
+#[test]
+fn in_flight_submit_errors_survive_a_change_to_a_field_outside_the_target_ancestry() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+
+    let submitted = match form.begin_submission() {
+        SubmitAttempt::Started(submitted) => submitted,
+        other => panic!("expected submission to start, got {other:?}"),
+    };
+
+    form.set_user_field(nested_customer_account_name_path(), "Ada".to_owned());
+
+    assert!(form.finish_submission_with_errors(
+        submitted,
+        vec![SubmitError::field_identity(
+            nested_customer_path().identity(),
+            "customer_rejected",
+        )],
+    ));
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_path())[0].error(),
+        &"customer_rejected"
+    );
+}
+
+#[test]
+fn writing_an_item_child_field_clears_stale_submit_errors_for_the_fields_it_contains() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            line_field_identity_for(item, "customer.name"),
+            "name_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    assert!(form.set_user_collection_item_field(
+        nested_invoice_lines_path(),
+        item,
+        line_customer_path(),
+        nested_customer("Ada"),
+    ));
+
+    assert!(form.validation_errors().is_empty());
+    assert!(
+        !form
+            .submit_availability()
+            .blockers()
+            .contains(&SubmitBlocker::ValidationErrors)
+    );
+}
+
+#[test]
+fn writing_a_whole_item_value_clears_stale_submit_errors_for_its_child_fields() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            line_field_identity_for(item, "customer.name"),
+            "name_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    form.record_field_identity_user_change(&FieldIdentity::collection_item_value(
+        "invoice.lines",
+        item,
+    ));
+
+    assert!(form.validation_errors().is_empty());
+}
+
+#[test]
+fn writing_an_item_child_field_clears_stale_submit_errors_for_the_whole_item_value() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            FieldIdentity::collection_item_value("invoice.lines", item),
+            "line_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    assert!(form.set_user_collection_item_field(
+        nested_invoice_lines_path(),
+        item,
+        line_customer_name_path(),
+        "Ada".to_owned(),
+    ));
+
+    assert!(form.validation_errors().is_empty());
+}
+
+#[test]
+fn writing_a_field_containing_a_collection_clears_stale_submit_errors_for_its_items() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+
+    assert_eq!(
+        form.submit(|_submitted| vec![SubmitError::field_identity(
+            line_field_identity_for(item, "customer.name"),
+            "name_rejected",
+        )]),
+        SubmitResult::Rejected
+    );
+
+    form.set_user_field(nested_invoice_path(), NestedInvoice::default());
+
+    assert!(form.validation_errors().is_empty());
 }
 
 #[test]

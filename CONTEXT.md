@@ -70,6 +70,14 @@ _Avoid_: Array input, repeated component
 Structured internal metadata that identifies one logical item inside a **Collection Field** so item metadata follows the item independently from its rendered index.
 _Avoid_: Array index, row ID, application key
 
+**Field Ancestry**:
+The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, and selectors for either respond when the other is written.
+_Avoid_: Path prefix, string match, parent pointer
+
+**Identity Path Separator**:
+The character reserved to delimit static path segments inside a **Field Identity**, so **Field Ancestry** is decidable from an identity alone and never from a rendered **Field Name**.
+_Avoid_: Field name separator, rendered index syntax, serde path
+
 **Input Parsing**:
 The conversion of user input from a rendered control into the typed value expected by a **Field**.
 _Avoid_: Validation
@@ -831,3 +839,15 @@ Domain expert: No. Non-submit **Validation Errors** remain conservative known bl
 Developer: If a field is hidden, should its value disappear from the draft?
 
 Domain expert: No. A **Conditional Field** may be hidden or unmounted without mutating the **Form Draft**.
+
+Developer: If a nested object is replaced wholesale, do the fields inside it count as changed?
+
+Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the **Fields** it contains and the **Fields** that contain it: their values, their **Validation Errors**, and their **Stale Submit Errors** all respond.
+
+Developer: So a **Stale Submit Error** on a nested object clears when the user edits one leaf inside it?
+
+Domain expert: Yes. A **Stale Submit Error** is defined against the field value, and editing a leaf changes the containing value. A verdict that must survive edits to the values it was about belongs at form scope.
+
+Developer: Can an application put a dot inside a **Field Identity** segment to get a nicer name?
+
+Domain expert: No. The dot is the **Identity Path Separator**. Rendered naming belongs to **Field Name** and the **Field Name Policy**, which never change **Field Identity**.

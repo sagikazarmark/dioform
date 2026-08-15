@@ -39,9 +39,10 @@ pub mod __private {
 }
 
 use dioform_core::{
-    __private::CollectionItemFieldAddress, AsyncValidatorContext, CollectionIdentityState,
-    CollectionItem, FormCore, FormStateRestoreError, FormStateSnapshot, SubmitAttempt,
-    SubmitValidationSnapshot, ValidationStatusView, ValidatorId,
+    __private::{CollectionItemFieldAddress, FieldAncestry},
+    AsyncValidatorContext, CollectionIdentityState, CollectionItem, FormCore,
+    FormStateRestoreError, FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot,
+    ValidationStatusView, ValidatorId,
 };
 pub use dioform_core::{
     CollectionItemIdentity, ErrorVisibilityPolicy, FieldGroup, FieldIdentity, FieldMetadata,
@@ -6774,6 +6775,12 @@ impl<Model, Error> FormHandle<Model, Error> {
         started
     }
 
+    /// Starts the async validators of a written field and of every field in **Field Ancestry**
+    /// with it.
+    ///
+    /// A write invalidates async field validators model-wide and clears their errors, so restarting
+    /// only the written identity would leave a relative's async result permanently blank — a worse
+    /// outcome than the stale render this propagation exists to fix.
     fn start_runtime_async_field_validators(
         &self,
         field: FieldIdentity,
@@ -6784,14 +6791,16 @@ impl<Model, Error> FormHandle<Model, Error> {
             .borrow()
             .field_validators
             .iter()
-            .filter(|((validator_field, _), _)| *validator_field == field)
-            .map(|((_, id), validator)| (*id, Rc::clone(&validator.start)))
+            .filter(|((validator_field, _), _)| FieldAncestry::relates(validator_field, &field))
+            .map(|((validator_field, id), validator)| {
+                (validator_field.clone(), *id, Rc::clone(&validator.start))
+            })
             .collect();
         let mut started = false;
 
-        for (id, start) in starts {
+        for (validator_field, id, start) in starts {
             if self.should_skip_runtime_async_start_for_pending_debounced_submit(
-                ValidationTarget::Field(field.clone()),
+                ValidationTarget::Field(validator_field),
                 id,
                 trigger,
             ) {

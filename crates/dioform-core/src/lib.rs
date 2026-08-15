@@ -188,11 +188,22 @@ impl<'de> serde::Deserialize<'de> for FieldIdentity {
 
 impl FieldIdentity {
     /// Creates a static field identity.
+    ///
+    /// The dot is the **Identity Path Separator** and is reserved: it delimits the segments of a
+    /// nested path, and **Field Ancestry** is decided from those segments, so `invoice.customer`
+    /// addresses a field inside `invoice` rather than a field literally named `invoice.customer`.
+    /// A path must therefore not contain empty segments, and an application that wants a friendlier
+    /// label should set the rendered **Field Name** instead of reshaping the identity.
     pub fn new(path: impl Into<Rc<str>>) -> Self {
+        let path = owned_segment(path);
+        debug_assert!(
+            field_ancestry::has_well_formed_segments(&path),
+            "field identity paths use `.` as the reserved identity path separator and cannot \
+             contain empty segments: {path:?}"
+        );
+
         Self {
-            kind: FieldIdentityKind::Static {
-                path: owned_segment(path),
-            },
+            kind: FieldIdentityKind::Static { path },
         }
     }
 
@@ -418,8 +429,9 @@ impl<Model, Value> FieldPath<Model, Value> {
     /// **Field Identity** and rendered **Field Name** use dot-separated static path segments, so a
     /// nested collection path such as `invoice.lines` can still be passed to collection APIs.
     ///
-    /// Joined paths are interned for the lifetime of the process so composed paths remain cheap,
-    /// copyable values with static rendered names.
+    /// The dot in a joined path is the reserved **Identity Path Separator**, so the joined field
+    /// stands in **Field Ancestry** to both sides it was composed from. Each join allocates its own
+    /// path segments; joined paths are not interned.
     pub fn try_join<Nested>(
         self,
         child: FieldPath<Value, Nested>,
@@ -842,17 +854,20 @@ pub enum ValidationStatus {
 }
 
 mod collection_addressing;
+mod field_ancestry;
 mod field_store;
 mod submission;
 mod validation_chain;
 mod validation_lifecycle;
 
+use field_ancestry::FieldAncestry;
 use field_store::FieldStore;
 use submission::SubmissionState;
 
 #[doc(hidden)]
 pub mod __private {
     pub use super::collection_addressing::CollectionItemFieldAddress;
+    pub use super::field_ancestry::FieldAncestry;
 }
 
 use collection_addressing::CollectionItemFieldAddress;
@@ -7031,6 +7046,12 @@ impl<Model, Error> FormCore<Model, Error> {
         }
     }
 
+    /// Runs one field's synchronous chain and reports whether *that field's own* validators passed.
+    ///
+    /// The chain spans **Field Ancestry**, but the verdict does not: callers use it to decide
+    /// whether to skip or clear this field's async validators, and a relative's sync failure says
+    /// nothing about whether this field's async validators should run. Widening the verdict too
+    /// would let a child's failing validator suppress its parent's async validation entirely.
     fn validate_field_sync_chain(
         &mut self,
         field: &FieldIdentity,
@@ -7046,14 +7067,21 @@ impl<Model, Error> FormCore<Model, Error> {
         let mut valid = true;
 
         for key in keys {
-            if self.validate_field_validator_key(key, trigger) == Some(ValidationStatus::Invalid) {
+            let is_written_field = key.field == *field;
+
+            if self.validate_field_validator_key(key, trigger) == Some(ValidationStatus::Invalid)
+                && is_written_field
+            {
                 valid = false;
             }
         }
 
         for key in collection_item_keys {
+            let is_written_field = key.field == *field;
+
             if self.validate_collection_item_field_validator_key(key, trigger)
                 == Some(ValidationStatus::Invalid)
+                && is_written_field
             {
                 valid = false;
             }
@@ -7342,9 +7370,20 @@ impl<Model, Error> FormCore<Model, Error> {
         self.submission.clear_errors();
     }
 
+    /// Drops stored submit errors for a written field and for every field in **Field Ancestry**
+    /// with it.
+    ///
+    /// A **Stale Submit Error** refers to a field value before the field changed, and writing a
+    /// leaf changes the value of everything containing it, so clearing is symmetric. Stored errors
+    /// have dropped their value-comparison closure by this point, so this is necessarily
+    /// identity-only: a write that happens to restore a relative's value still clears it.
     fn clear_submit_errors_for_field(&mut self, field: &FieldIdentity) {
-        self.submission
-            .retain_errors(|error| error.target.as_field() != Some(field));
+        self.submission.retain_errors(|error| {
+            error
+                .target
+                .as_field()
+                .is_none_or(|target| !FieldAncestry::relates(target, field))
+        });
     }
 
     fn store_submit_errors<Intent>(
@@ -7388,10 +7427,30 @@ impl<Model, Error> FormCore<Model, Error> {
             return true;
         };
 
-        let current_version = self.field_store.version(field);
-        let submitted_version = submitted.field_version(field);
+        self.field_ancestry_is_unchanged_since(field, submitted)
+    }
 
-        current_version == submitted_version
+    /// Returns whether the target field and every field in **Field Ancestry** with it hold the
+    /// version they held when the submission started.
+    ///
+    /// Ancestry is walked here rather than fanned out into stored versions: **Field Registration**
+    /// is lazy, so a write-time fan-out could never materialize a relative the user has never
+    /// touched, and version has exactly one owner (ADR-0010). Walking the two version maps is total
+    /// regardless of registration order, because a field absent from both reads as version `0` on
+    /// each side and so compares equal.
+    fn field_ancestry_is_unchanged_since<Intent>(
+        &self,
+        field: &FieldIdentity,
+        submitted: &SubmissionSnapshot<Model, Intent>,
+    ) -> bool {
+        self.field_store
+            .versions()
+            .keys()
+            .chain(submitted.field_versions.keys())
+            .filter(|candidate| FieldAncestry::relates(candidate, field))
+            .all(|candidate| {
+                self.field_store.version(candidate) == submitted.field_version(candidate)
+            })
     }
 
     fn should_show_validation_errors(&self, target: &ValidationTarget) -> bool {

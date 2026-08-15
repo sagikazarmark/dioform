@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use super::{
-    CollectionItemIdentity, CollectionState, FieldIdentity, FormValidationError,
+    CollectionItemIdentity, CollectionState, FieldAncestry, FieldIdentity, FormValidationError,
     FormValidatorContext, ValidationErrorView, ValidationStatus, ValidationStatusView,
     ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId,
     ValidatorSource, validation_lifecycle,
@@ -502,6 +502,13 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         fields
     }
 
+    /// Selects the synchronous field validators one chain runs for a written field.
+    ///
+    /// The selection spans **Field Ancestry**: writing a field changes the value every validator in
+    /// ancestry with it reads, so their verdicts are stale until they re-run. This widens the
+    /// filter rather than the pass count — the chain entry point re-materializes collection item
+    /// validator states and clones-and-sorts the validator table per call, so running it once per
+    /// related field would multiply all of that.
     pub(super) fn sync_field_keys_for_chain(
         &self,
         field: &FieldIdentity,
@@ -510,7 +517,7 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         self.sorted_field_entries()
             .into_iter()
             .filter(|(key, validator)| {
-                key.field == *field
+                FieldAncestry::relates(&key.field, field)
                     && validator.lifecycle.is_sync()
                     && validator.lifecycle.should_run(trigger)
             })
@@ -518,6 +525,11 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
             .collect()
     }
 
+    /// Selects the synchronous collection item field validators one chain runs for a written field.
+    ///
+    /// Spans **Field Ancestry** for the same reason as [`Self::sync_field_keys_for_chain`]. The
+    /// relation is strict between a collection field and its own items, so appending a row still
+    /// does not re-run every existing row's validators.
     pub(super) fn sync_collection_item_keys_for_chain(
         &self,
         field: &FieldIdentity,
@@ -526,7 +538,9 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         self.sorted_collection_item_entries()
             .into_iter()
             .filter(|(key, validator)| {
-                key.field == *field && validator.is_sync() && validator.should_run(trigger)
+                FieldAncestry::relates(&key.field, field)
+                    && validator.is_sync()
+                    && validator.should_run(trigger)
             })
             .map(|(key, _)| key.clone())
             .collect()
