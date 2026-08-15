@@ -691,6 +691,10 @@ where
 /// field identity. The returned binding still uses the current rendered item index for
 /// [`CollectionParsedTextBinding::name`], so names update after reordering without remounting the
 /// parse blocker.
+///
+/// Call this from a row component keyed by [`CollectionItemIdentity::key`]. The registration is
+/// captured in the calling scope's hook slot, so a plain `fn` row helper or an index-keyed row
+/// reattaches it to the wrong item after a removal or a reorder.
 pub fn use_collection_item_parsed_text<Model, Item, Value, Error>(
     item: CollectionItemBinding<Model, Item, Error>,
     path: FieldPath<Item, Value>,
@@ -713,9 +717,9 @@ where
 /// Creates a stable parsed text binding with explicit parser and formatter behavior for a
 /// collection item child field.
 ///
-/// Prefer this hook inside Dioxus row components that render parsed collection item inputs. It
-/// keeps mounted parse state stable across rerenders while deriving the rendered field name from
-/// the latest item index.
+/// Prefer this hook inside Dioxus row components that render parsed collection item inputs, keyed
+/// by [`CollectionItemIdentity::key`]. It keeps mounted parse state stable across rerenders while
+/// deriving the rendered field name from the latest item index.
 pub fn use_collection_item_parsed_text_with<
     Model,
     Item,

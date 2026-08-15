@@ -85,7 +85,7 @@ pub fn CollectionsExample() -> Element {
                     let id_down = item.identity();
                     let id_remove = item.identity();
                     rsx! {
-                        li { key: "{index}", class: "flex items-center gap-2",
+                        li { key: "{item.key()}", class: "flex items-center gap-2",
                             span { class: "w-6 text-right font-mono text-xs text-base-content/50", "{index}" }
                             input {
                                 class: "input input-bordered input-sm flex-1",

@@ -107,9 +107,11 @@ rerenders.
 
 For collection item child fields, use `use_collection_item_parsed_text(...)`,
 `use_collection_item_parsed_text_with(...)`, `use_collection_item_number(...)`,
-or `use_collection_item_number_with(...)` in row components. Those hooks keep Parse
-Blockers keyed by the logical collection item and child field while rendered input names update after
-reordering.
+or `use_collection_item_number_with(...)` in row components keyed by **Collection Item Identity**.
+Those hooks keep Parse Blockers keyed by the logical collection item and child field while rendered
+input names update after reordering. The row's hook state lives in the scope that calls the hook, so
+a plain `fn` row helper or an index key hands that state to the wrong item after a removal or a
+reorder; see [Collection Fields](collection-fields.md).
 
 ## Parsing Versus Validation
 

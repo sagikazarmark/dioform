@@ -37,6 +37,15 @@ struct Milestone {
     estimate_days: u32,
 }
 
+/// Form Context Scope for this page, so keyed row components can retrieve the handle.
+struct ProjectPlannerScope;
+
+fn milestones_path() -> FieldPath<ProjectForm, Vec<Milestone>> {
+    ProjectForm::fields()
+        .delivery()
+        .join(DeliveryPlan::fields().milestones())
+}
+
 fn initial() -> ProjectForm {
     ProjectForm {
         client: ClientDetails {
@@ -63,11 +72,23 @@ fn initial() -> ProjectForm {
     }
 }
 
-fn milestone_row(
-    collection: &CollectionBinding<ProjectForm, Milestone, String>,
-    item: CollectionItemBinding<ProjectForm, Milestone, String>,
-    count: usize,
-) -> Element {
+/// One milestone row.
+///
+/// Rows that call a collection-item hook must be components keyed by
+/// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
+/// index key would hand a removed or reordered row's parse state to whichever
+/// item lands on that index next.
+#[component]
+fn MilestoneRow(item: CollectionItemIdentity) -> Element {
+    let form = use_form_context::<ProjectPlannerScope, ProjectForm, String>();
+    let collection = form.collection(milestones_path());
+    let items = collection.items();
+    let count = items.len();
+    let item = items
+        .into_iter()
+        .find(|candidate| candidate.identity() == item)
+        .expect("the page renders one row per milestone the collection currently holds");
+
     let f = Milestone::fields();
     let title = item.text(f.title());
     let days = use_collection_item_number(item.clone(), f.estimate_days());
@@ -114,7 +135,7 @@ fn milestone_row(
 
 #[component]
 pub fn ProjectPlanner() -> Element {
-    let form = use_form(initial());
+    let form = provide_form_context::<ProjectPlannerScope, _, _>(use_form(initial()));
     let fields = ProjectForm::fields();
 
     let company_path = fields.client().join(ClientDetails::fields().company());
@@ -123,7 +144,6 @@ pub fn ProjectPlanner() -> Element {
         .join(ClientDetails::fields().contact_email());
     let currency_path = fields.budget().join(ProjectBudget::fields().currency());
     let cap_path = fields.budget().join(ProjectBudget::fields().cap_cents());
-    let milestones_path = fields.delivery().join(DeliveryPlan::fields().milestones());
 
     let company = form.text(company_path);
     let contact_email = form.text(email_path.clone());
@@ -131,7 +151,7 @@ pub fn ProjectPlanner() -> Element {
     let cap = use_number_with(form.clone(), cap_path, parse_dollars_to_cents, |cents| {
         cents_to_dollars(*cents)
     });
-    let milestones = form.collection(milestones_path);
+    let milestones = form.collection(milestones_path());
 
     let cap_oninput = cap.clone();
     let milestones_for_add = milestones.clone();
@@ -189,8 +209,8 @@ pub fn ProjectPlanner() -> Element {
                         }
                     }
                     div { class: "space-y-2",
-                        for item in items.iter().cloned() {
-                            {milestone_row(&milestones, item, items.len())}
+                        for item in items.iter() {
+                            MilestoneRow { key: "{item.key()}", item: item.identity() }
                         }
                     }
                 }

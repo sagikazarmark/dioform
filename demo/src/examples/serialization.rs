@@ -72,13 +72,12 @@ pub fn SerializationExample() -> Element {
                     ul { class: "mt-3 space-y-2",
                         for item in items.iter().cloned() {
                             {
-                                let index = item.index();
                                 let label = item.text(Tag::fields().label());
                                 let label_oninput = label.clone();
                                 let remove = tags.clone();
                                 let id = item.identity();
                                 rsx! {
-                                    li { key: "{index}", class: "flex items-center gap-2",
+                                    li { key: "{item.key()}", class: "flex items-center gap-2",
                                         input {
                                             class: "input input-bordered input-sm flex-1",
                                             name: label.name(),

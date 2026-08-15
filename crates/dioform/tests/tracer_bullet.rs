@@ -15,12 +15,12 @@ use dioform::advanced::{
     ValidatorId,
 };
 use dioform::{
-    CollectionParsedTextBinding, CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle,
-    FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace, FormListenerEvent,
-    FormValidationError, ParsedTextBinding, ProgressiveSubmitResult, SelectedFile,
-    SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError, SubmitErrors,
-    SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode, ValidationStatus,
-    ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
+    CollectionItemBinding, CollectionParsedTextBinding, CollectionTextBinding, FieldAccessibility,
+    FieldBindingLifecycle, FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace,
+    FormListenerEvent, FormValidationError, ParsedTextBinding, ProgressiveSubmitResult,
+    SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError,
+    SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
+    ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
     use_collection_item_number, use_date, use_date_with, use_debounced_field_listener_for_origin,
     use_debounced_form_listener_for_origin, use_field_binding_listener, use_field_blur_listener,
@@ -123,6 +123,25 @@ fn invoice_collection_form() -> InvoiceCollectionForm {
             InvoiceCollectionLine {
                 description: "Build".to_owned(),
                 quantity: 1,
+            },
+        ],
+    }
+}
+
+fn invoice_collection_row_form() -> InvoiceCollectionForm {
+    InvoiceCollectionForm {
+        lines: vec![
+            InvoiceCollectionLine {
+                description: "Design".to_owned(),
+                quantity: 2,
+            },
+            InvoiceCollectionLine {
+                description: "Build".to_owned(),
+                quantity: 1,
+            },
+            InvoiceCollectionLine {
+                description: "Deploy".to_owned(),
+                quantity: 4,
             },
         ],
     }
@@ -3289,6 +3308,212 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
             draft_quantities: vec![5, 2],
         })
     );
+}
+
+struct CollectionRowScope;
+
+type CollectionRowQuantity =
+    CollectionParsedTextBinding<InvoiceCollectionForm, InvoiceCollectionLine, u32>;
+
+#[derive(Default)]
+struct CollectionRowProbe {
+    handle: RefCell<Option<FormHandle<InvoiceCollectionForm>>>,
+    quantities: RefCell<Vec<(CollectionItemIdentity, CollectionRowQuantity)>>,
+}
+
+impl CollectionRowProbe {
+    fn handle(&self) -> FormHandle<InvoiceCollectionForm> {
+        self.handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose the form handle")
+            .clone()
+    }
+
+    fn record(&self, item: CollectionItemIdentity, quantity: CollectionRowQuantity) {
+        let mut quantities = self.quantities.borrow_mut();
+
+        match quantities
+            .iter_mut()
+            .find(|(recorded, _)| *recorded == item)
+        {
+            Some(recorded) => recorded.1 = quantity,
+            None => quantities.push((item, quantity)),
+        }
+    }
+
+    /// Returns the quantity binding the row component rendered for this logical item last.
+    fn quantity(&self, item: CollectionItemIdentity) -> CollectionRowQuantity {
+        self.quantities
+            .borrow()
+            .iter()
+            .find(|(recorded, _)| *recorded == item)
+            .map(|(_, quantity)| quantity.clone())
+            .expect("row component should have rendered a quantity binding for this item")
+    }
+}
+
+#[derive(Clone, Props)]
+struct CollectionRowProps {
+    probe: Rc<CollectionRowProbe>,
+    item: CollectionItemIdentity,
+}
+
+impl PartialEq for CollectionRowProps {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.probe, &other.probe) && self.item == other.item
+    }
+}
+
+fn collection_parsed_row(props: CollectionRowProps) -> Element {
+    let form = use_form_context::<CollectionRowScope, InvoiceCollectionForm, String>();
+    let item = form
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()
+        .into_iter()
+        .find(|candidate| candidate.identity() == props.item)
+        .expect("the parent renders one row per item it currently holds");
+    let quantity = use_collection_item_number(item, InvoiceCollectionLine::fields().quantity());
+
+    props.probe.record(props.item, quantity);
+
+    VNode::empty()
+}
+
+fn collection_parsed_rows_probe(probe: Rc<CollectionRowProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(invoice_collection_row_form()));
+    let form = provide_form_context::<CollectionRowScope, _, _>(form);
+    let items = form
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items();
+
+    probe.handle.borrow_mut().replace(form);
+
+    rsx! {
+        for item in items.iter() {
+            collection_parsed_row {
+                key: "{item.key()}",
+                probe: Rc::clone(&probe),
+                item: item.identity(),
+            }
+        }
+    }
+}
+
+/// Mounts three keyed rows and returns the probe, its dom, and the three logical item identities.
+fn mounted_collection_rows() -> (
+    Rc<CollectionRowProbe>,
+    VirtualDom,
+    [CollectionItemIdentity; 3],
+) {
+    let probe = Rc::new(CollectionRowProbe::default());
+    let mut dom = VirtualDom::new_with_props(collection_parsed_rows_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let identities: [CollectionItemIdentity; 3] = probe
+        .handle()
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()
+        .iter()
+        .map(CollectionItemBinding::identity)
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("the probe form starts with three lines");
+
+    (probe, dom, identities)
+}
+
+/// Returns the logical items that currently hold a parse blocker, in identity order.
+fn parse_blocked_items(handle: &FormHandle<InvoiceCollectionForm>) -> Vec<CollectionItemIdentity> {
+    let mut items: Vec<CollectionItemIdentity> = handle
+        .parse_errors()
+        .into_iter()
+        .map(|error| {
+            error
+                .field_identity()
+                .collection_item_identity()
+                .expect("a collection item child parse blocker keeps its logical item identity")
+        })
+        .collect();
+
+    items.sort();
+    items
+}
+
+#[test]
+fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_removal() {
+    let (probe, mut dom, [design, build, deploy]) = mounted_collection_rows();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    probe.quantity(build).on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![build]);
+
+    lines
+        .remove(design)
+        .expect("the first row should be removable");
+    dom.render_immediate_to_vec();
+
+    // The blocker is keyed by identity, so it never moves on its own; what a mis-keyed row breaks
+    // is which row owns it. The row rendering the typed item still shows the raw input, and typing
+    // into another row still lands on that row's own item.
+    assert_eq!(parse_blocked_items(&handle), vec![build]);
+    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
+    assert_eq!(probe.quantity(build).value(), "not-a-number");
+    assert_eq!(probe.quantity(deploy).name(), "lines[1].quantity");
+    assert_eq!(probe.quantity(deploy).value(), "4");
+    assert!(probe.quantity(deploy).parse_error().is_none());
+    assert!(!handle.can_submit());
+
+    // The row that moved into the removed row's position still registers its own blocker.
+    probe.quantity(deploy).on_input("also-not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![build, deploy]);
+    assert_eq!(
+        probe.quantity(build).parse_error().map(|error| error
+            .field_identity()
+            .collection_item_identity()
+            .expect("the blocker keeps its logical item identity")),
+        Some(build)
+    );
+}
+
+#[test]
+fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_reorder() {
+    let (probe, mut dom, [design, build, deploy]) = mounted_collection_rows();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    probe.quantity(build).on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![build]);
+
+    assert!(lines.swap(0, 1));
+    dom.render_immediate_to_vec();
+
+    // As with removal, the standing blocker cannot move; the rendered row that owns it can.
+    assert_eq!(parse_blocked_items(&handle), vec![build]);
+    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
+    assert_eq!(probe.quantity(build).value(), "not-a-number");
+    assert_eq!(probe.quantity(design).name(), "lines[1].quantity");
+    assert_eq!(probe.quantity(design).value(), "2");
+    assert!(probe.quantity(design).parse_error().is_none());
+    assert!(probe.quantity(deploy).parse_error().is_none());
+    assert!(!handle.can_submit());
+
+    // A row typed into after the reorder blocks its own item, not the one that used to render at
+    // its index.
+    probe.quantity(design).on_input("also-not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![design, build]);
+    assert_eq!(probe.quantity(build).value(), "not-a-number");
+    assert_eq!(probe.quantity(design).value(), "also-not-a-number");
 }
 
 #[test]
