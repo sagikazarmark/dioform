@@ -100,6 +100,11 @@ be, and the compiler finds every call site.
 
 ## A known staleness is deliberately left out
 
+> **Superseded by [ADR-0023](0023-resolve-the-rendered-collection-item-index-live.md).** This section
+> permitted the captured-index name on the grounds that the row is about to unmount. That does not
+> hold: the stale name collides with a *live* row's name, and both bindings are resolved. `index()`
+> and `name()` now resolve live and return `Option`. The rest of this ADR stands.
+
 `CollectionItem` captures its index at construction, and `index()` reads the captured copy. Removing a
 sibling therefore makes `index()` and the rendered **Field Name** wrong for a **resolved** binding — a
 retained binding for row 1 still renders `lines[1].description` after row 0 is removed, while a freshly
