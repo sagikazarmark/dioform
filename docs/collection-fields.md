@@ -112,6 +112,53 @@ lines
 
 The validator result attaches to the logical item child field. If the item moves, the error moves with it. If the item is removed, the item-scoped validator state is cleared without affecting sibling items.
 
+## Unresolved Bindings
+
+A binding is created for one logical **Collection Item Identity**. Nothing stops the application from
+holding that binding across a mutation that removes the item — event handlers, spawned futures,
+`use_effect` and `use_memo` all keep their own clone, and `oninput()` / `onchange()` hand the handler a
+clone precisely so the binding stays usable for `value()`. Once the item is gone the binding is an
+**Unresolved Binding**, and every accessor on it answers by surface:
+
+- The **rendered surface is total and neutral**: `value()` on text, parsed text and rendered select
+  returns `""`, `checked()` returns `false`, and every `is_selected(...)` / `is_rendered_selected(...)`
+  returns `false`. A UI must not crash on a removal race.
+- The **typed surface reports absence in the return type**: `CollectionSelectBinding::value`,
+  `CollectionRenderedSelectBinding::typed_value`, `CollectionRadioGroupBinding::value` and
+  `MultiSelectItem::value` return `Option<Value>` and read `None`. They do not invent a
+  `Default::default()`, which would assert a selection the model does not hold.
+- **Metadata and validation errors report nothing**: `is_touched()` and `is_blurred()` are `false` and
+  `validation_errors()` is empty. Removal releases the item's scoped state, so this is a true statement
+  about state that no longer exists.
+- **Writes are silent no-ops**: `set_value`, `on_input`, `on_change`, `select` and `on_blur` leave the
+  collection and its metadata unchanged. Setters do not report whether the write landed, because the
+  ready-made handlers are `impl FnMut(Event<..>)` and cannot propagate a result.
+
+No accessor panics.
+
+`is_resolved()` is the guard. It is available on `CollectionItemBinding`, on every leaf collection
+binding (text, checkbox, select, rendered select, radio group, parsed text) and on `MultiSelectItem`, so
+a handler that only retained a leaf can check without a route back to its `CollectionItemBinding`:
+
+```rust
+let description = item.text(InvoiceLine::fields().description());
+
+spawn(async move {
+    save(draft).await;
+
+    if description.is_resolved() {
+        description.set_value("saved");
+    }
+});
+```
+
+`name()` and `index()` keep returning the name derived from the index the binding captured, for
+resolved and unresolved bindings alike.
+
+The same rule holds for **Optional Fields** reached through `FieldPath::or` (see
+[Optional Fields](optional-fields.md)): a total, neutral editing surface with an honest accessor
+alongside. See [ADR-0022](adr/0022-represent-an-absent-binding-target-in-the-return-type.md).
+
 ## Array Mutations
 
 `CollectionBinding` exposes the array mutations directly, each with a user-originated method (the plain

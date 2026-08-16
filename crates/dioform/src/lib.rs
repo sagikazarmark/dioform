@@ -1150,7 +1150,7 @@ impl<Model, Error> FormConfig<Model, Error> {
         Value: 'static,
         Source: Into<ValidatorSource>,
     {
-        self.collection_item_field_validator(collection, multi_select_item_value_path(), source)
+        self.collection_item_field_validator(collection, collection_item_self_path(), source)
     }
 
     /// Starts configuring a durable synchronous form validator.
@@ -2091,7 +2091,7 @@ mod field_binding {
     /// selector tracking together. Parsed-input bindings layer parser state on top through the
     /// narrow [`TypedFieldBinding`] interface below.
     pub(super) trait TypedFieldBinding<Value> {
-        fn read_value_or<Result, Read>(&self, read: Read, stale: Result) -> Result
+        fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result;
 
@@ -2198,10 +2198,11 @@ mod field_binding {
                 .visible_field_validation_errors_by_identity(&self.identity())
         }
 
+        /// Reads the addressed value, falling back to `unresolved` when the item no longer resolves.
         pub(super) fn read_value<Result>(
             &self,
             read: impl FnOnce(&Value) -> Result,
-            stale: Result,
+            unresolved: Result,
         ) -> Result {
             let field = self.identity();
             self.handle.reactivity.track_field_value(&field);
@@ -2213,30 +2214,18 @@ mod field_binding {
                 self.path.clone(),
             )
             .map(read)
-            .unwrap_or(stale)
+            .unwrap_or(unresolved)
         }
 
         pub(super) fn value(&self) -> Option<Value>
         where
             Value: Clone,
         {
-            self.handle.reactivity.track_field_value(&self.identity());
-            let core = self.handle.core.borrow();
-
-            core.collection_item_field_value(
-                self.collection_path.clone(),
-                self.item.identity(),
-                self.path.clone(),
-            )
-            .cloned()
+            self.read_value(|value| Some(value.clone()), None)
         }
 
-        pub(super) fn expect_value(&self) -> Value
-        where
-            Value: Clone,
-        {
-            self.value()
-                .expect("collection item child field should exist while its binding is rendered")
+        pub(super) fn is_resolved(&self) -> bool {
+            self.read_value(|_| true, false)
         }
 
         pub(super) fn is_current(&self, value: &Value) -> bool
@@ -2293,11 +2282,11 @@ mod field_binding {
     impl<Model, Item, Value, Error> TypedFieldBinding<Value>
         for CollectionFieldBindingCore<Model, Item, Value, Error>
     {
-        fn read_value_or<Result, Read>(&self, read: Read, stale: Result) -> Result
+        fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result,
         {
-            self.read_value(read, stale)
+            self.read_value(read, unresolved)
         }
 
         fn set_programmatic(&self, value: Value) {
@@ -2420,11 +2409,11 @@ mod field_binding {
     }
 
     impl<Model, Value, Error> TypedFieldBinding<Value> for FieldBindingCore<Model, Value, Error> {
-        fn read_value_or<Result, Read>(&self, read: Read, stale: Result) -> Result
+        fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result,
         {
-            let _ = stale;
+            let _ = unresolved;
             self.read_value(read)
         }
 
@@ -3867,20 +3856,24 @@ where
     }
 }
 
-fn multi_select_item_value_ref<Value>(value: &Value) -> &Value {
+fn collection_item_self_ref<Value>(value: &Value) -> &Value {
     value
 }
 
-fn multi_select_item_value_mut<Value>(value: &mut Value) -> &mut Value {
+fn collection_item_self_mut<Value>(value: &mut Value) -> &mut Value {
     value
 }
 
-fn multi_select_item_value_path<Value: 'static>() -> FieldPath<Value, Value> {
+/// Addresses a collection item's whole value as a child field of itself.
+///
+/// A true multi-select item *is* its own value, and an item binding with no leaf path still needs an
+/// address to resolve against.
+fn collection_item_self_path<Value: 'static>() -> FieldPath<Value, Value> {
     FieldPath::direct(
         FieldIdentity::new(""),
         "",
-        multi_select_item_value_ref::<Value>,
-        multi_select_item_value_mut::<Value>,
+        collection_item_self_ref::<Value>,
+        collection_item_self_mut::<Value>,
     )
 }
 
@@ -4445,7 +4438,7 @@ impl<Model, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
         SyncCollectionItemFieldValidatorBuilder {
             handle: self.handle.clone(),
             collection: self.path.clone(),
-            field: multi_select_item_value_path(),
+            field: collection_item_self_path(),
             source: source.into(),
             triggers: ValidationTriggers::all(),
         }
@@ -4541,7 +4534,7 @@ impl<Model, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
             self.handle.core.borrow().collection_item_field_value(
                 self.path.clone(),
                 item.identity(),
-                multi_select_item_value_path(),
+                collection_item_self_path(),
             ) == Some(value)
         })
     }
@@ -4709,7 +4702,7 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         CollectionItemFieldAddress::identity_for(
             &self.path,
             self.identity(),
-            &multi_select_item_value_path(),
+            &collection_item_self_path(),
         )
     }
 
@@ -4718,7 +4711,7 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         CollectionItemFieldAddress::field_name_for(
             &self.path,
             self.index(),
-            &multi_select_item_value_path(),
+            &collection_item_self_path(),
         )
     }
 
@@ -4728,18 +4721,19 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
             &self.path,
             self.identity(),
             self.index(),
-            &multi_select_item_value_path(),
+            &collection_item_self_path(),
         );
 
         self.handle
             .field_accessibility_by_identity(address.identity(), address.accessibility_name())
     }
 
-    /// Returns the current selected value.
-    pub fn value(&self) -> Value
-    where
-        Value: Clone,
-    {
+    /// Reads the selected value, falling back to `unresolved` when it is no longer selected.
+    fn read_value<Result>(
+        &self,
+        read: impl FnOnce(&Value) -> Result,
+        unresolved: Result,
+    ) -> Result {
         self.handle
             .reactivity
             .track_field_value(&self.field_identity());
@@ -4749,10 +4743,25 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
             .collection_item_field_value(
                 self.path.clone(),
                 self.identity(),
-                multi_select_item_value_path(),
+                collection_item_self_path(),
             )
-            .cloned()
-            .expect("multi-select item should exist while its binding is rendered")
+            .map(read)
+            .unwrap_or(unresolved)
+    }
+
+    /// Returns whether this selected value is still selected.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.read_value(|_| true, false)
+    }
+
+    /// Returns the current selected value, or `None` when it is no longer selected.
+    pub fn value(&self) -> Option<Value>
+    where
+        Value: Clone,
+    {
+        self.read_value(|value| Some(value.clone()), None)
     }
 
     /// Returns tracked user interaction metadata for this selected value.
@@ -4763,7 +4772,7 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         self.handle.core.borrow().collection_item_field_metadata(
             self.path.clone(),
             self.identity(),
-            multi_select_item_value_path(),
+            collection_item_self_path(),
         )
     }
 
@@ -4788,7 +4797,7 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         self.handle.core.borrow().is_collection_item_field_dirty(
             self.path.clone(),
             self.identity(),
-            multi_select_item_value_path(),
+            collection_item_self_path(),
         )
     }
 
@@ -4942,6 +4951,20 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     /// Returns a stable key suitable for keyed row rendering.
     pub fn key(&self) -> String {
         format!("collection-{}", self.identity().key())
+    }
+
+    /// Returns whether this item still belongs to its collection.
+    ///
+    /// A binding retained across a mutation that removed its item is an **Unresolved Binding**: its
+    /// rendered accessors read the neutral value (`""`, `false`), its typed accessors read `None`,
+    /// its metadata and validation errors read empty, and every write through it is a no-op. Guard
+    /// with this method when a handler needs to distinguish a removed item from an empty one.
+    pub fn is_resolved(&self) -> bool
+    where
+        Item: 'static,
+    {
+        self.handle
+            .collection_item_is_resolved(&self.collection_path, self.identity())
     }
 
     /// Creates a controlled text binding for a `String` child field.
@@ -7205,6 +7228,23 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
     }
 
+    fn collection_item_is_resolved<Item: 'static>(
+        &self,
+        path: &FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+    ) -> bool {
+        self.reactivity
+            .track_field_value(&CollectionItemFieldAddress::identity_for(
+                path,
+                item,
+                &collection_item_self_path(),
+            ));
+        self.core
+            .borrow()
+            .collection_item_field_value(path.clone(), item, collection_item_self_path())
+            .is_some()
+    }
+
     fn collection_items<Item>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
@@ -7629,14 +7669,10 @@ impl<Model, Error> FormHandle<Model, Error> {
         let identity = CollectionItemFieldAddress::identity_for(
             &collection,
             item,
-            &multi_select_item_value_path(),
+            &collection_item_self_path(),
         );
         let touched = self.write_core(|core| {
-            core.mark_collection_item_field_touched(
-                collection,
-                item,
-                multi_select_item_value_path(),
-            )
+            core.mark_collection_item_field_touched(collection, item, collection_item_self_path())
         });
         if touched {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity));
@@ -7649,7 +7685,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         collection: FieldPath<Model, Vec<Value>>,
         item: CollectionItemIdentity,
     ) -> bool {
-        let field = multi_select_item_value_path();
+        let field = collection_item_self_path();
         let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
         let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
         let blurred = self
@@ -9599,7 +9635,14 @@ impl<Model, Item, Error> CollectionTextBinding<Model, Item, Error> {
         self.base.is_blurred()
     }
 
-    /// Returns the current controlled input value.
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the current controlled input value, or `""` when the item no longer resolves.
     pub fn value(&self) -> String {
         self.base.value().unwrap_or_default()
     }
@@ -9698,7 +9741,15 @@ impl<Model, Item, Error> CollectionCheckboxBinding<Model, Item, Error> {
         self.base.is_blurred()
     }
 
-    /// Returns the current controlled checkbox checked state.
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the current controlled checkbox checked state, or `false` when the item no longer
+    /// resolves.
     pub fn checked(&self) -> bool {
         self.base.value().unwrap_or(false)
     }
@@ -9799,12 +9850,19 @@ impl<Model, Item, Value, Error> CollectionSelectBinding<Model, Item, Value, Erro
         self.base.is_blurred()
     }
 
-    /// Returns the current controlled select value.
-    pub fn value(&self) -> Value
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the current controlled select value, or `None` when the item no longer resolves.
+    pub fn value(&self) -> Option<Value>
     where
         Value: Clone,
     {
-        self.base.expect_value()
+        self.base.value()
     }
 
     /// Returns whether an option value should be rendered as selected.
@@ -9925,18 +9983,26 @@ impl<Model, Item, Value, Error> CollectionRenderedSelectBinding<Model, Item, Val
         self.base.is_blurred()
     }
 
-    /// Returns the current controlled select value as the rendered option value.
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the current controlled select value as the rendered option value, or `""` when the
+    /// item no longer resolves.
     pub fn value(&self) -> String {
         self.base
             .read_value(|value| (self.formatter)(value), String::new())
     }
 
-    /// Returns the current typed field value.
-    pub fn typed_value(&self) -> Value
+    /// Returns the current typed field value, or `None` when the item no longer resolves.
+    pub fn typed_value(&self) -> Option<Value>
     where
         Value: Clone,
     {
-        self.base.expect_value()
+        self.base.value()
     }
 
     /// Returns whether an option value should be rendered as selected.
@@ -10075,12 +10141,19 @@ impl<Model, Item, Value, Error> CollectionRadioGroupBinding<Model, Item, Value, 
         self.base.is_blurred()
     }
 
-    /// Returns the current controlled radio group value.
-    pub fn value(&self) -> Value
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the current controlled radio group value, or `None` when the item no longer resolves.
+    pub fn value(&self) -> Option<Value>
     where
         Value: Clone,
     {
-        self.base.expect_value()
+        self.base.value()
     }
 
     /// Returns whether an option value should be rendered as checked or selected.
@@ -10201,7 +10274,15 @@ impl<Model, Item, Value, Error> CollectionParsedTextBinding<Model, Item, Value, 
         self.base.is_blurred()
     }
 
-    /// Returns the controlled rendered value, preferring raw input while parsing is failing.
+    /// Returns whether this binding's collection item still resolves.
+    ///
+    /// See [`CollectionItemBinding::is_resolved`] for what an unresolved binding reads and writes.
+    pub fn is_resolved(&self) -> bool {
+        self.base.is_resolved()
+    }
+
+    /// Returns the controlled rendered value, preferring raw input while parsing is failing, and
+    /// `""` when the item no longer resolves.
     pub fn value(&self) -> String {
         parsed_input::value(&self.base, &self.registration, &self.formatter)
     }

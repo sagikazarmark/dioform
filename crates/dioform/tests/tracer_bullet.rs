@@ -15,12 +15,14 @@ use dioform::advanced::{
     ValidatorId,
 };
 use dioform::{
-    CollectionItemBinding, CollectionParsedTextBinding, CollectionTextBinding, FieldAccessibility,
-    FieldBindingLifecycle, FieldGroup, FieldPath, FileFieldKey, Form, FormConfig, FormHandle,
-    FormIdNamespace, FormListenerEvent, FormValidationError, ParsedTextBinding,
-    ProgressiveSubmitResult, SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker,
-    SubmitError, SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
-    ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
+    CollectionCheckboxBinding, CollectionItemBinding, CollectionParsedTextBinding,
+    CollectionRadioGroupBinding, CollectionRenderedSelectBinding, CollectionSelectBinding,
+    CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle, FieldGroup, FieldPath,
+    FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace, FormListenerEvent,
+    FormValidationError, ParsedTextBinding, ProgressiveSubmitResult, SelectedFile,
+    SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError, SubmitErrors,
+    SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode, ValidationStatus,
+    ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
     use_collection_item_number, use_date, use_date_with, use_debounced_field_listener_for_origin,
     use_debounced_form_listener_for_origin, use_field_binding_listener, use_field_blur_listener,
@@ -6292,6 +6294,7 @@ struct CollectionHelperForm {
 
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct CollectionHelperRow {
+    label: String,
     enabled: bool,
     plan: Plan,
     starts_on: DateYmd,
@@ -6301,6 +6304,7 @@ fn collection_helper_form() -> CollectionHelperForm {
     CollectionHelperForm {
         rows: vec![
             CollectionHelperRow {
+                label: "first".to_owned(),
                 enabled: false,
                 plan: Plan::Starter,
                 starts_on: DateYmd {
@@ -6310,6 +6314,7 @@ fn collection_helper_form() -> CollectionHelperForm {
                 },
             },
             CollectionHelperRow {
+                label: "second".to_owned(),
                 enabled: true,
                 plan: Plan::Pro,
                 starts_on: DateYmd {
@@ -6415,13 +6420,13 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
             second.identity().key().replace('-', "%2d")
         )
     );
-    assert_eq!(plan.value(), Plan::Pro);
+    assert_eq!(plan.value(), Some(Plan::Pro));
     assert!(plan.is_selected(&Plan::Pro));
     assert!(!plan.is_selected(&Plan::Enterprise));
 
     plan.set_value(Plan::Enterprise);
 
-    assert_eq!(plan.value(), Plan::Enterprise);
+    assert_eq!(plan.value(), Some(Plan::Enterprise));
     assert_eq!(handle.snapshot().rows[1].plan, Plan::Enterprise);
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -6430,7 +6435,7 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
 
     plan.on_change(Plan::Starter);
 
-    assert_eq!(plan.value(), Plan::Starter);
+    assert_eq!(plan.value(), Some(Plan::Starter));
     assert_eq!(handle.snapshot().rows[1].plan, Plan::Starter);
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -6449,7 +6454,7 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
 
     assert_eq!(moved.name(), "rows[0].plan");
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
-    assert_eq!(moved.value(), Plan::Starter);
+    assert_eq!(moved.value(), Some(Plan::Starter));
     assert!(moved.is_selected(&Plan::Starter));
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path),
@@ -6470,7 +6475,7 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
 
     assert_eq!(plan.name(), "rows[1].plan");
     assert_eq!(plan.value(), "pro");
-    assert_eq!(plan.typed_value(), Plan::Pro);
+    assert_eq!(plan.typed_value(), Some(Plan::Pro));
     assert!(plan.is_rendered_selected("pro"));
     assert!(plan.is_selected(&Plan::Pro));
 
@@ -6488,7 +6493,7 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
         Err("unknown plan".to_owned())
     );
 
-    assert_eq!(plan.typed_value(), Plan::Enterprise);
+    assert_eq!(plan.typed_value(), Some(Plan::Enterprise));
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
         (true, false)
@@ -6516,7 +6521,7 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
     assert_eq!(moved.name(), "rows[0].plan");
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
     assert_eq!(moved.value(), "starter");
-    assert_eq!(moved.typed_value(), Plan::Starter);
+    assert_eq!(moved.typed_value(), Some(Plan::Starter));
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path),
         (true, true)
@@ -6534,13 +6539,13 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
     let input_id = plan.accessibility().input_id().to_owned();
 
     assert_eq!(plan.name(), "rows[1].plan");
-    assert_eq!(plan.value(), Plan::Pro);
+    assert_eq!(plan.value(), Some(Plan::Pro));
     assert!(plan.is_selected(&Plan::Pro));
     assert!(!plan.is_selected(&Plan::Enterprise));
 
     plan.set_value(Plan::Enterprise);
 
-    assert_eq!(plan.value(), Plan::Enterprise);
+    assert_eq!(plan.value(), Some(Plan::Enterprise));
     assert_eq!(handle.snapshot().rows[1].plan, Plan::Enterprise);
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -6549,7 +6554,7 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
 
     plan.select(Plan::Starter);
 
-    assert_eq!(plan.value(), Plan::Starter);
+    assert_eq!(plan.value(), Some(Plan::Starter));
     assert_eq!(handle.snapshot().rows[1].plan, Plan::Starter);
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -6568,12 +6573,189 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
 
     assert_eq!(moved.name(), "rows[0].plan");
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
-    assert_eq!(moved.value(), Plan::Starter);
+    assert_eq!(moved.value(), Some(Plan::Starter));
     assert!(moved.is_selected(&Plan::Starter));
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path),
         (true, true)
     );
+}
+
+/// Every leaf binding kind a collection item can hand out, all addressing the same item.
+struct CollectionHelperLeaves {
+    label: CollectionTextBinding<CollectionHelperForm, CollectionHelperRow>,
+    enabled: CollectionCheckboxBinding<CollectionHelperForm, CollectionHelperRow>,
+    plan: CollectionSelectBinding<CollectionHelperForm, CollectionHelperRow, Plan>,
+    rendered_plan: CollectionRenderedSelectBinding<CollectionHelperForm, CollectionHelperRow, Plan>,
+    radio_plan: CollectionRadioGroupBinding<CollectionHelperForm, CollectionHelperRow, Plan>,
+    starts_on: CollectionParsedTextBinding<CollectionHelperForm, CollectionHelperRow, DateYmd>,
+}
+
+fn collection_helper_leaves(
+    item: &CollectionItemBinding<CollectionHelperForm, CollectionHelperRow>,
+) -> CollectionHelperLeaves {
+    let fields = CollectionHelperRow::fields();
+
+    CollectionHelperLeaves {
+        label: item.text(fields.label()),
+        enabled: item.checkbox(fields.enabled()),
+        plan: item.select(fields.plan()),
+        rendered_plan: item.select_with(fields.plan(), parse_plan, format_plan),
+        radio_plan: item.radio_group(fields.plan()),
+        starts_on: item.date(fields.starts_on()),
+    }
+}
+
+#[test]
+fn dioxus_collection_bindings_read_an_unresolved_item_without_panicking() {
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-unresolved-reads");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let second = rows.items()[1].clone();
+    let leaves = collection_helper_leaves(&second);
+
+    assert_eq!(leaves.label.value(), "second");
+    assert!(leaves.enabled.checked());
+    assert_eq!(leaves.plan.value(), Some(Plan::Pro));
+    assert_eq!(leaves.rendered_plan.typed_value(), Some(Plan::Pro));
+    assert_eq!(leaves.radio_plan.value(), Some(Plan::Pro));
+    assert_eq!(leaves.starts_on.value(), "2026-02-02");
+
+    assert!(rows.remove(second.identity()).is_some());
+
+    // The rendered surface stays total and neutral.
+    assert_eq!(leaves.label.value(), "");
+    assert!(!leaves.enabled.checked());
+    assert_eq!(leaves.rendered_plan.value(), "");
+    assert_eq!(leaves.starts_on.value(), "");
+
+    // The typed surface reports absence instead of panicking or inventing a default.
+    assert_eq!(leaves.plan.value(), None);
+    assert_eq!(leaves.rendered_plan.typed_value(), None);
+    assert_eq!(leaves.radio_plan.value(), None);
+
+    // Accessors on one binding agree in meaning: nothing reads as selected.
+    assert!(!leaves.plan.is_selected(&Plan::Pro));
+    assert!(!leaves.rendered_plan.is_selected(&Plan::Pro));
+    assert!(!leaves.rendered_plan.is_rendered_selected("pro"));
+    assert!(!leaves.radio_plan.is_selected(&Plan::Pro));
+
+    // Metadata and validation errors keep reporting nothing.
+    assert!(!leaves.label.is_touched());
+    assert!(!leaves.label.is_blurred());
+    assert!(leaves.label.validation_errors().is_empty());
+    assert!(leaves.starts_on.parse_error().is_none());
+}
+
+#[test]
+fn dioxus_multi_select_item_reads_an_unselected_value_without_panicking() {
+    let handle = FormHandle::new_with_id_namespace(
+        MultiSelectForm {
+            topics: vec![Topic::Rust, Topic::Dioxus],
+        },
+        "multi-select-unresolved",
+    );
+    let topics = handle.multi_select(MultiSelectForm::fields().topics());
+    let rust = topics.items()[0].clone();
+
+    assert!(rust.is_resolved());
+    assert_eq!(rust.value(), Some(Topic::Rust));
+
+    topics.set_selected(Topic::Rust, false);
+
+    let after_deselect = handle.snapshot();
+
+    assert!(!rust.is_resolved());
+    assert_eq!(rust.value(), None);
+    assert!(!rust.is_touched());
+    assert!(!rust.is_blurred());
+    assert!(rust.validation_errors().is_empty());
+
+    rust.on_blur();
+
+    assert_eq!(handle.snapshot(), after_deselect);
+    assert!(!rust.is_touched());
+    assert!(!rust.is_blurred());
+}
+
+#[test]
+fn dioxus_collection_bindings_report_whether_their_item_still_resolves() {
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-is-resolved");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let items = rows.items();
+    let first = items[0].clone();
+    let second = items[1].clone();
+    let leaves = collection_helper_leaves(&second);
+
+    assert!(second.is_resolved());
+    assert!(leaves.label.is_resolved());
+    assert!(leaves.enabled.is_resolved());
+    assert!(leaves.plan.is_resolved());
+    assert!(leaves.rendered_plan.is_resolved());
+    assert!(leaves.radio_plan.is_resolved());
+    assert!(leaves.starts_on.is_resolved());
+
+    assert!(rows.remove(second.identity()).is_some());
+
+    assert!(!second.is_resolved());
+    assert!(!leaves.label.is_resolved());
+    assert!(!leaves.enabled.is_resolved());
+    assert!(!leaves.plan.is_resolved());
+    assert!(!leaves.rendered_plan.is_resolved());
+    assert!(!leaves.radio_plan.is_resolved());
+    assert!(!leaves.starts_on.is_resolved());
+
+    // Removing one item leaves its siblings resolved.
+    assert!(first.is_resolved());
+    assert!(collection_helper_leaves(&first).label.is_resolved());
+}
+
+#[test]
+fn dioxus_collection_is_resolved_reads_without_borrowing_the_core_mutably() {
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-resolved-reads");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let second = rows.items()[1].clone();
+    let leaves = collection_helper_leaves(&second);
+
+    // `read_core` holds an immutable core borrow for the whole closure, so a guard that reached for
+    // a mutable borrow would panic here rather than answer.
+    assert!(handle.read_core(|_| second.is_resolved()));
+    assert!(handle.read_core(|_| leaves.label.is_resolved()));
+
+    assert!(rows.remove(second.identity()).is_some());
+
+    assert!(!handle.read_core(|_| second.is_resolved()));
+    assert!(!handle.read_core(|_| leaves.label.is_resolved()));
+}
+
+#[test]
+fn dioxus_collection_writes_through_an_unresolved_binding_are_no_ops() {
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-unresolved-writes");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let second = rows.items()[1].clone();
+    let leaves = collection_helper_leaves(&second);
+
+    assert!(rows.remove(second.identity()).is_some());
+
+    let after_removal = handle.snapshot();
+
+    leaves.label.on_input("renamed");
+    leaves.label.set_value("renamed");
+    leaves.enabled.on_change(true);
+    leaves.plan.on_change(Plan::Enterprise);
+    leaves.rendered_plan.on_change("enterprise");
+    leaves.radio_plan.select(Plan::Enterprise);
+    leaves.starts_on.on_input("2027-03-03");
+    leaves.label.on_blur();
+
+    assert_eq!(handle.snapshot(), after_removal);
+    assert_eq!(handle.snapshot().rows.len(), 1);
+    assert_eq!(handle.snapshot().rows[0].label, "first");
+    assert!(!leaves.label.is_touched());
+    assert!(!leaves.label.is_blurred());
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -7371,7 +7553,7 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
         .selected_item(&Topic::Rust)
         .expect("initial value should be selected");
     assert_eq!(rust.name(), "topics[0]");
-    assert_eq!(rust.value(), Topic::Rust);
+    assert_eq!(rust.value(), Some(Topic::Rust));
     assert!(!rust.is_dirty());
     assert!(!rust.is_touched());
 
@@ -7388,7 +7570,7 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
     assert!(selected_dioxus.field_identity().is_collection_item_value());
     assert_eq!(selected_dioxus.index(), 1);
     assert_eq!(selected_dioxus.name(), "topics[1]");
-    assert_eq!(selected_dioxus.value(), Topic::Dioxus);
+    assert_eq!(selected_dioxus.value(), Some(Topic::Dioxus));
     assert!(selected_dioxus.is_touched());
     assert!(selected_dioxus.is_dirty());
     assert_eq!(handle.snapshot().topics, vec![Topic::Rust, Topic::Dioxus]);
