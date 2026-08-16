@@ -37,9 +37,6 @@ struct Milestone {
     estimate_days: u32,
 }
 
-/// Form Context Scope for this page, so keyed row components can retrieve the handle.
-struct ProjectPlannerScope;
-
 fn milestones_path() -> FieldPath<ProjectForm, Vec<Milestone>> {
     ProjectForm::fields()
         .delivery()
@@ -77,10 +74,11 @@ fn initial() -> ProjectForm {
 /// Rows that call a collection-item hook must be components keyed by
 /// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
 /// index key would hand a removed or reordered row's parse state to whichever
-/// item lands on that index next.
+/// item lands on that index next. The handle travels as a prop, so the page
+/// needs no Form Context Scope, and the row's own `items()` call keeps it
+/// subscribed to the collection.
 #[component]
-fn MilestoneRow(item: CollectionItemIdentity) -> Element {
-    let form = use_form_context::<ProjectPlannerScope, ProjectForm, String>();
+fn MilestoneRow(form: FormHandle<ProjectForm>, item: CollectionItemIdentity) -> Element {
     let collection = form.collection(milestones_path());
     let items = collection.items();
     let count = items.len();
@@ -135,7 +133,7 @@ fn MilestoneRow(item: CollectionItemIdentity) -> Element {
 
 #[component]
 pub fn ProjectPlanner() -> Element {
-    let form = provide_form_context::<ProjectPlannerScope, _, _>(use_form(initial()));
+    let form = use_form(initial());
     let fields = ProjectForm::fields();
 
     let company_path = fields.client().join(ClientDetails::fields().company());
@@ -210,7 +208,7 @@ pub fn ProjectPlanner() -> Element {
                     }
                     div { class: "space-y-2",
                         for item in items.iter() {
-                            MilestoneRow { key: "{item.key()}", item: item.identity() }
+                            MilestoneRow { key: "{item.key()}", form: form.clone(), item: item.identity() }
                         }
                     }
                 }

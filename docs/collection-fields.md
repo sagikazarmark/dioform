@@ -5,23 +5,24 @@ The first **Collection Field** slice supports direct `Vec<Item>` fields on a nam
 Use `FormHandle::collection(path)` to create a `CollectionBinding` for a direct `Vec<Item>` field path. Render each row as its own component, keyed by the item's **Collection Item Identity**:
 
 ```rust
-struct InvoiceScope;
-
 #[component]
 fn InvoiceEditor() -> Element {
-    let form = provide_form_context::<InvoiceScope, _, _>(use_form(initial()));
+    let form = use_form(initial());
     let lines = form.collection(InvoiceForm::fields().lines());
 
     rsx! {
         for item in lines.items() {
-            InvoiceLineRow { key: "{item.key()}", item: item.identity() }
+            InvoiceLineRow {
+                key: "{item.key()}",
+                form: form.clone(),
+                item: item.identity(),
+            }
         }
     }
 }
 
 #[component]
-fn InvoiceLineRow(item: CollectionItemIdentity) -> Element {
-    let form = use_form_context::<InvoiceScope, InvoiceForm, String>();
+fn InvoiceLineRow(form: FormHandle<InvoiceForm>, item: CollectionItemIdentity) -> Element {
     let item = form
         .collection(InvoiceForm::fields().lines())
         .items()
@@ -57,7 +58,11 @@ A row that calls a collection-item hook must be a component keyed by the item id
 - A row component keyed by index has the same problem one level down: Dioxus reuses the scope that sits at that index, hook state and all.
 - `key: "{item.key()}"` (or `CollectionItemIdentity::key()`) ties the row's scope to the logical item, so its parse state moves with the item and is released with it.
 
-Row components take the identity as a prop and retrieve the handle as a **Form Context Consumer** under the page's **Form Context Scope** (see [Form Context Access](form-context.md)). Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
+Row components take the **Form Handle** and the item identity as props. A handle compares by observable identity ([ADR-0024](adr/0024-compare-form-handles-by-observable-identity.md)), so it is an ordinary `#[component]` prop, and a page that renders collection rows needs no **Form Context Scope**. Context access stays available for a subtree of renderless helpers deep enough that threading the handle is the greater cost (see [Form Context Access](form-context.md)); a keyed row is not that case.
+
+Resolve the item from the collection inside the row rather than accepting a resolved row value from the parent. That lookup is also the row's subscription to the collection's value, and **Field Ancestry** is strict between a collection and its own items, so nothing else wakes the row when the collection's structure changes. A row that stopped reading the collection would keep rendering a stale rendered index after a reorder, and a stale sibling count after a removal — leaving, for example, an enabled "move down" control on a row that is now last.
+
+Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
 
 For a collection under a nested named struct, compose the generated direct field paths with `FieldPath::join`:
 

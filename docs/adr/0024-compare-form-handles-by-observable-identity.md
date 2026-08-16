@@ -86,6 +86,14 @@ would otherwise be threaded through a subtree of renderless helpers, and `docs/c
 continues to require row components to take an identity as a prop and read the handle from context,
 because a hook's state lives in the scope that calls it.
 
+> **Overtaken by [#35](https://github.com/sagikazarmark/dioform/issues/35)** on the collection-rows
+> half. A keyed row now takes the handle as an ordinary prop alongside its identity prop, and a page
+> that renders rows no longer declares a **Form Context Scope** for them. The reason given above
+> still holds and is why the row stays a component keyed by **Collection Item Identity** — a hook's
+> state lives in the scope that calls it — but that never required context, only a component
+> boundary. Everything else in this paragraph, and the decision, stand: **Form Context** is still the
+> answer for a subtree of renderless helpers.
+
 Making the handle prop-able widens exposure to an existing hazard: a child that adopts a passed handle
 with `use_form_handle(move || props.form.clone())` runs **Form Cleanup** on the shared form at its own
 unmount, and `deactivate` is one-way — no code path sets the adapter active again. This is reachable

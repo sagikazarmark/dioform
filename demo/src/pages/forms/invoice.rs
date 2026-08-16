@@ -26,9 +26,6 @@ impl InvoiceLine {
     }
 }
 
-/// Form Context Scope for this page, so keyed row components can retrieve the handle.
-struct InvoiceScope;
-
 fn initial() -> InvoiceForm {
     InvoiceForm {
         customer: "Analytical Engines Ltd".into(),
@@ -91,10 +88,15 @@ fn build() -> FormHandle<InvoiceForm> {
 /// Rows that call a collection-item hook must be components keyed by
 /// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
 /// index key would hand a reordered or removed row's parse state to whichever
-/// item lands on that index next.
+/// item lands on that index next. The handle travels as a prop, so the page
+/// needs no Form Context Scope, and the row's own `items()` call keeps it
+/// subscribed to the collection.
 #[component]
-fn LineRow(item: CollectionItemIdentity, total_cents: u32) -> Element {
-    let form = use_form_context::<InvoiceScope, InvoiceForm, String>();
+fn LineRow(
+    form: FormHandle<InvoiceForm>,
+    item: CollectionItemIdentity,
+    total_cents: u32,
+) -> Element {
     let collection = form.collection(InvoiceForm::fields().lines());
     let items = collection.items();
     let count = items.len();
@@ -191,7 +193,7 @@ fn LineRow(item: CollectionItemIdentity, total_cents: u32) -> Element {
 
 #[component]
 pub fn Invoice() -> Element {
-    let form = provide_form_context::<InvoiceScope, _, _>(use_form_handle(build));
+    let form = use_form_handle(build);
     let f = InvoiceForm::fields();
     let mut status = use_signal(String::new);
 
@@ -260,6 +262,7 @@ pub fn Invoice() -> Element {
                             for (index, item) in items.iter().enumerate() {
                                 LineRow {
                                     key: "{item.key()}",
+                                    form: form.clone(),
                                     item: item.identity(),
                                     total_cents: snapshot.lines.get(index).map_or(0, InvoiceLine::total_cents),
                                 }

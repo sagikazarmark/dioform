@@ -3373,15 +3373,27 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
     );
 }
 
-struct CollectionRowScope;
-
 type CollectionRowQuantity =
     CollectionParsedTextBinding<InvoiceCollectionForm, InvoiceCollectionLine, u32>;
+
+/// Where one row rendered itself inside the collection: its rendered index and how many siblings
+/// the collection held while it rendered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CollectionRowPosition {
+    index: usize,
+    count: usize,
+}
+
+#[derive(Clone)]
+struct CollectionRowRender {
+    quantity: CollectionRowQuantity,
+    position: CollectionRowPosition,
+}
 
 #[derive(Default)]
 struct CollectionRowProbe {
     handle: RefCell<Option<FormHandle<InvoiceCollectionForm>>>,
-    quantities: RefCell<Vec<(CollectionItemIdentity, CollectionRowQuantity)>>,
+    renders: RefCell<Vec<(CollectionItemIdentity, CollectionRowRender)>>,
 }
 
 impl CollectionRowProbe {
@@ -3393,70 +3405,90 @@ impl CollectionRowProbe {
             .clone()
     }
 
-    fn record(&self, item: CollectionItemIdentity, quantity: CollectionRowQuantity) {
-        let mut quantities = self.quantities.borrow_mut();
+    fn record(&self, item: CollectionItemIdentity, render: CollectionRowRender) {
+        let mut renders = self.renders.borrow_mut();
 
-        match quantities
-            .iter_mut()
-            .find(|(recorded, _)| *recorded == item)
-        {
-            Some(recorded) => recorded.1 = quantity,
-            None => quantities.push((item, quantity)),
+        match renders.iter_mut().find(|(recorded, _)| *recorded == item) {
+            Some(recorded) => recorded.1 = render,
+            None => renders.push((item, render)),
         }
+    }
+
+    fn last_render(&self, item: CollectionItemIdentity) -> CollectionRowRender {
+        self.renders
+            .borrow()
+            .iter()
+            .find(|(recorded, _)| *recorded == item)
+            .map(|(_, render)| render.clone())
+            .expect("row component should have rendered for this item")
     }
 
     /// Returns the quantity binding the row component rendered for this logical item last.
     fn quantity(&self, item: CollectionItemIdentity) -> CollectionRowQuantity {
-        self.quantities
-            .borrow()
-            .iter()
-            .find(|(recorded, _)| *recorded == item)
-            .map(|(_, quantity)| quantity.clone())
-            .expect("row component should have rendered a quantity binding for this item")
+        self.last_render(item).quantity
+    }
+
+    /// Returns the position the row component rendered for this logical item last.
+    fn position(&self, item: CollectionItemIdentity) -> CollectionRowPosition {
+        self.last_render(item).position
     }
 }
 
 #[derive(Clone, Props)]
 struct CollectionRowProps {
     probe: Rc<CollectionRowProbe>,
+    form: FormHandle<InvoiceCollectionForm>,
     item: CollectionItemIdentity,
 }
 
 impl PartialEq for CollectionRowProps {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.probe, &other.probe) && self.item == other.item
+        Rc::ptr_eq(&self.probe, &other.probe) && self.form == other.form && self.item == other.item
     }
 }
 
 fn collection_parsed_row(props: CollectionRowProps) -> Element {
-    let form = use_form_context::<CollectionRowScope, InvoiceCollectionForm, String>();
-    let item = form
+    // The row takes the handle as a prop, so the parent needs no Form Context Scope. Its own
+    // `items()` call is what subscribes it to the collection's value: Field Ancestry is strict
+    // between a collection and its items, so nothing else would wake the row when a sibling is
+    // removed or the items are reordered.
+    let items = props
+        .form
         .collection(InvoiceCollectionForm::fields().lines())
-        .items()
+        .items();
+    let count = items.len();
+    let item = items
         .into_iter()
         .find(|candidate| candidate.identity() == props.item)
         .expect("the parent renders one row per item it currently holds");
+    let index = item.index();
     let quantity = use_collection_item_number(item, InvoiceCollectionLine::fields().quantity());
 
-    props.probe.record(props.item, quantity);
+    props.probe.record(
+        props.item,
+        CollectionRowRender {
+            quantity,
+            position: CollectionRowPosition { index, count },
+        },
+    );
 
     VNode::empty()
 }
 
 fn collection_parsed_rows_probe(probe: Rc<CollectionRowProbe>) -> Element {
     let form = use_form_handle(|| FormHandle::new(invoice_collection_row_form()));
-    let form = provide_form_context::<CollectionRowScope, _, _>(form);
     let items = form
         .collection(InvoiceCollectionForm::fields().lines())
         .items();
 
-    probe.handle.borrow_mut().replace(form);
+    probe.handle.borrow_mut().replace(form.clone());
 
     rsx! {
         for item in items.iter() {
             collection_parsed_row {
                 key: "{item.key()}",
                 probe: Rc::clone(&probe),
+                form: form.clone(),
                 item: item.identity(),
             }
         }
@@ -3577,6 +3609,53 @@ fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_reorder() {
     assert_eq!(parse_blocked_items(&handle), vec![design, build]);
     assert_eq!(probe.quantity(build).value(), "not-a-number");
     assert_eq!(probe.quantity(design).value(), "also-not-a-number");
+}
+
+#[test]
+fn keyed_row_components_correct_their_position_after_a_sibling_is_removed() {
+    let (probe, mut dom, [design, build, deploy]) = mounted_collection_rows();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    assert_eq!(
+        probe.position(design),
+        CollectionRowPosition { index: 0, count: 3 }
+    );
+    assert_eq!(
+        probe.position(deploy),
+        CollectionRowPosition { index: 2, count: 3 }
+    );
+
+    // Removing the *last* row leaves every survivor's identity and rendered index untouched, so a
+    // row that reached its item through props alone would compare equal to its previous props and
+    // keep rendering a sibling count one too high — an enabled "move down" control on the row that
+    // is now last. The row's own collection read is what corrects it.
+    lines
+        .remove(deploy)
+        .expect("the last row should be removable");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.position(design),
+        CollectionRowPosition { index: 0, count: 2 }
+    );
+    assert_eq!(
+        probe.position(build),
+        CollectionRowPosition { index: 1, count: 2 }
+    );
+    assert_eq!(probe.quantity(build).name(), "lines[1].quantity");
+
+    // Removing an earlier row corrects the rendered index of every row after it.
+    lines
+        .remove(design)
+        .expect("the first row should be removable");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.position(build),
+        CollectionRowPosition { index: 0, count: 1 }
+    );
+    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
 }
 
 #[test]
