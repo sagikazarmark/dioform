@@ -7097,6 +7097,56 @@ fn dioxus_collection_writes_through_an_unresolved_binding_are_no_ops() {
     assert!(!leaves.label.is_blurred());
 }
 
+fn reinitialized_invoice_collection_form() -> InvoiceCollectionForm {
+    InvoiceCollectionForm {
+        lines: vec![
+            InvoiceCollectionLine {
+                description: "Consulting".to_owned(),
+                quantity: 3,
+            },
+            InvoiceCollectionLine {
+                description: "Hosting".to_owned(),
+                quantity: 4,
+            },
+        ],
+    }
+}
+
+#[test]
+fn dioxus_a_binding_retained_across_reinitialize_never_resolves_again() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let retained_item = lines.items()[1].clone();
+    let retained = retained_item.text(InvoiceCollectionLine::fields().description());
+
+    assert_eq!(retained.value(), "Build");
+
+    handle.reinitialize(reinitialized_invoice_collection_form());
+
+    assert!(!retained.is_resolved());
+
+    // Reading the collection is what re-mints its identities. The retained binding has to stay
+    // unresolved across that reading: an application that guards on `is_resolved()` would otherwise
+    // write through to a row of an invoice this binding was never bound to.
+    let reinitialized = lines.items();
+
+    assert_eq!(reinitialized.len(), 2);
+    assert!(
+        reinitialized
+            .iter()
+            .all(|item| item.identity() != retained_item.identity())
+    );
+    assert!(!retained.is_resolved());
+    assert_eq!(retained.value(), "");
+
+    retained.on_input("written through a retired identity");
+    retained.on_blur();
+
+    assert_eq!(handle.snapshot(), reinitialized_invoice_collection_form());
+    assert!(!retained.is_touched());
+    assert!(!retained.is_blurred());
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct CollectionDateHookSnapshot {
     name: Option<String>,

@@ -2634,30 +2634,75 @@ pub(crate) struct CollectionState {
 }
 
 impl CollectionState {
-    fn new(baseline_len: usize, current_len: usize) -> Self {
-        let shared_len = baseline_len.min(current_len);
-        let baseline_items: Vec<_> = (0..baseline_len)
-            .map(|index| {
-                CollectionItemIdentity(
-                    u64::try_from(index).expect("collection item index should fit into u64"),
-                )
-            })
-            .collect();
-        let mut current_items: Vec<_> = baseline_items.iter().copied().take(shared_len).collect();
-        current_items.extend(
-            (baseline_len..baseline_len + current_len.saturating_sub(shared_len)).map(|index| {
-                CollectionItemIdentity(
-                    u64::try_from(index).expect("collection item index should fit into u64"),
-                )
-            }),
-        );
-
+    /// Creates identity state for a collection that has issued nothing yet.
+    const fn unminted() -> Self {
         Self {
-            baseline_items,
-            current_items,
-            next_item_identity: u64::try_from(baseline_len.max(current_len))
-                .expect("collection length should fit into u64"),
+            baseline_items: Vec::new(),
+            current_items: Vec::new(),
+            next_item_identity: 0,
         }
+    }
+
+    /// Mints both identity sequences from the never-rewinding counter, for a collection that holds
+    /// no identity yet; a collection that holds any keeps every one of them.
+    ///
+    /// A collection holding no identity is either one that has never been read or one whose
+    /// identities [`Self::retire_items`] has retired. Both mint above every identity this collection
+    /// has ever issued, so no number is issued twice ([ADR-0025]). One that is legitimately empty is
+    /// empty in the **Form Draft** too, so it mints nothing here either.
+    ///
+    /// [ADR-0025]: https://github.com/sagikazarmark/dioform/blob/main/docs/adr/0025-mint-collection-item-identities-from-a-never-rewinding-counter.md
+    fn mint_items_if_unminted(&mut self, baseline_len: usize, current_len: usize) {
+        if !self.baseline_items.is_empty() || !self.current_items.is_empty() {
+            return;
+        }
+
+        for _ in 0..baseline_len {
+            let identity = self.allocate_item_identity();
+            self.baseline_items.push(identity);
+        }
+
+        let shared_len = baseline_len.min(current_len);
+        self.current_items = self.baseline_items[..shared_len].to_vec();
+
+        for _ in shared_len..current_len {
+            let identity = self.allocate_item_identity();
+            self.current_items.push(identity);
+        }
+    }
+
+    /// Restores the current item sequence from the baseline sequence, returning the identities the
+    /// restore dropped so their item-scoped state can be released.
+    fn restore_baseline_items(&mut self) -> Vec<CollectionItemIdentity> {
+        let dropped = self
+            .current_items
+            .iter()
+            .copied()
+            .filter(|item| !self.baseline_items.contains(item))
+            .collect();
+
+        self.current_items = self.baseline_items.clone();
+
+        dropped
+    }
+
+    /// Retires every identity this collection holds, leaving the counter where it is.
+    ///
+    /// A retired identity is absent from the current items, which makes a binding still holding it
+    /// an **Unresolved Binding**, and the next reading mints above it rather than reissuing it.
+    fn retire_items(&mut self) {
+        self.baseline_items.clear();
+        self.current_items.clear();
+    }
+
+    const fn next_item_identity(&self) -> u64 {
+        self.next_item_identity
+    }
+
+    /// Raises the identity counter to `next_item_identity` when it sits below it, so restoring
+    /// state can adopt a sequence without lowering the counter that minted the live one.
+    fn advance_next_item_identity_to_at_least(&mut self, next_item_identity: u64) {
+        self.next_item_identity = self.next_item_identity.max(next_item_identity);
     }
 
     fn items(&self) -> Vec<CollectionItem> {
@@ -3321,10 +3366,16 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     }
 
     /// Restores the current draft to the baseline and clears interaction and validation state.
+    ///
+    /// A collection's baseline rows are the same logical items after the reset as before it, so
+    /// each keeps its **Collection Item Identity** and a binding for a baseline row still denotes
+    /// that row. Items added since the baseline are dropped, and their identities are retired
+    /// rather than reissued.
     pub fn reset(&mut self) {
         self.draft.reset();
         self.increment_form_version();
-        self.field_store.clear();
+        self.field_store.clear_fields();
+        self.restore_baseline_collection_identities();
         self.validation_chains
             .clear_collection_item_field_validator_states();
         self.clear_validation_results();
@@ -3334,10 +3385,16 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     }
 
     /// Explicitly replaces the baseline and current draft, clearing interaction and validation state.
+    ///
+    /// The new model's rows are new logical items, so every **Collection Item Identity** the form
+    /// has issued is retired and the next reading of a collection mints identities above all of
+    /// them. A binding retained across this call is permanently an **Unresolved Binding**, and each
+    /// row is rendered under a fresh key, which remounts it.
     pub fn reinitialize(&mut self, initial: Model) {
         self.draft.reinitialize(initial);
         self.increment_form_version();
-        self.field_store.clear();
+        self.field_store.clear_fields();
+        self.retire_collection_identities();
         self.validation_chains
             .clear_collection_item_field_validator_states();
         self.clear_validation_results();
@@ -3357,6 +3414,11 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     /// If the current field value already equals its baseline and has no field-scoped state, this is
     /// a no-op. Value comparison happens before mutable path access so derived paths cannot
     /// materialize absent parent values.
+    ///
+    /// A `Vec<Item>` path reaches this method like any other, and a tracked collection reached that
+    /// way is reset the way [`Self::reset`] resets it: the baseline rows keep their **Collection
+    /// Item Identity**, and the identities of rows added since the baseline are retired along with
+    /// their item-scoped state.
     pub fn reset_field<Value>(&mut self, path: FieldPath<Model, Value>)
     where
         Value: Clone + PartialEq,
@@ -3381,6 +3443,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             *path.get_mut(self.draft.current_mut()) = baseline;
         }
 
+        self.restore_collection_items_from_baseline(&field_identity);
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();
         self.increment_field_version(&field_identity);
@@ -3690,7 +3753,7 @@ impl<Model, Error> FormCore<Model, Error> {
         self.form_version = restored_form_version;
         self.field_store
             .restore_fields(field_versions, field_metadata);
-        self.field_store.set_collections(collection_states);
+        self.field_store.adopt_collections(collection_states);
 
         for validator in self.validation_chains.field_values_mut() {
             validator.lifecycle.clear();
@@ -3762,7 +3825,7 @@ impl<Model, Error> FormCore<Model, Error> {
         state: CollectionIdentityState,
     ) -> Result<(), FormStateRestoreError> {
         self.field_store
-            .set_collections(state.into_collection_states()?);
+            .adopt_collections(state.into_collection_states()?);
         Ok(())
     }
 
@@ -6271,8 +6334,56 @@ impl<Model, Error> FormCore<Model, Error> {
         let baseline_len = path.get(self.draft.baseline()).len();
         let current_len = path.get(self.draft.current()).len();
 
-        self.field_store
-            .collection_or_insert_with(identity, || CollectionState::new(baseline_len, current_len))
+        self.ensure_collection_state_by_identity(identity, baseline_len, current_len)
+    }
+
+    /// Registers a collection's identity state by identity, minting its sequences when it holds
+    /// none. The single seam through which a **Collection Item Identity** sequence comes into being.
+    fn ensure_collection_state_by_identity(
+        &mut self,
+        collection: FieldIdentity,
+        baseline_len: usize,
+        current_len: usize,
+    ) -> &mut CollectionState {
+        let state = self
+            .field_store
+            .collection_or_insert_with(collection, CollectionState::unminted);
+
+        state.mint_items_if_unminted(baseline_len, current_len);
+
+        state
+    }
+
+    /// Restores every tracked collection's current item sequence from its baseline sequence, for a
+    /// form reset that has already cleared all item-scoped state wholesale.
+    fn restore_baseline_collection_identities(&mut self) {
+        for state in self.field_store.collections_mut() {
+            state.restore_baseline_items();
+        }
+    }
+
+    /// Retires every tracked collection's identities, leaving each identity counter where it is.
+    fn retire_collection_identities(&mut self) {
+        for state in self.field_store.collections_mut() {
+            state.retire_items();
+        }
+    }
+
+    /// Restores one tracked collection's item sequence from its baseline sequence and releases the
+    /// item-scoped state of the items that restore dropped, for a single-field reset that clears
+    /// only the field it was given.
+    ///
+    /// [`Self::reset_field`] is generic over its value type, so a `Vec<Item>` field path reaches it
+    /// and restores the vector value while nothing follows it in the collection's identity state.
+    /// A field that is not a tracked collection does not match and passes through untouched.
+    fn restore_collection_items_from_baseline(&mut self, collection: &FieldIdentity) {
+        let Some(state) = self.field_store.collection_mut(collection) else {
+            return;
+        };
+
+        for item in state.restore_baseline_items() {
+            self.clear_collection_item_state(collection, item);
+        }
     }
 
     fn ensure_collection_item_validator_states_for_collection(
@@ -6335,9 +6446,7 @@ impl<Model, Error> FormCore<Model, Error> {
             .collect();
 
         for (collection, baseline_len, current_len) in template_collections {
-            self.field_store.collection_or_insert_with(collection, || {
-                CollectionState::new(baseline_len, current_len)
-            });
+            self.ensure_collection_state_by_identity(collection, baseline_len, current_len);
         }
 
         let collections: Vec<_> = self.field_store.collection_keys();

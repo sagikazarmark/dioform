@@ -207,6 +207,20 @@ fn invoice_page() -> InvoicePage {
     }
 }
 
+fn line(description: &str) -> InvoiceLine {
+    InvoiceLine {
+        description: description.to_owned(),
+        quantity: 1,
+    }
+}
+
+fn line_identities(form: &mut FormCore<InvoiceForm>) -> Vec<CollectionItemIdentity> {
+    form.collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect()
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Customer {
     name: String,
@@ -8132,4 +8146,253 @@ fn optional_traversal_composes_through_a_doubly_optional_field() {
             address: None,
         }))
     );
+}
+
+#[test]
+fn reinitialize_retires_collection_item_identities_for_good() {
+    let mut form = FormCore::new(invoice_form());
+    let retained = line_identities(&mut form)[1];
+
+    form.reinitialize(InvoiceForm {
+        lines: vec![line("Consulting"), line("Hosting")],
+    });
+
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), retained, line_description_path()),
+        None,
+    );
+
+    let reinitialized = line_identities(&mut form);
+
+    assert!(!reinitialized.contains(&retained));
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), retained, line_description_path()),
+        None,
+    );
+}
+
+#[test]
+fn a_write_through_a_reinitialized_away_item_leaves_the_draft_unchanged() {
+    let mut form = FormCore::new(invoice_form());
+    let retained = line_identities(&mut form)[1];
+
+    form.reinitialize(InvoiceForm {
+        lines: vec![line("Consulting"), line("Hosting")],
+    });
+    let _ = line_identities(&mut form);
+
+    assert!(!form.set_user_collection_item_field(
+        lines_path(),
+        retained,
+        line_description_path(),
+        "written through a retired identity".to_owned(),
+    ));
+    assert_eq!(
+        form.snapshot().lines,
+        vec![line("Consulting"), line("Hosting")],
+    );
+}
+
+#[test]
+fn reinitialize_mints_identities_above_every_one_it_retires() {
+    let mut form = FormCore::new(invoice_form());
+    let retired = line_identities(&mut form);
+
+    form.reinitialize(InvoiceForm {
+        lines: vec![line("Consulting"), line("Hosting")],
+    });
+
+    let minted = line_identities(&mut form);
+    let highest_retired = retired
+        .iter()
+        .max()
+        .expect("the baseline invoice should have lines");
+
+    assert!(
+        minted.iter().all(|item| item > highest_retired),
+        "reinitialized identities {minted:?} should all exceed the retired {highest_retired}",
+    );
+}
+
+#[test]
+fn reset_keeps_a_baseline_item_bound_to_the_same_logical_item() {
+    let mut form = FormCore::new(invoice_form());
+    let retained = line_identities(&mut form)[1];
+
+    form.set_user_collection_item_field(
+        lines_path(),
+        retained,
+        line_description_path(),
+        "Rebuild".to_owned(),
+    );
+    form.reset();
+
+    assert_eq!(line_identities(&mut form)[1], retained);
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), retained, line_description_path()),
+        Some(&"Build".to_owned()),
+    );
+}
+
+#[test]
+fn an_append_after_reset_never_mints_an_identity_handed_out_before_it() {
+    let mut form = FormCore::new(invoice_form());
+    let before_reset = line_identities(&mut form);
+
+    form.reset();
+    let appended = form.push_user_collection_item(lines_path(), line("Support"));
+
+    assert!(!before_reset.contains(&appended));
+}
+
+#[test]
+fn restoring_a_snapshot_taken_before_the_collection_was_read_retires_the_live_identities() {
+    let mut form = FormCore::new(invoice_form());
+    let snapshot = form.state_snapshot();
+    let issued = line_identities(&mut form);
+
+    // A snapshot captured before the collection was ever read carries no identity for it, and the
+    // live identities are not its to keep: this removal leaves "Build" holding the only live
+    // identity, at the index the restored "Design" occupies. Carrying the live sequence across the
+    // restore would silently rebind it onto a line it was never minted for, so the restore retires
+    // it instead — an item absent from the collection is the **Unresolved Binding** ADR-0022
+    // already answers for. The counter still never rewinds, so nothing is reissued either.
+    form.remove_user_collection_item(lines_path(), issued[0]);
+
+    form.restore_state_snapshot(snapshot)
+        .expect("a snapshot of this form should restore");
+
+    let after_restore = line_identities(&mut form);
+
+    assert_eq!(after_restore.len(), 2);
+    assert!(
+        after_restore.iter().all(|item| !issued.contains(item)),
+        "restored identities {after_restore:?} should reuse none of {issued:?}",
+    );
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), issued[1], line_description_path()),
+        None,
+    );
+}
+
+#[test]
+fn restoring_a_snapshot_never_lowers_the_identity_counter() {
+    let mut form = FormCore::new(invoice_form());
+    let _ = line_identities(&mut form);
+    let snapshot = form.state_snapshot();
+    let appended = form.push_user_collection_item(lines_path(), line("Support"));
+
+    form.restore_state_snapshot(snapshot)
+        .expect("a snapshot of this form should restore");
+
+    assert!(
+        form.push_user_collection_item(lines_path(), line("Training")) > appended,
+        "an append after a restore should mint above every identity issued before it",
+    );
+}
+
+#[test]
+fn resetting_the_collection_field_itself_restores_its_baseline_items() {
+    let mut form = FormCore::new(invoice_form());
+    let baseline = line_identities(&mut form);
+    let appended = form.push_user_collection_item(lines_path(), line("Support"));
+    let appended_description = line_field_identity(appended, "description");
+
+    form.mark_collection_item_field_blurred(lines_path(), appended, line_description_path());
+    form.reset_field(lines_path());
+
+    assert_eq!(line_identities(&mut form), baseline);
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), appended, line_description_path()),
+        None,
+    );
+    assert!(!form.is_field_identity_blurred(&appended_description));
+    assert!(form.push_user_collection_item(lines_path(), line("Training")) > appended);
+}
+
+#[test]
+fn clearing_a_collection_that_has_no_baseline_rows_does_not_rewind_its_counter() {
+    let mut form = FormCore::new(InvoiceForm { lines: Vec::new() });
+    let appended = form.push_user_collection_item(lines_path(), line("Support"));
+
+    // Both identity sequences are now empty, exactly as they are for a collection that has never
+    // been read. Reading it must mint nothing rather than start over from the first identity.
+    form.clear_user_collection_items(lines_path());
+
+    assert!(line_identities(&mut form).is_empty());
+    assert!(form.push_user_collection_item(lines_path(), line("Training")) > appended);
+}
+
+/// Records which line every identity the collection has held denotes, asserting on each reading
+/// that no identity has come to denote a different line and that a freshly minted one is above
+/// every identity issued before it.
+///
+/// Every line in the sequence below carries a distinct description, so the description is the
+/// logical item. A previously issued identity may reappear — `reset` and snapshot restore reinstate
+/// a sequence without minting anything — but it has to come back denoting the line it left with. A
+/// *fresh* identity below the high-water mark cannot appear at all: the counter only moves forward,
+/// so a number below it was already handed out for some other line.
+#[derive(Default)]
+struct IssuedIdentities {
+    seen: Vec<(CollectionItemIdentity, String)>,
+}
+
+impl IssuedIdentities {
+    fn record(&mut self, form: &mut FormCore<InvoiceForm>) {
+        for item in form.collection_items(lines_path()) {
+            let identity = item.identity();
+            let description = form
+                .collection_item_field_value(lines_path(), identity, line_description_path())
+                .expect("a rendered item should resolve its own child field")
+                .clone();
+
+            if let Some((_, denoted)) = self.seen.iter().find(|(seen, _)| *seen == identity) {
+                assert_eq!(
+                    denoted, &description,
+                    "identity {identity} denoted {denoted} and now denotes {description}",
+                );
+                continue;
+            }
+
+            assert!(
+                self.seen.iter().all(|(previous, _)| identity > *previous),
+                "identity {identity} was minted below already issued {:?}",
+                self.seen,
+            );
+            self.seen.push((identity, description));
+        }
+    }
+}
+
+#[test]
+fn no_collection_item_identity_is_ever_issued_twice() {
+    let mut form = FormCore::new(invoice_form());
+    let mut issued = IssuedIdentities::default();
+
+    issued.record(&mut form);
+
+    let removed = issued.seen[0].0;
+    form.push_user_collection_item(lines_path(), line("Support"));
+    issued.record(&mut form);
+    form.remove_user_collection_item(lines_path(), removed);
+    issued.record(&mut form);
+    form.reset();
+    issued.record(&mut form);
+    form.push_user_collection_item(lines_path(), line("Training"));
+    issued.record(&mut form);
+
+    let snapshot = form.state_snapshot();
+
+    form.reinitialize(InvoiceForm {
+        lines: vec![line("Consulting"), line("Hosting")],
+    });
+    issued.record(&mut form);
+    form.push_user_collection_item(lines_path(), line("Retainer"));
+    issued.record(&mut form);
+
+    form.restore_state_snapshot(snapshot)
+        .expect("a snapshot of this form should restore");
+    issued.record(&mut form);
+    form.push_user_collection_item(lines_path(), line("Overtime"));
+    issued.record(&mut form);
 }

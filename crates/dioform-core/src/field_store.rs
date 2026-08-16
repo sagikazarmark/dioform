@@ -4,8 +4,10 @@
 //! identity state in three parallel `BTreeMap`s, kept aligned by convention across every method.
 //! This module concentrates them behind one interface so that lazy **Field Registration** (absent
 //! fields read as version `0` and default metadata without allocating) and the coordinated
-//! lifecycle (clear, retain, snapshot, and restore always touch the three maps together) become
-//! encapsulated invariants rather than caller discipline.
+//! lifecycle (clear, retain, snapshot, and restore each state knowing what the others do) become
+//! encapsulated invariants rather than caller discipline. The three do not all move together:
+//! collection identity state outlives the clear that resets versions and metadata, because its
+//! identities may never be reissued.
 //!
 //! Version has exactly one owner here. Downstream submission and validation logic reads
 //! [`FieldStore::version`] for staleness; it never writes versions.
@@ -66,7 +68,8 @@ impl FieldStore {
         self.version(field) != 0 || self.metadata(field) != FieldMetadata::default()
     }
 
-    // --- collections (state stored opaquely; mutation logic stays in Form Core) ---
+    // --- collections (state stored opaquely; item mutation logic stays in Form Core, while the
+    // whole-map lifecycle below owns the rule that no identity counter moves backward) ---
 
     /// Borrows the collection state for a collection field, if it has been registered.
     pub(crate) fn collection(&self, field: &FieldIdentity) -> Option<&CollectionState> {
@@ -87,6 +90,12 @@ impl FieldStore {
         self.collections.entry(field).or_insert_with(new_state)
     }
 
+    /// Borrows every registered collection's state mutably for a lifecycle operation that moves
+    /// them together, such as a form reset or reinitialization.
+    pub(crate) fn collections_mut(&mut self) -> impl Iterator<Item = &mut CollectionState> {
+        self.collections.values_mut()
+    }
+
     /// Returns the identities of all registered collection fields.
     pub(crate) fn collection_keys(&self) -> Vec<FieldIdentity> {
         self.collections.keys().cloned().collect()
@@ -97,15 +106,29 @@ impl FieldStore {
         &self.collections
     }
 
-    /// Replaces the collection state map during snapshot restore or explicit identity restore.
-    pub(crate) fn set_collections(
-        &mut self,
-        collections: BTreeMap<FieldIdentity, CollectionState>,
-    ) {
-        self.collections = collections;
+    /// Adopts restored collection state during snapshot restore or explicit identity restore.
+    ///
+    /// Restored identity sequences replace the live ones, but no identity counter moves backward:
+    /// each restored collection carries the higher of its own and the live counter, and a live
+    /// collection the restored state says nothing about has its identities retired rather than
+    /// renumbered from zero. Either way the next identity this form mints is one it has never
+    /// issued before.
+    pub(crate) fn adopt_collections(&mut self, restored: BTreeMap<FieldIdentity, CollectionState>) {
+        let mut replaced = std::mem::replace(&mut self.collections, restored);
+
+        for (field, adopted) in &mut self.collections {
+            if let Some(replaced) = replaced.remove(field) {
+                adopted.advance_next_item_identity_to_at_least(replaced.next_item_identity());
+            }
+        }
+
+        for (field, mut unrestored) in replaced {
+            unrestored.retire_items();
+            self.collections.insert(field, unrestored);
+        }
     }
 
-    // --- coordinated lifecycle (the three maps move together) ---
+    // --- coordinated lifecycle (versions and metadata move together) ---
 
     /// Iterates version entries for snapshot construction.
     pub(crate) fn iter_versions(&self) -> impl Iterator<Item = (&FieldIdentity, &u64)> {
@@ -136,10 +159,13 @@ impl FieldStore {
         self.metadata = metadata;
     }
 
-    /// Clears all field-keyed state on reset and reinitialization.
-    pub(crate) fn clear(&mut self) {
+    /// Clears version and metadata state on reset and reinitialization.
+    ///
+    /// Collection identity state survives, because clearing it would rewind every identity counter
+    /// with it and hand the same **Collection Item Identity** to a different logical item. Reset and
+    /// reinitialization move that state through their own operations on [`CollectionState`].
+    pub(crate) fn clear_fields(&mut self) {
         self.versions.clear();
         self.metadata.clear();
-        self.collections.clear();
     }
 }

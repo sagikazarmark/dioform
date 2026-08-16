@@ -176,6 +176,35 @@ The same rule holds for **Optional Fields** reached through `FieldPath::or` (see
 [Optional Fields](optional-fields.md)): a total, neutral editing surface with an honest accessor
 alongside. See [ADR-0022](adr/0022-represent-an-absent-binding-target-in-the-return-type.md).
 
+## Identity Lifetime
+
+A **Collection Item Identity** is minted once, from a counter that never moves backward, and denotes
+one logical item for as long as any binding holds it. No number is ever issued twice within one
+form's lifetime, so a retained binding can go unresolved but can never come back addressing a
+different row ([ADR-0025](adr/0025-mint-collection-item-identities-from-a-never-rewinding-counter.md)):
+
+- `reset()` restores the collection to its baseline rows, which are the same logical items they were
+  before. Each keeps its identity, so a binding for a baseline row still denotes that row and its
+  `key()` is unchanged, which keeps the row mounted. Rows added since the baseline are dropped and
+  their identities retired.
+- `reinitialize(model)` installs a different model, whose rows are new logical items. Every identity
+  the collection has issued is retired and the new rows are numbered above all of them, so a binding
+  retained across the call is unresolved for good. Every row is rendered under a fresh `key()` and is
+  therefore **remounted**, which releases the scope state of each row — focus, scroll position, and
+  the parse state held by that row's hooks. Prefer per-item operations when a form's rows should
+  survive an update.
+- `restore_state_snapshot(snapshot)` adopts the identities the snapshot carries, so a same-form
+  round trip returns each row to the binding that held it. The counter never drops to the snapshot's
+  value: it stays at the higher of the live and restored one, and a live collection the snapshot
+  says nothing about has its identities retired rather than renumbered from zero.
+- `reset_field(path)` on the collection's own `Vec<Item>` path behaves like `reset()` for that one
+  collection.
+
+A snapshot minted by a *different* form instance or process is a documented limitation. Its
+identities come from an unrelated allocator history, so they can collide with live ones and a
+retained binding can alias onto a restored row. Restoring a foreign snapshot — hydration and
+cross-process restore — targets a form that has just mounted and holds no retained bindings.
+
 ## Array Mutations
 
 `CollectionBinding` exposes the array mutations directly, each with a user-originated method (the plain
