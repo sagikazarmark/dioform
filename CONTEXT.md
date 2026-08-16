@@ -70,6 +70,10 @@ _Avoid_: Array input, repeated component
 Structured internal metadata that identifies one logical item inside a **Collection Field** so item metadata follows the item independently from its rendered index.
 _Avoid_: Array index, row ID, application key
 
+**Unresolved Binding**:
+A **Field Binding** whose addressed **Field** has no value in the **Form Draft**, because the **Collection Item Identity** it was created for no longer belongs to its **Collection Field**.
+_Avoid_: Stale binding, dangling binding, removed row
+
 **Field Ancestry**:
 The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, and selectors for either respond when the other is written.
 _Avoid_: Path prefix, string match, parent pointer
