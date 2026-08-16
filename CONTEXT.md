@@ -67,7 +67,7 @@ A **Field** whose value contains ordered repeated items and whose item metadata 
 _Avoid_: Array input, repeated component
 
 **Collection Item Identity**:
-Structured internal metadata that identifies one logical item inside a **Collection Field** so item metadata follows the item independently from its rendered index.
+Structured internal metadata that identifies one logical item inside a **Collection Field** so item metadata follows the item independently from its rendered index. Minted from a per-collection counter that never moves backward, so a retired identity is never issued twice and denotes one logical item for as long as any binding holds it ([ADR-0025](docs/adr/0025-mint-collection-item-identities-from-a-never-rewinding-counter.md)).
 _Avoid_: Array index, row ID, application key
 
 **Unresolved Binding**:
