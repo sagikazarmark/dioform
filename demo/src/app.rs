@@ -43,6 +43,8 @@ pub enum Route {
     NestedPaths {},
     #[route("/field-groups")]
     FieldGroups {},
+    #[route("/optional")]
+    OptionalFields {},
     #[route("/state")]
     StateMeta {},
     #[route("/observers")]
@@ -117,6 +119,7 @@ fn DemoLayout() -> Element {
                         SidebarNavLink { route: Route::FileFields {}, label: "File fields" }
                         SidebarNavLink { route: Route::NestedPaths {}, label: "Nested structs & paths" }
                         SidebarNavLink { route: Route::FieldGroups {}, label: "Field groups" }
+                        SidebarNavLink { route: Route::OptionalFields {}, label: "Optional fields" }
                         SidebarNavLink { route: Route::StateMeta {}, label: "State & meta" }
                         SidebarNavLink { route: Route::Observers {}, label: "Selectors & observers" }
                         SidebarNavLink { route: Route::Serialization {}, label: "State serialization" }

@@ -33,6 +33,12 @@ fn name_path() -> FieldPath<ContactForm, String> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Party {
     name: String,
+    address: Option<PostalAddress>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct PostalAddress {
+    city: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,20 +46,86 @@ struct Transaction {
     counterparty: Option<Party>,
 }
 
-static EMPTY_PARTY_NAME: String = String::new();
+static ABSENT_PARTY: Party = Party {
+    name: String::new(),
+    address: None,
+};
+
+static ABSENT_POSTAL_ADDRESS: PostalAddress = PostalAddress {
+    city: String::new(),
+};
+
+fn counterparty_path() -> FieldPath<Transaction, Option<Party>> {
+    FieldPath::direct(
+        FieldIdentity::new("counterparty"),
+        "counterparty",
+        |model: &Transaction| &model.counterparty,
+        |model: &mut Transaction| &mut model.counterparty,
+    )
+}
+
+fn party_name_path() -> FieldPath<Party, String> {
+    FieldPath::direct(
+        FieldIdentity::new("name"),
+        "name",
+        |party: &Party| &party.name,
+        |party: &mut Party| &mut party.name,
+    )
+}
+
+fn party_address_path() -> FieldPath<Party, Option<PostalAddress>> {
+    FieldPath::direct(
+        FieldIdentity::new("address"),
+        "address",
+        |party: &Party| &party.address,
+        |party: &mut Party| &mut party.address,
+    )
+}
+
+fn postal_address_city_path() -> FieldPath<PostalAddress, String> {
+    FieldPath::direct(
+        FieldIdentity::new("city"),
+        "city",
+        |address: &PostalAddress| &address.city,
+        |address: &mut PostalAddress| &mut address.city,
+    )
+}
 
 fn counterparty_name_path() -> FieldPath<Transaction, String> {
+    counterparty_path()
+        .or(&ABSENT_PARTY)
+        .join(party_name_path())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Settlement {
+    nominee: Option<Option<Party>>,
+}
+
+static ABSENT_NOMINEE: Option<Party> = None;
+
+fn nominee_path() -> FieldPath<Settlement, Option<Option<Party>>> {
     FieldPath::direct(
-        FieldIdentity::new("counterparty.name"),
-        "counterparty.name",
-        |model: &Transaction| {
-            model
-                .counterparty
-                .as_ref()
-                .map_or(&EMPTY_PARTY_NAME, |party| &party.name)
-        },
-        |model: &mut Transaction| &mut model.counterparty.get_or_insert_with(Party::default).name,
+        FieldIdentity::new("nominee"),
+        "nominee",
+        |model: &Settlement| &model.nominee,
+        |model: &mut Settlement| &mut model.nominee,
     )
+}
+
+fn nominee_name_path() -> FieldPath<Settlement, String> {
+    nominee_path()
+        .or(&ABSENT_NOMINEE)
+        .or(&ABSENT_PARTY)
+        .join(party_name_path())
+}
+
+fn counterparty_city_path() -> FieldPath<Transaction, String> {
+    counterparty_path()
+        .or(&ABSENT_PARTY)
+        .join(party_address_path())
+        .or(&ABSENT_POSTAL_ADDRESS)
+        .join(postal_address_city_path())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7853,4 +7925,178 @@ fn conditional_hidden_fields_keep_their_draft_values() {
     assert!(!*form.field_value(show_details_path()));
     assert_eq!(form.field_value(details_path()), "Keep this");
     assert_eq!(form.snapshot().details, "Keep this");
+}
+
+#[test]
+fn a_derived_optional_path_keeps_the_parent_identity_and_field_name() {
+    let derived = counterparty_path().or(&ABSENT_PARTY);
+
+    assert_eq!(derived.identity(), FieldIdentity::new("counterparty"));
+    assert_eq!(derived.field_name(), "counterparty");
+
+    let name = derived.join(party_name_path());
+
+    assert_eq!(name.identity(), FieldIdentity::new("counterparty.name"));
+    assert_eq!(name.field_name(), "counterparty.name");
+}
+
+#[test]
+fn reading_through_an_absent_parent_yields_the_supplied_fallback() {
+    let form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+
+    assert_eq!(form.field_value(counterparty_name_path()), "");
+}
+
+#[test]
+fn reading_through_a_present_parent_yields_the_stored_value() {
+    let form: FormCore<Transaction, &'static str> = FormCore::new_with_error_type(Transaction {
+        counterparty: Some(Party {
+            name: "Ada".to_owned(),
+            address: None,
+        }),
+    });
+
+    assert_eq!(form.field_value(counterparty_name_path()), "Ada");
+}
+
+#[test]
+fn writing_through_an_absent_parent_materializes_the_fallback() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+
+    form.set_user_field(counterparty_name_path(), "Ada".to_owned());
+
+    assert_eq!(
+        form.snapshot().counterparty,
+        Some(Party {
+            name: "Ada".to_owned(),
+            address: None,
+        })
+    );
+}
+
+#[test]
+fn writing_an_inner_field_preserves_the_other_fields_of_a_present_parent() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+
+    form.set_user_field(
+        counterparty_path(),
+        Some(Party {
+            name: "Ada".to_owned(),
+            address: Some(PostalAddress {
+                city: "London".to_owned(),
+            }),
+        }),
+    );
+    form.set_user_field(counterparty_name_path(), "Grace".to_owned());
+
+    assert_eq!(
+        form.snapshot().counterparty,
+        Some(Party {
+            name: "Grace".to_owned(),
+            address: Some(PostalAddress {
+                city: "London".to_owned(),
+            }),
+        })
+    );
+}
+
+#[test]
+fn read_shaped_operations_leave_an_absent_parent_absent() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+    form.register_sync_field_validator(counterparty_name_path(), "required", |_, _| {
+        Vec::<&'static str>::new()
+    });
+
+    assert_eq!(form.field_value(counterparty_name_path()), "");
+    assert!(!form.is_dirty());
+    assert!(!form.is_field_dirty(counterparty_name_path()));
+
+    let snapshot = form.state_snapshot();
+
+    assert_eq!(snapshot.draft().current().counterparty, None);
+
+    form.mark_field_touched(counterparty_name_path());
+    form.mark_field_blurred(counterparty_name_path());
+    form.validate_field(counterparty_name_path(), ValidationTrigger::Manual);
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert!(form.validate_for_submit());
+    assert_eq!(
+        form.submit(|_| SubmitErrors::<Transaction, &'static str>::none()),
+        SubmitResult::Succeeded
+    );
+    assert_eq!(form.snapshot().counterparty, None);
+    assert!(!form.is_dirty());
+}
+
+#[test]
+fn presence_reads_distinguish_an_absent_parent_from_a_present_default_one() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+
+    assert_eq!(
+        counterparty_path().get_present(form.draft().current()),
+        None
+    );
+    assert!(!counterparty_path().is_present(form.draft().current()));
+    assert_eq!(form.field_value(counterparty_name_path()), "");
+
+    form.set_user_field(counterparty_path(), Some(Party::default()));
+
+    assert_eq!(
+        counterparty_path().get_present(form.draft().current()),
+        Some(&Party::default())
+    );
+    assert!(counterparty_path().is_present(form.draft().current()));
+    assert_eq!(form.field_value(counterparty_name_path()), "");
+}
+
+#[test]
+fn optional_traversal_composes_through_nested_optional_fields() {
+    let mut form: FormCore<Transaction, &'static str> =
+        FormCore::new_with_error_type(Transaction { counterparty: None });
+
+    assert_eq!(
+        counterparty_city_path().identity(),
+        FieldIdentity::new("counterparty.address.city")
+    );
+    assert_eq!(
+        counterparty_city_path().field_name(),
+        "counterparty.address.city"
+    );
+    assert_eq!(form.field_value(counterparty_city_path()), "");
+
+    form.set_user_field(counterparty_city_path(), "London".to_owned());
+
+    assert_eq!(
+        form.snapshot().counterparty,
+        Some(Party {
+            name: String::new(),
+            address: Some(PostalAddress {
+                city: "London".to_owned(),
+            }),
+        })
+    );
+}
+
+#[test]
+fn optional_traversal_composes_through_a_doubly_optional_field() {
+    let mut form: FormCore<Settlement, &'static str> =
+        FormCore::new_with_error_type(Settlement { nominee: None });
+
+    assert_eq!(form.field_value(nominee_name_path()), "");
+
+    form.set_user_field(nominee_name_path(), "Ada".to_owned());
+
+    assert_eq!(
+        form.snapshot().nominee,
+        Some(Some(Party {
+            name: "Ada".to_owned(),
+            address: None,
+        }))
+    );
 }

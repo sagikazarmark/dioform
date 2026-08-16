@@ -16,6 +16,7 @@ pub mod file_fields;
 pub mod minimal;
 pub mod nested_paths;
 pub mod observers;
+pub mod optional_fields;
 pub mod parsed_inputs;
 mod presentation;
 pub mod serialization;

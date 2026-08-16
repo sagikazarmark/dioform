@@ -21,6 +21,7 @@ interoperability, not as the main addressing mechanism.
 - **Validation modes and triggers**: blur/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
 - **Form-owned collections**: repeatable items with library-owned, opaque item identity.
 - **Reusable field groups**: `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
+- **Optional field traversal**: `FieldPath::or` derives a total path through an `Option<Inner>` from a fallback supplied at the call site.
 - **Optional validation adapters**: `garde` and `validator` adapters that map external diagnostics into Dioform validation errors.
 
 ## Workspace
@@ -33,7 +34,7 @@ interoperability, not as the main addressing mechanism.
 - `dioform-validator`: optional renderer-agnostic `validator` validation adapter that flattens nested `validator` diagnostics into Dioform validation errors.
 - `dioform-validation-adapter`: shared support crate for building validation adapters.
 
-Input helpers are documented in [`docs/input-helpers.md`](docs/input-helpers.md). File fields are documented in [`docs/file-fields.md`](docs/file-fields.md). Collection fields are documented in [`docs/collection-fields.md`](docs/collection-fields.md). Async and debounced validation are documented in [`docs/async-validation.md`](docs/async-validation.md). Validation adapters are documented in [`docs/validation-adapters.md`](docs/validation-adapters.md). Reusable field groups are introduced below.
+Input helpers are documented in [`docs/input-helpers.md`](docs/input-helpers.md). File fields are documented in [`docs/file-fields.md`](docs/file-fields.md). Collection fields are documented in [`docs/collection-fields.md`](docs/collection-fields.md). Optional fields are documented in [`docs/optional-fields.md`](docs/optional-fields.md). Async and debounced validation are documented in [`docs/async-validation.md`](docs/async-validation.md). Validation adapters are documented in [`docs/validation-adapters.md`](docs/validation-adapters.md). Reusable field groups are introduced below.
 
 The [`demo/`](demo) directory is a docs-by-example gallery with an extensive,
 feature-by-feature set of live examples mounted next to their exact source, plus

@@ -9,6 +9,7 @@ use crate::examples::field_groups::FieldGroupsExample;
 use crate::examples::file_fields::FileFieldsExample;
 use crate::examples::nested_paths::NestedPathsExample;
 use crate::examples::observers::ObserversExample;
+use crate::examples::optional_fields::OptionalFieldsExample;
 use crate::examples::serialization::SerializationExample;
 use crate::examples::state_meta::StateMetaExample;
 use dioxus_code::{Code, code};
@@ -140,6 +141,41 @@ pub fn FieldGroups() -> Element {
             code: rsx! {
                 Code { src: code!("src/examples/field_groups.rs"), theme: snippet_theme() }
             },
+        }
+    }
+}
+
+#[component]
+pub fn OptionalFields() -> Element {
+    rsx! {
+        PageHeader {
+            eyebrow: "Fields & state",
+            title: "Optional fields",
+            intro: "FieldPath::or derives a total path through an Option<T> from a fallback supplied at the call site, so an optional record is editable in place instead of being flattened into a DTO.",
+        }
+        ExampleSection {
+            title: "FieldPath::or + Party::mount(path) + is_present",
+            intro: rsx! {
+                "Type a name into an absent counterparty and the record materializes; "
+                InlineCode { "Pick counterparty" }
+                " sets it whole, and editing one field keeps the other. Presence stays readable through the "
+                InlineCode { "Option" }
+                "-typed path, and materialization is one-way until "
+                InlineCode { "Set null" }
+                "."
+            },
+            demo: rsx! { OptionalFieldsExample {} },
+            code: rsx! {
+                Code { src: code!("src/examples/optional_fields.rs"), theme: snippet_theme() }
+            },
+        }
+        DocsCallout {
+            title: "Optional fields",
+            action: Some(ExternalAction::new(
+                "docs/optional-fields.md",
+                "https://github.com/sagikazarmark/dioform/blob/main/docs/optional-fields.md",
+            )),
+            "Presence reads, nested optional traversal, and the materialization ratchet are documented in the optional fields guide."
         }
     }
 }

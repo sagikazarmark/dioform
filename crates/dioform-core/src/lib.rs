@@ -498,6 +498,119 @@ impl<Model, Value> FieldPath<Model, Value> {
     }
 }
 
+impl<Model, Inner> FieldPath<Model, Option<Inner>> {
+    /// Derives a total path through an **Optional Field**, using `fallback` when the value is absent.
+    ///
+    /// A bare path to an **Optional Field** cannot be traversed: nothing produces `&Inner` from an
+    /// absent value. This combinator asks for that value by name and supplies it at the call site,
+    /// so the derived path is an ordinary [`FieldPath`] that composes with [`FieldPath::join`],
+    /// **Field Groups**, bindings, validators, listeners, snapshots and submission.
+    ///
+    /// Reading through an absent parent yields `fallback`. Writing through an absent parent
+    /// materializes a clone of that same `fallback` and then applies the write, so the two halves
+    /// cannot diverge. The derived path keeps the parent's **Field Identity** and rendered
+    /// **Field Name**, which makes joined paths render as `counterparty.name` and makes the derived
+    /// path and the `Option`-typed path two views of one field that share touched, blurred, version
+    /// and submit-error state.
+    ///
+    /// # Materialization is one-way
+    ///
+    /// Materialization is a ratchet. Clearing an inner value does not un-materialize the parent, so
+    /// typing one character into an inner field of an absent parent and deleting it again leaves a
+    /// present record holding `fallback`: every rendered field reports clean while the form reports
+    /// dirty, and the submitted payload carries a defaulted record where omission may have been
+    /// expected. Validators registered on inner paths also run while the parent is absent, so a
+    /// required rule on `counterparty.name` reports invalid for a section the user never opened.
+    ///
+    /// Use [`FieldPath::get_present`] or [`FieldPath::is_present`] where absence itself has to be
+    /// observed: the derived path erases the difference between an absent value and a present one
+    /// holding `fallback` by construction.
+    ///
+    /// ```
+    /// use dioform_core::{FieldIdentity, FieldPath};
+    ///
+    /// #[derive(Clone, Debug, Default, PartialEq)]
+    /// struct Party {
+    ///     name: String,
+    /// }
+    ///
+    /// struct Transaction {
+    ///     counterparty: Option<Party>,
+    /// }
+    ///
+    /// static ABSENT_PARTY: Party = Party {
+    ///     name: String::new(),
+    /// };
+    ///
+    /// let counterparty = FieldPath::direct(
+    ///     FieldIdentity::new("counterparty"),
+    ///     "counterparty",
+    ///     |model: &Transaction| &model.counterparty,
+    ///     |model: &mut Transaction| &mut model.counterparty,
+    /// );
+    /// let party_name = FieldPath::direct(
+    ///     FieldIdentity::new("name"),
+    ///     "name",
+    ///     |party: &Party| &party.name,
+    ///     |party: &mut Party| &mut party.name,
+    /// );
+    /// let counterparty_name = counterparty.or(&ABSENT_PARTY).join(party_name);
+    ///
+    /// assert_eq!(counterparty_name.field_name(), "counterparty.name");
+    ///
+    /// let mut transaction = Transaction { counterparty: None };
+    ///
+    /// assert_eq!(counterparty_name.get(&transaction), "");
+    ///
+    /// *counterparty_name.get_mut(&mut transaction) = "Ada".to_owned();
+    ///
+    /// assert_eq!(
+    ///     transaction.counterparty,
+    ///     Some(Party {
+    ///         name: "Ada".to_owned()
+    ///     })
+    /// );
+    /// ```
+    pub fn or(self, fallback: &'static Inner) -> FieldPath<Model, Inner>
+    where
+        Model: 'static,
+        Inner: Clone + 'static,
+    {
+        let identity = self.identity.clone();
+        let field_name = Rc::clone(&self.field_name);
+        let optional_for_get = self.clone();
+        let optional_for_get_mut = self;
+
+        FieldPath {
+            identity,
+            field_name,
+            accessor: FieldPathAccessor {
+                get: Rc::new(move |model| optional_for_get.get(model).as_ref().unwrap_or(fallback)),
+                get_mut: Rc::new(move |model| {
+                    optional_for_get_mut
+                        .get_mut(model)
+                        .get_or_insert_with(|| fallback.clone())
+                }),
+            },
+            _marker: PhantomData,
+        }
+    }
+
+    /// Reads this **Optional Field** without erasing absence.
+    ///
+    /// [`FieldPath::or`] derives a total path whose read cannot tell an absent value apart from a
+    /// present one holding the fallback. This accessor keeps that distinction, so presence stays
+    /// observable for controls such as a "clear this section" button.
+    pub fn get_present<'a>(&self, model: &'a Model) -> Option<&'a Inner> {
+        self.get(model).as_ref()
+    }
+
+    /// Returns whether this **Optional Field** currently holds a value.
+    pub fn is_present(&self, model: &Model) -> bool {
+        self.get(model).is_some()
+    }
+}
+
 /// Stable identity for one registered validator.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

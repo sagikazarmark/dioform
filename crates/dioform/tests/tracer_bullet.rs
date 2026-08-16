@@ -16,10 +16,10 @@ use dioform::advanced::{
 };
 use dioform::{
     CollectionItemBinding, CollectionParsedTextBinding, CollectionTextBinding, FieldAccessibility,
-    FieldBindingLifecycle, FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace,
-    FormListenerEvent, FormValidationError, ParsedTextBinding, ProgressiveSubmitResult,
-    SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError,
-    SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
+    FieldBindingLifecycle, FieldGroup, FieldPath, FileFieldKey, Form, FormConfig, FormHandle,
+    FormIdNamespace, FormListenerEvent, FormValidationError, ParsedTextBinding,
+    ProgressiveSubmitResult, SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker,
+    SubmitError, SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
     ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
     use_collection_item_number, use_date, use_date_with, use_debounced_field_listener_for_origin,
@@ -129,6 +129,24 @@ fn nested_customer(name: &str) -> NestedCustomer {
         name: name.to_owned(),
     }
 }
+
+#[derive(Clone, Debug, Eq, Form, PartialEq)]
+struct OptionalCounterpartyForm {
+    reference: String,
+    counterparty: Option<OptionalCounterparty>,
+}
+
+#[derive(Clone, Debug, Default, Eq, FieldGroup, Form, PartialEq)]
+struct OptionalCounterparty {
+    name: String,
+    #[form(name = "account-number")]
+    account: String,
+}
+
+static ABSENT_COUNTERPARTY: OptionalCounterparty = OptionalCounterparty {
+    name: String::new(),
+    account: String::new(),
+};
 
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct NestedInvoiceCollectionForm {
@@ -15366,5 +15384,78 @@ fn dioxus_accessibility_helpers_combine_validation_and_parse_error_state() {
     assert_eq!(
         parse_only.aria_describedby_with_help(false).as_deref(),
         Some("account-age-error")
+    );
+}
+
+#[test]
+fn dioxus_facade_binds_fields_inside_an_optional_field_group() {
+    let handle = FormHandle::new(OptionalCounterpartyForm {
+        reference: "INV-1".to_owned(),
+        counterparty: None,
+    });
+    let counterparty_path = OptionalCounterpartyForm::fields().counterparty();
+    let counterparty =
+        OptionalCounterparty::mount(counterparty_path.clone().or(&ABSENT_COUNTERPARTY));
+    let name = handle.text(counterparty.name());
+    let account = handle.text(counterparty.account());
+
+    assert_eq!(name.name(), "counterparty.name");
+    assert_eq!(account.name(), "counterparty.account-number");
+    assert_eq!(name.value(), "");
+    assert!(!counterparty_path.is_present(&handle.snapshot()));
+    assert!(!handle.is_dirty());
+
+    name.on_input("Ada");
+
+    assert_eq!(name.value(), "Ada");
+    assert_eq!(
+        handle.snapshot().counterparty,
+        Some(OptionalCounterparty {
+            name: "Ada".to_owned(),
+            account: String::new(),
+        })
+    );
+    assert!(counterparty_path.is_present(&handle.snapshot()));
+}
+
+#[test]
+fn dioxus_facade_optional_group_bindings_follow_presence_changes() {
+    let handle = FormHandle::new(OptionalCounterpartyForm {
+        reference: "INV-1".to_owned(),
+        counterparty: Some(OptionalCounterparty {
+            name: "Ada".to_owned(),
+            account: "GB33".to_owned(),
+        }),
+    });
+    let counterparty_path = OptionalCounterpartyForm::fields().counterparty();
+    let counterparty =
+        OptionalCounterparty::mount(counterparty_path.clone().or(&ABSENT_COUNTERPARTY));
+    let name = handle.text(counterparty.name());
+
+    assert_eq!(name.value(), "Ada");
+
+    handle.set_user_field(counterparty_path.clone(), None);
+
+    assert_eq!(name.value(), "");
+    assert!(!counterparty_path.is_present(&handle.snapshot()));
+
+    handle.set_user_field(
+        counterparty_path.clone(),
+        Some(OptionalCounterparty {
+            name: "Grace".to_owned(),
+            account: "GB44".to_owned(),
+        }),
+    );
+
+    assert_eq!(name.value(), "Grace");
+
+    name.on_input("Lin");
+
+    assert_eq!(
+        handle.snapshot().counterparty,
+        Some(OptionalCounterparty {
+            name: "Lin".to_owned(),
+            account: "GB44".to_owned(),
+        })
     );
 }

@@ -13,7 +13,7 @@ mod validation;
 pub use basics::{FieldBindings, Home, Minimal, ParsedInputs};
 pub use fields::{
     CollectionValidation, Collections, FieldGroups, FileFields, NestedPaths, Observers,
-    Serialization, StateMeta,
+    OptionalFields, Serialization, StateMeta,
 };
 pub use forms::{Checkout, Invoice, ProjectPlanner, Signup};
 pub use not_found::NotFound;
