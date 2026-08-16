@@ -116,6 +116,18 @@ impl AdapterRuntime {
             files: Rc::new(FileSelections::default()),
         }
     }
+
+    /// Reports whether both runtimes are the same allocation, in every part.
+    ///
+    /// Exists for the Form Handle identity invariant test (ADR-0024), which asserts that handles
+    /// comparing equal share adapter state rather than merely sharing a form instance.
+    #[cfg(test)]
+    pub(super) fn shares_every_allocation_with(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+            && Rc::ptr_eq(&self.spawner, &other.spawner)
+            && Rc::ptr_eq(&self.parse, &other.parse)
+            && Rc::ptr_eq(&self.files, &other.files)
+    }
 }
 
 impl AdapterRuntime {

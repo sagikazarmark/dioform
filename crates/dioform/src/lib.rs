@@ -130,6 +130,14 @@ use selector_notifications::SelectorTransition;
 /// synchronization. Initial values are captured when the hook initializes the form; later parent
 /// data changes must use [`FormHandle::reinitialize`] when they intentionally replace the baseline
 /// and draft. Creating a form does not run validation automatically.
+///
+/// `create` must build a new form, never adopt an existing one. A component that writes
+/// `use_form_handle(move || props.form.clone())` takes ownership of a form it does not own, and
+/// its unmount runs **Form Cleanup** on the shared form: the owner keeps a handle whose async
+/// validation and submission are permanently deactivated. A handle received as a prop or by a
+/// **Form Context Consumer** is already usable as it is — read and bind through it directly.
+/// Debug builds assert when the owner then cleans the form up a second time, which reports the
+/// mistake but only once the owner unmounts too.
 pub fn use_form_handle<Model: 'static, Error: 'static>(
     create: impl FnOnce() -> FormHandle<Model, Error> + 'static,
 ) -> FormHandle<Model, Error> {
@@ -3732,6 +3740,25 @@ impl<Model, Error> Clone for FormHandle<Model, Error> {
     }
 }
 
+/// Compares handles by observable identity: the form instance they refer to together with the
+/// [`FormIdNamespace`] they derive rendered IDs from (ADR-0024).
+///
+/// This is what makes a handle usable as a Dioxus component prop, which requires `PartialEq`.
+/// Comparing form state instead would be wrong for that use: Dioxus copies new props over old
+/// only when they compare unequal, so a handle that reported itself unequal on every draft edit
+/// would churn, and one that ignored the namespace would leave a child rendering another
+/// namespace's element IDs permanently. Form state changes do not need to travel through props;
+/// reads subscribe the reading scope directly, so a memoized child still re-renders on its own.
+///
+/// Comparing `core` alone identifies the form instance because the handle's `Rc`-shaped fields
+/// are allocated together in [`FormHandle::from_core`] and shared together by `Clone`; nothing
+/// else constructs a handle from an already-shared form instance.
+impl<Model, Error> PartialEq for FormHandle<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.core, &other.core) && self.id_namespace == other.id_namespace
+    }
+}
+
 impl<Model, Intent, Error> Clone for IntentFormHandle<Model, Intent, Error>
 where
     Intent: Clone,
@@ -6500,6 +6527,14 @@ impl<Model, Error> FormHandle<Model, Error> {
     }
 
     fn cleanup(&self) {
+        // Not while already unwinding: cleanup runs from hook cleanup on the unmount path, and a
+        // second panic there aborts instead of reporting.
+        debug_assert!(
+            self.is_active() || std::thread::panicking(),
+            "form cleanup ran twice on one form instance, so a component adopted a form handle it \
+             did not create (`use_form_handle(move || props.form.clone())`) and its unmount \
+             deactivated the form its owner still holds; use a passed handle directly instead"
+        );
         self.adapter.deactivate();
         self.clear_active_submit_intent();
     }
@@ -11618,5 +11653,87 @@ impl<Model: Clone, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
         self.submit
             .handle
             .submit_async_managed_intent_with_files(self.intent.clone(), submit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Handle identity does not involve the model, so the smallest one will do.
+    fn model() -> String {
+        "ada@example.com".to_owned()
+    }
+
+    /// Reports whether both handles share every one of their `Rc`-shaped fields.
+    fn shares_every_allocation<Model, Error>(
+        left: &FormHandle<Model, Error>,
+        right: &FormHandle<Model, Error>,
+    ) -> bool {
+        Rc::ptr_eq(&left.core, &right.core)
+            && left.adapter.shares_every_allocation_with(&right.adapter)
+            && Rc::ptr_eq(&left.runtime, &right.runtime)
+            && Rc::ptr_eq(&left.reactivity, &right.reactivity)
+            && Rc::ptr_eq(&left.listeners, &right.listeners)
+            && Rc::ptr_eq(&left.active_submit_intent, &right.active_submit_intent)
+            && Rc::ptr_eq(&left.submit_generation, &right.submit_generation)
+    }
+
+    /// [`PartialEq`] compares the form instance alone (ADR-0024), which stands in for the handle's
+    /// other shared allocations only because they are allocated and cloned together. That is an
+    /// invariant of the constructors rather than of the types, so it is asserted here: a future
+    /// constructor handing an already-shared form instance to a separately built handle would
+    /// otherwise make two handles with different adapter, listener, and validation state compare
+    /// equal, and this test is what makes that loud.
+    ///
+    /// This test is inline rather than in `tests/` because the fields it inspects are private.
+    #[test]
+    fn form_handles_sharing_a_form_instance_share_every_allocation() {
+        let mut handles = Vec::new();
+
+        for constructed in [
+            FormHandle::new(model()),
+            FormHandle::new_with_error_type(model()),
+            FormHandle::new_with_id_namespace(model(), "billing"),
+            FormHandle::from_core(FormCore::new(model())),
+            FormHandle::from_core_with_id_namespace(FormCore::new(model()), "billing"),
+            FormHandle::from_config(FormConfig::new(model())),
+        ] {
+            handles.push(constructed.clone().with_id_namespace("shipping"));
+            handles.push(constructed.clone());
+            handles.push(constructed);
+        }
+
+        for left in &handles {
+            for right in &handles {
+                assert_eq!(
+                    Rc::ptr_eq(&left.core, &right.core),
+                    shares_every_allocation(left, right),
+                    "handles agreeing on the form instance must agree on every allocation"
+                );
+
+                if left == right {
+                    assert!(
+                        shares_every_allocation(left, right),
+                        "equal handles must share every allocation"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Passing a handle between components is now ordinary, which makes it easy to reach for
+    /// [`use_form_handle`] in the receiving component too. That adopts the owner's form, and the
+    /// adopter's unmount deactivates it for everyone. Debug builds say so rather than leaving a
+    /// silently dead form behind.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic = "form cleanup ran twice"]
+    fn cleaning_up_an_adopted_form_handle_after_its_owner_is_asserted() {
+        let owner = FormHandle::new(model());
+        let adopter = owner.clone();
+
+        adopter.cleanup();
+        owner.cleanup();
     }
 }

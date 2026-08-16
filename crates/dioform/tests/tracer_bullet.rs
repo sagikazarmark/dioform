@@ -15641,3 +15641,57 @@ fn dioxus_facade_optional_group_bindings_follow_presence_changes() {
         })
     );
 }
+
+#[test]
+fn form_handle_clones_share_one_observable_identity() {
+    let handle = FormHandle::new(SignupForm {
+        email: "ada@example.com".to_owned(),
+    });
+    let passed_to_child = handle.clone();
+
+    assert!(handle == passed_to_child);
+}
+
+#[test]
+fn independently_created_form_handles_are_distinct_identities() {
+    let model = SignupForm {
+        email: "ada@example.com".to_owned(),
+    };
+    let first = FormHandle::new_with_id_namespace(model.clone(), "signup");
+    let second = FormHandle::new_with_id_namespace(model, "signup");
+
+    assert!(first != second);
+}
+
+#[test]
+fn form_handles_sharing_a_form_but_deriving_different_ids_are_distinct_identities() {
+    let handle = FormHandle::new_with_id_namespace(
+        SignupForm {
+            email: String::new(),
+        },
+        "billing",
+    );
+    let renamespaced = handle.clone().with_id_namespace("shipping");
+    let email_path = SignupForm::fields().email();
+
+    assert!(handle != renamespaced);
+    assert_ne!(
+        handle.field_accessibility(email_path.clone()).input_id(),
+        renamespaced.field_accessibility(email_path).input_id()
+    );
+}
+
+#[test]
+fn mutating_form_state_does_not_change_form_handle_identity() {
+    let handle = FormHandle::new(SignupForm {
+        email: String::new(),
+    });
+    let passed_to_child = handle.clone();
+    let email = handle.text(SignupForm::fields().email());
+
+    email.on_input("ada@example.com");
+    email.on_blur();
+
+    assert!(handle == passed_to_child);
+    assert!(handle.is_dirty());
+}
