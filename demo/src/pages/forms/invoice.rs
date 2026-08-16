@@ -106,7 +106,8 @@ fn LineRow(
         .expect("the page renders one row per line the collection currently holds");
 
     let f = InvoiceLine::fields();
-    let index = item.index();
+    // The row is resolved out of the collection's current items, so its index resolves.
+    let index = item.index().expect("a rendered row has a live index");
     let description = item.text(f.description());
     let quantity = use_collection_item_number(item.clone(), f.quantity());
     let unit = use_collection_item_number_with(

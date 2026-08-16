@@ -75,7 +75,8 @@ pub fn CollectionsExample() -> Element {
         ul { class: "mt-4 space-y-2",
             for item in items.iter().cloned() {
                 {
-                    let index = item.index();
+                    // The row is rendered straight out of `items()`, so its index resolves.
+                    let index = item.index().expect("a rendered row has a live index");
                     let title = item.text(Track::fields().title());
                     let up = tracks.clone();
                     let down = tracks.clone();

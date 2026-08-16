@@ -70,7 +70,10 @@ fn main() {
     let item = lines.items()[0].clone();
     let product_name = item.text(product_name_path);
 
-    assert_eq!(product_name.name(), "invoice.invoice_lines[0].product.product-name");
+    assert_eq!(
+        product_name.name().as_deref(),
+        Some("invoice.invoice_lines[0].product.product-name")
+    );
     assert_eq!(product_name.value(), "Keyboard");
 
     product_name.on_input("Mouse");

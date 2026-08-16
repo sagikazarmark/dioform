@@ -40,9 +40,8 @@ pub mod __private {
 
 use dioform_core::{
     __private::{CollectionItemFieldAddress, FieldAncestry},
-    AsyncValidatorContext, CollectionIdentityState, CollectionItem, FormCore,
-    FormStateRestoreError, FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot,
-    ValidationStatusView, ValidatorId,
+    AsyncValidatorContext, CollectionIdentityState, FormCore, FormStateRestoreError,
+    FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot, ValidationStatusView, ValidatorId,
 };
 pub use dioform_core::{
     CollectionItemIdentity, ErrorVisibilityPolicy, FieldGroup, FieldIdentity, FieldMetadata,
@@ -697,9 +696,9 @@ where
 /// Creates a stable parsed text binding for a collection item child field.
 ///
 /// The hook-owned parse registration is keyed by the logical collection item identity and child
-/// field identity. The returned binding still uses the current rendered item index for
-/// [`CollectionParsedTextBinding::name`], so names update after reordering without remounting the
-/// parse blocker.
+/// field identity. [`CollectionParsedTextBinding::name`] resolves the item's index live on every
+/// call, so the rendered name is correct after a reordering without remounting the parse blocker —
+/// including on a binding retained past the render that built it.
 ///
 /// Call this from a row component keyed by [`CollectionItemIdentity::key`]. The registration is
 /// captured in the calling scope's hook slot, so a plain `fn` row helper or an index-keyed row
@@ -727,8 +726,9 @@ where
 /// collection item child field.
 ///
 /// Prefer this hook inside Dioxus row components that render parsed collection item inputs, keyed
-/// by [`CollectionItemIdentity::key`]. It keeps mounted parse state stable across rerenders while
-/// deriving the rendered field name from the latest item index.
+/// by [`CollectionItemIdentity::key`]. It keeps mounted parse state stable across rerenders, and the
+/// returned binding derives its rendered field name from the item's live index rather than from the
+/// index it was built with.
 pub fn use_collection_item_parsed_text_with<
     Model,
     Item,
@@ -2114,10 +2114,13 @@ mod field_binding {
         fn blur_without_validation(&self);
     }
 
+    /// The item is retained as a **Collection Item Identity** rather than as a `CollectionItem`
+    /// snapshot: the snapshot's index is only correct at the moment it was taken, and the rendered
+    /// **Field Name** is derived from the index resolved live on every read (ADR-0023).
     pub(super) struct CollectionFieldBindingCore<Model, Item, Value, Error = String> {
         handle: FormHandle<Model, Error>,
         collection_path: FieldPath<Model, Vec<Item>>,
-        item: CollectionItem,
+        item: CollectionItemIdentity,
         path: FieldPath<Item, Value>,
     }
 
@@ -2136,7 +2139,7 @@ mod field_binding {
         pub(super) fn new(
             handle: FormHandle<Model, Error>,
             collection_path: FieldPath<Model, Vec<Item>>,
-            item: CollectionItem,
+            item: CollectionItemIdentity,
             path: FieldPath<Item, Value>,
         ) -> Self {
             Self {
@@ -2147,28 +2150,32 @@ mod field_binding {
             }
         }
 
-        fn address(&self) -> CollectionItemFieldAddress {
-            CollectionItemFieldAddress::new(
-                &self.collection_path,
-                self.item.identity(),
-                self.item.index(),
-                &self.path,
+        fn identity(&self) -> FieldIdentity {
+            CollectionItemFieldAddress::identity_for(&self.collection_path, self.item, &self.path)
+        }
+
+        pub(super) fn index(&self) -> Option<usize> {
+            self.handle
+                .collection_item_index(&self.collection_path, self.item)
+        }
+
+        pub(super) fn name(&self) -> Option<String> {
+            self.handle.collection_item_field_name(
+                self.collection_path.clone(),
+                self.item,
+                self.path.clone(),
             )
         }
 
-        fn identity(&self) -> FieldIdentity {
-            self.address().identity()
-        }
-
-        pub(super) fn name(&self) -> String {
-            self.address().field_name().to_owned()
-        }
-
         pub(super) fn accessibility(&self) -> FieldAccessibility {
-            let address = self.address();
+            let accessibility_name = CollectionItemFieldAddress::accessibility_name_for(
+                &self.collection_path,
+                self.item,
+                &self.path,
+            );
 
             self.handle
-                .field_accessibility_by_identity(address.identity(), address.accessibility_name())
+                .field_accessibility_by_identity(self.identity(), &accessibility_name)
         }
 
         pub(super) fn metadata(&self) -> FieldMetadata {
@@ -2177,7 +2184,7 @@ mod field_binding {
                 .track_field_metadata(&self.identity());
             self.handle.core.borrow().collection_item_field_metadata(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
             )
         }
@@ -2218,7 +2225,7 @@ mod field_binding {
 
             core.collection_item_field_value(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
             )
             .map(read)
@@ -2246,7 +2253,7 @@ mod field_binding {
         pub(super) fn set_programmatic(&self, value: Value) {
             self.handle.set_collection_item_field(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
                 value,
             );
@@ -2255,7 +2262,7 @@ mod field_binding {
         pub(super) fn set_user(&self, value: Value) {
             self.handle.set_user_collection_item_field(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
                 value,
             );
@@ -2264,7 +2271,7 @@ mod field_binding {
         pub(super) fn mark_touched(&self) {
             self.handle.mark_collection_item_field_touched(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
             );
         }
@@ -2272,7 +2279,7 @@ mod field_binding {
         pub(super) fn blur(&self) {
             self.handle.mark_collection_item_field_blurred(
                 self.collection_path.clone(),
-                self.item.identity(),
+                self.item,
                 self.path.clone(),
             );
         }
@@ -2281,7 +2288,7 @@ mod field_binding {
             self.handle
                 .mark_collection_item_field_blurred_without_validation(
                     self.collection_path.clone(),
-                    self.item.identity(),
+                    self.item,
                     self.path.clone(),
                 );
         }
@@ -2620,11 +2627,8 @@ impl<Value> CollectionParsedTextHookState<Value> {
         ParserError: fmt::Display + 'static,
         Formatter: Fn(&Value) -> String + 'static,
     {
-        let field = CollectionItemFieldAddress::identity_for(
-            &item.collection_path,
-            item.item.identity(),
-            &path,
-        );
+        let field =
+            CollectionItemFieldAddress::identity_for(&item.collection_path, item.item, &path);
         let registration = item.handle.register_parse_binding(field);
         let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
 
@@ -3817,10 +3821,13 @@ impl<Model, Item, Error> Clone for CollectionBinding<Model, Item, Error> {
 }
 
 /// Headless access to one logical item inside a collection field.
+///
+/// The binding retains the item's **Collection Item Identity** and resolves its rendered index live,
+/// so a binding retained across a sibling mutation never reports a position it no longer holds.
 pub struct CollectionItemBinding<Model, Item, Error = String> {
     handle: FormHandle<Model, Error>,
     collection_path: FieldPath<Model, Vec<Item>>,
-    item: CollectionItem,
+    item: CollectionItemIdentity,
 }
 
 impl<Model, Item, Error> Clone for CollectionItemBinding<Model, Item, Error> {
@@ -3849,10 +3856,13 @@ impl<Model, Value, Error> Clone for MultiSelectBinding<Model, Value, Error> {
 }
 
 /// One currently selected value in a true multi-select field.
+///
+/// Like [`CollectionItemBinding`], this retains the value's **Collection Item Identity** and
+/// resolves its rendered index live.
 pub struct MultiSelectItem<Model, Value, Error = String> {
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Vec<Value>>,
-    item: CollectionItem,
+    item: CollectionItemIdentity,
 }
 
 impl<Model, Value, Error> Clone for MultiSelectItem<Model, Value, Error> {
@@ -4711,12 +4721,16 @@ impl<Model, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
 impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
     /// Returns this selected value's logical collection item identity.
     pub const fn identity(&self) -> CollectionItemIdentity {
-        self.item.identity()
+        self.item
     }
 
-    /// Returns this selected value's current rendered index.
-    pub const fn index(&self) -> usize {
-        self.item.index()
+    /// Returns this selected value's current rendered index, or `None` when it is no longer
+    /// selected.
+    ///
+    /// The index is resolved live on every call and answers `Some`/`None` in lockstep with
+    /// [`Self::is_resolved`].
+    pub fn index(&self) -> Option<usize> {
+        self.handle.collection_item_index(&self.path, self.item)
     }
 
     /// Returns a stable key suitable for keyed selected-value rendering.
@@ -4733,26 +4747,26 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         )
     }
 
-    /// Returns the rendered item name derived from current selected-value order.
-    pub fn name(&self) -> String {
-        CollectionItemFieldAddress::field_name_for(
-            &self.path,
-            self.index(),
-            &collection_item_self_path(),
+    /// Returns the rendered item name derived from current selected-value order, or `None` when
+    /// this value is no longer selected.
+    pub fn name(&self) -> Option<String> {
+        self.handle.collection_item_field_name(
+            self.path.clone(),
+            self.item,
+            collection_item_self_path(),
         )
     }
 
     /// Returns headless accessibility IDs and ARIA state for this selected value.
+    ///
+    /// Identity-derived, and therefore infallible even for an **Unresolved Binding**.
     pub fn accessibility(&self) -> FieldAccessibility {
-        let address = CollectionItemFieldAddress::new(
-            &self.path,
-            self.identity(),
-            self.index(),
-            &collection_item_self_path(),
-        );
+        let field = collection_item_self_path();
+        let accessibility_name =
+            CollectionItemFieldAddress::accessibility_name_for(&self.path, self.item, &field);
 
         self.handle
-            .field_accessibility_by_identity(address.identity(), address.accessibility_name())
+            .field_accessibility_by_identity(self.field_identity(), &accessibility_name)
     }
 
     /// Reads the selected value, falling back to `unresolved` when it is no longer selected.
@@ -4967,12 +4981,17 @@ impl<Model, Value: 'static, Error> MultiSelectOptionBinding<Model, Value, Error>
 impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     /// Returns this item's logical identity.
     pub const fn identity(&self) -> CollectionItemIdentity {
-        self.item.identity()
+        self.item
     }
 
-    /// Returns this item's current rendered index.
-    pub const fn index(&self) -> usize {
-        self.item.index()
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    ///
+    /// The index is resolved live against the collection on every call, so it stays correct through
+    /// a sibling removal, insertion or reorder. It answers `Some`/`None` in lockstep with
+    /// [`Self::is_resolved`].
+    pub fn index(&self) -> Option<usize> {
+        self.handle
+            .collection_item_index(&self.collection_path, self.item)
     }
 
     /// Returns a stable key suitable for keyed row rendering.
@@ -4983,9 +5002,10 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     /// Returns whether this item still belongs to its collection.
     ///
     /// A binding retained across a mutation that removed its item is an **Unresolved Binding**: its
-    /// rendered accessors read the neutral value (`""`, `false`), its typed accessors read `None`,
-    /// its metadata and validation errors read empty, and every write through it is a no-op. Guard
-    /// with this method when a handler needs to distinguish a removed item from an empty one.
+    /// rendered value accessors read the neutral value (`""`, `false`), its typed accessors read
+    /// `None`, `name()` and `index()` read `None`, its metadata and validation errors read empty,
+    /// and every write through it is a no-op. Guard with this method when a handler needs to
+    /// distinguish a removed item from an empty one.
     pub fn is_resolved(&self) -> bool
     where
         Item: 'static,
@@ -5107,11 +5127,8 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
         ParserError: fmt::Display + 'static,
         Formatter: Fn(&Value) -> String + 'static,
     {
-        let field = CollectionItemFieldAddress::identity_for(
-            &self.collection_path,
-            self.item.identity(),
-            &path,
-        );
+        let field =
+            CollectionItemFieldAddress::identity_for(&self.collection_path, self.item, &path);
         let registration = self.handle.register_parse_binding(field);
         let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
 
@@ -7274,10 +7291,9 @@ impl<Model, Error> FormHandle<Model, Error> {
                 item,
                 &collection_item_self_path(),
             ));
-        self.core
-            .borrow()
-            .collection_item_field_value(path.clone(), item, collection_item_self_path())
-            .is_some()
+        // Resolving through the same lookup the rendered name uses is what keeps `is_resolved()`,
+        // `index()` and `name()` in lockstep rather than merely agreeing by construction.
+        self.collection_item_index(path, item).is_some()
     }
 
     fn collection_items<Item>(
@@ -7290,7 +7306,7 @@ impl<Model, Error> FormHandle<Model, Error> {
             .map(|item| CollectionItemBinding {
                 handle: self.clone(),
                 collection_path: path.clone(),
-                item,
+                item: item.identity(),
             })
             .collect()
     }
@@ -7560,24 +7576,38 @@ impl<Model, Error> FormHandle<Model, Error> {
         true
     }
 
+    /// Resolves one collection item's rendered index live, without taking a mutable core borrow.
+    ///
+    /// Deliberately untracked: registering a reactive dependency here would subscribe to the
+    /// item-child selector a structure change skips by design (ADR-0023). Callers that do want the
+    /// subscription, such as [`Self::collection_item_is_resolved`], track it themselves.
+    fn collection_item_index<Item>(
+        &self,
+        collection: &FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+    ) -> Option<usize> {
+        self.core
+            .borrow()
+            .collection_item_index(collection.clone(), item)
+    }
+
+    /// Renders one collection item child field's **Field Name** from its live index.
+    ///
+    /// The single rendered-name path: both the public accessors and every **Form Listener** dispatch
+    /// read the rendered name through here.
     fn collection_item_field_name<Item, Value>(
         &self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
     ) -> Option<String> {
-        self.write_core(|core| {
-            core.collection_items(collection.clone())
-                .into_iter()
-                .find(|candidate| candidate.identity() == item)
-                .map(|candidate| {
-                    CollectionItemFieldAddress::field_name_for(
-                        &collection,
-                        candidate.index(),
-                        &field,
-                    )
-                })
-        })
+        let index = self.collection_item_index(&collection, item)?;
+
+        Some(CollectionItemFieldAddress::field_name_for(
+            &collection,
+            index,
+            &field,
+        ))
     }
 
     fn set_collection_item_field<Item, Value>(
@@ -9645,9 +9675,15 @@ impl<Model, Item, Error> Clone for CollectionTextBinding<Model, Item, Error> {
 }
 
 impl<Model, Item, Error> CollectionTextBinding<Model, Item, Error> {
-    /// Returns the rendered input name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered input name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this input.
@@ -9751,9 +9787,15 @@ impl<Model, Item, Error> Clone for CollectionCheckboxBinding<Model, Item, Error>
 }
 
 impl<Model, Item, Error> CollectionCheckboxBinding<Model, Item, Error> {
-    /// Returns the rendered checkbox name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered checkbox name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this checkbox.
@@ -9860,9 +9902,15 @@ impl<Model, Item, Value, Error> Clone for CollectionSelectBinding<Model, Item, V
 }
 
 impl<Model, Item, Value, Error> CollectionSelectBinding<Model, Item, Value, Error> {
-    /// Returns the rendered select name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered select name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this select.
@@ -9993,9 +10041,15 @@ impl<Model, Item, Value, Error> Clone
 }
 
 impl<Model, Item, Value, Error> CollectionRenderedSelectBinding<Model, Item, Value, Error> {
-    /// Returns the rendered select name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered select name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this select.
@@ -10151,9 +10205,15 @@ impl<Model, Item, Value, Error> Clone for CollectionRadioGroupBinding<Model, Ite
 }
 
 impl<Model, Item, Value, Error> CollectionRadioGroupBinding<Model, Item, Value, Error> {
-    /// Returns the rendered radio group name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered radio group name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this radio group.
@@ -10284,9 +10344,15 @@ impl<Model, Item, Value, Error> Clone for CollectionParsedTextBinding<Model, Ite
 }
 
 impl<Model, Item, Value, Error> CollectionParsedTextBinding<Model, Item, Value, Error> {
-    /// Returns the rendered input name derived from current collection order.
-    pub fn name(&self) -> String {
+    /// Returns the rendered input name derived from the item's live index, or `None` when the
+    /// item no longer resolves.
+    pub fn name(&self) -> Option<String> {
         self.base.name()
+    }
+
+    /// Returns this item's current rendered index, or `None` when the item no longer resolves.
+    pub fn index(&self) -> Option<usize> {
+        self.base.index()
     }
 
     /// Returns headless accessibility IDs and ARIA state for this input.

@@ -52,6 +52,8 @@ fn InvoiceLineRow(form: FormHandle<InvoiceForm>, item: CollectionItemIdentity) -
 }
 ```
 
+`name()` on a collection item child binding is `Option<String>` (see below). Passing it straight to an rsx attribute is the intended use: Dioxus omits the attribute entirely for `None`, so a row caught mid-removal renders no `name=` rather than one that could collide with a live row.
+
 A row that calls a collection-item hook must be a component keyed by the item identity, because the hook's parse state lives in the scope that calls it:
 
 - A plain `fn` row helper called from the page's `for` loop runs its `use_` calls in the **page's** hook slots, indexed by loop order. Removing or reordering a row silently re-keys later rows' **Parse Blockers** to the wrong item.
@@ -60,7 +62,7 @@ A row that calls a collection-item hook must be a component keyed by the item id
 
 Row components take the **Form Handle** and the item identity as props. A handle compares by observable identity ([ADR-0024](adr/0024-compare-form-handles-by-observable-identity.md)), so it is an ordinary `#[component]` prop, and a page that renders collection rows needs no **Form Context Scope**. Context access stays available for a subtree of renderless helpers deep enough that threading the handle is the greater cost (see [Form Context Access](form-context.md)); a keyed row is not that case.
 
-Resolve the item from the collection inside the row rather than accepting a resolved row value from the parent. That lookup is also the row's subscription to the collection's value, and **Field Ancestry** is strict between a collection and its own items, so nothing else wakes the row when the collection's structure changes. A row that stopped reading the collection would keep rendering a stale rendered index after a reorder, and a stale sibling count after a removal — leaving, for example, an enabled "move down" control on a row that is now last.
+Resolve the item from the collection inside the row rather than accepting a resolved row value from the parent. That lookup is also the row's subscription to the collection's value, and **Field Ancestry** is strict between a collection and its own items, so nothing else wakes the row when the collection's structure changes. A row that stopped reading the collection would never re-render after a reorder or a removal: its accessors would still *answer* correctly when called, because the index resolves live, but the row would keep painting the values and the sibling count from its last render — leaving, for example, an enabled "move down" control on a row that is now last.
 
 Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
 
@@ -78,13 +80,15 @@ let product_name = InvoiceLine::fields()
 for item in form.collection(lines).items() {
     let name = item.text(product_name.clone());
 
-    assert_eq!(name.name(), "invoice.lines[0].product.name");
+    assert_eq!(name.name().as_deref(), Some("invoice.lines[0].product.name"));
 }
 ```
 
 The composed collection **Field Identity** remains static, such as `invoice.lines`, while item child field identities combine that static collection path, the logical **Collection Item Identity**, and the static child path, such as `product.name`. Rendered **Field Names** remain HTML-compatible and index-based, such as `invoice.lines[0].product.name`, so names update after reordering while metadata remains attached to the logical item.
 
 Collection item child bindings use the current rendered index for their HTML-compatible **Field Name**, such as `lines[0].description`. Accessibility helpers and row keys use **Collection Item Identity** so they stay stable when the item moves.
+
+The rendered index is resolved **live** against the collection every time it is asked for, not captured when the binding is built. `name()` and `index()` therefore stay correct on a binding retained across a sibling removal, insertion, `move_to_index` or `swap`, and no two resolved bindings in one collection ever render the same **Field Name**. Because a live index has no honest total answer, both return `Option`: `index()` is `Option<usize>` and `name()` is `Option<String>` on the item binding, on every leaf collection binding, and on `MultiSelectItem`. See [ADR-0023](adr/0023-resolve-the-rendered-collection-item-index-live.md).
 
 When a collection item child input owns parse state, prefer `use_collection_item_parsed_text`, `use_collection_item_parsed_text_with`, `use_collection_item_number`, or `use_collection_item_number_with` inside identity-keyed row components, as in the example above. These hooks keep the mounted Parse Blocker keyed by **Collection Item Identity** and child field identity while `name()` continues to reflect the latest rendered index.
 
@@ -132,6 +136,10 @@ clone precisely so the binding stays usable for `value()`. Once the item is gone
   `CollectionRenderedSelectBinding::typed_value`, `CollectionRadioGroupBinding::value` and
   `MultiSelectItem::value` return `Option<Value>` and read `None`. They do not invent a
   `Default::default()`, which would assert a selection the model does not hold.
+- **The rendered name and index report absence too**: `name()` returns `None` and `index()` returns
+  `None`. An **Unresolved Binding** renders no name, so it can never collide with the name of a row
+  that is still live. It is not `""`: `name=""` is the value the HTML entry-set algorithm branches on
+  to exclude a control from submission, and it is already a legal rendered name in this crate.
 - **Metadata and validation errors report nothing**: `is_touched()` and `is_blurred()` are `false` and
   `validation_errors()` is empty. Removal releases the item's scoped state, so this is a true statement
   about state that no longer exists.
@@ -157,8 +165,12 @@ spawn(async move {
 });
 ```
 
-`name()` and `index()` keep returning the name derived from the index the binding captured, for
-resolved and unresolved bindings alike.
+For one binding, `name()`, `index()`, `value()` and `is_resolved()` answer in **exact lockstep**. An
+unresolved binding never renders a name, and a binding that renders a name always has a value.
+
+`identity()` and `accessibility()` stay infallible. Both are derived from the **Collection Item
+Identity** rather than the index, so they keep answering for an **Unresolved Binding** — the
+accessibility ID of a row is unchanged by a sibling removal.
 
 The same rule holds for **Optional Fields** reached through `FieldPath::or` (see
 [Optional Fields](optional-fields.md)): a total, neutral editing surface with an honest accessor

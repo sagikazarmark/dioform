@@ -4026,6 +4026,27 @@ impl<Model, Error> FormCore<Model, Error> {
             || path.get(self.draft.current()) != path.get(self.draft.baseline())
     }
 
+    /// Resolves one logical collection item's current rendered index.
+    ///
+    /// A read-only lookup: unlike [`Self::collection_items`] it neither takes a mutable borrow nor
+    /// ensures item validator state, so a render-path accessor can call it while the core is
+    /// immutably borrowed. The resolved index is bounds-checked against the **Form Draft**, because
+    /// writing the collection path directly mutates the draft `Vec` without touching collection
+    /// state and the two can therefore desynchronize. It answers `Some`/`None` in lockstep with
+    /// [`Self::collection_item_field_value`].
+    pub fn collection_item_index<Item>(
+        &self,
+        collection: FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+    ) -> Option<usize> {
+        let index = self
+            .field_store
+            .collection(&collection.identity())?
+            .current_index(item)?;
+
+        (index < collection.get(self.draft.current()).len()).then_some(index)
+    }
+
     /// Reads one child field from a logical collection item.
     pub fn collection_item_field_value<'a, Item: 'a, Value>(
         &'a self,
@@ -4033,10 +4054,7 @@ impl<Model, Error> FormCore<Model, Error> {
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
     ) -> Option<&'a Value> {
-        let index = self
-            .field_store
-            .collection(&collection.identity())?
-            .current_index(item)?;
+        let index = self.collection_item_index(collection.clone(), item)?;
         collection
             .get(self.draft.current())
             .get(index)

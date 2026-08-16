@@ -1380,6 +1380,39 @@ fn collection_insertions_get_distinct_logical_identities() {
 }
 
 #[test]
+fn collection_item_index_resolves_live_against_the_collection() {
+    let mut form = FormCore::new(invoice_form());
+    let items = form.collection_items(lines_path());
+    let design = items[0].identity();
+    let build = items[1].identity();
+
+    assert_eq!(form.collection_item_index(lines_path(), design), Some(0));
+    assert_eq!(form.collection_item_index(lines_path(), build), Some(1));
+
+    form.remove_user_collection_item(lines_path(), design)
+        .expect("the first line should be removed");
+
+    assert_eq!(form.collection_item_index(lines_path(), design), None);
+    assert_eq!(form.collection_item_index(lines_path(), build), Some(0));
+}
+
+#[test]
+fn collection_item_index_bounds_checks_the_resolved_index_against_the_draft() {
+    let mut form = FormCore::new(invoice_form());
+    let build = form.collection_items(lines_path())[1].identity();
+
+    // Writing the collection path directly mutates the draft `Vec` without touching collection
+    // state, so a resolved index can outlive the item it addressed.
+    form.set_field(lines_path(), Vec::new());
+
+    assert_eq!(form.collection_item_index(lines_path(), build), None);
+    assert!(
+        form.collection_item_field_value(lines_path(), build, line_description_path())
+            .is_none()
+    );
+}
+
+#[test]
 fn user_interaction_tracks_touched_and_blurred_separately() {
     let mut form = FormCore::new(ContactForm {
         name: "Grace".to_owned(),

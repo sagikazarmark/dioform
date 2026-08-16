@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::BTreeSet,
     fmt::Debug,
     future::Future,
     pin::Pin,
@@ -2864,10 +2865,10 @@ fn dioxus_collection_binding_updates_reorders_and_names_item_fields() {
     let second = items[1].clone();
     let description = second.text(description_path.clone());
 
-    assert_eq!(items[0].index(), 0);
-    assert_eq!(items[1].index(), 1);
+    assert_eq!(items[0].index(), Some(0));
+    assert_eq!(items[1].index(), Some(1));
     assert_ne!(items[0].identity(), items[1].identity());
-    assert_eq!(description.name(), "lines[1].description");
+    assert_eq!(description.name().as_deref(), Some("lines[1].description"));
     assert_eq!(description.value(), "Build");
 
     description.on_input("Build v2");
@@ -2879,7 +2880,7 @@ fn dioxus_collection_binding_updates_reorders_and_names_item_fields() {
     let moved = reordered[0].text(description_path);
 
     assert_eq!(reordered[0].identity(), second.identity());
-    assert_eq!(moved.name(), "lines[0].description");
+    assert_eq!(moved.name().as_deref(), Some("lines[0].description"));
     assert_eq!(moved.value(), "Build v2");
     assert_eq!(handle.snapshot().lines[0].description, "Build v2");
 }
@@ -2902,8 +2903,8 @@ fn dioxus_collection_binding_composes_nested_collection_and_child_field_paths() 
     assert_eq!(product_name_path.identity().as_str(), "product.name");
     assert_eq!(product_name_path.field_name(), "product.product-name");
     assert_eq!(
-        product_name.name(),
-        "invoice.invoice_lines[0].product.product-name",
+        product_name.name().as_deref(),
+        Some("invoice.invoice_lines[0].product.product-name"),
     );
     assert_eq!(product_name.value(), "Keyboard");
 
@@ -3088,7 +3089,7 @@ fn dioxus_collection_parsed_binding_blocks_submit_until_recovered() {
     let lines = handle.collection(InvoiceCollectionForm::fields().lines());
     let quantity = lines.items()[0].number(InvoiceCollectionLine::fields().quantity());
 
-    assert_eq!(quantity.name(), "lines[0].quantity");
+    assert_eq!(quantity.name().as_deref(), Some("lines[0].quantity"));
     assert_eq!(quantity.value(), "2");
 
     quantity.on_input("not-a-number");
@@ -3221,7 +3222,7 @@ fn dioxus_collection_parsed_binding_blur_with_parse_error_does_not_validate_stal
 
 #[derive(Debug, Eq, PartialEq)]
 struct CollectionParsedHookSnapshot {
-    name: String,
+    name: Option<String>,
     rendered_value: String,
     parse_error_count: usize,
     form_parse_error_count: usize,
@@ -3289,7 +3290,7 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
     assert_eq!(
         probe.snapshots.borrow().as_slice(),
         [CollectionParsedHookSnapshot {
-            name: "lines[1].quantity".to_owned(),
+            name: Some("lines[1].quantity".to_owned()),
             rendered_value: "1".to_owned(),
             parse_error_count: 0,
             form_parse_error_count: 0,
@@ -3311,7 +3312,7 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionParsedHookSnapshot {
-            name: "lines[1].quantity".to_owned(),
+            name: Some("lines[1].quantity".to_owned()),
             rendered_value: "not-a-number".to_owned(),
             parse_error_count: 1,
             form_parse_error_count: 1,
@@ -3341,7 +3342,7 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionParsedHookSnapshot {
-            name: "lines[0].quantity".to_owned(),
+            name: Some("lines[0].quantity".to_owned()),
             rendered_value: "not-a-number".to_owned(),
             parse_error_count: 1,
             form_parse_error_count: 1,
@@ -3363,7 +3364,7 @@ fn collection_item_number_hook_preserves_parse_state_and_updates_name_after_reor
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionParsedHookSnapshot {
-            name: "lines[0].quantity".to_owned(),
+            name: Some("lines[0].quantity".to_owned()),
             rendered_value: "5".to_owned(),
             parse_error_count: 0,
             form_parse_error_count: 0,
@@ -3461,7 +3462,9 @@ fn collection_parsed_row(props: CollectionRowProps) -> Element {
         .into_iter()
         .find(|candidate| candidate.identity() == props.item)
         .expect("the parent renders one row per item it currently holds");
-    let index = item.index();
+    let index = item
+        .index()
+        .expect("a row resolved out of the current items renders at a live index");
     let quantity = use_collection_item_number(item, InvoiceCollectionLine::fields().quantity());
 
     props.probe.record(
@@ -3556,9 +3559,15 @@ fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_removal() {
     // is which row owns it. The row rendering the typed item still shows the raw input, and typing
     // into another row still lands on that row's own item.
     assert_eq!(parse_blocked_items(&handle), vec![build]);
-    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
+    assert_eq!(
+        probe.quantity(build).name().as_deref(),
+        Some("lines[0].quantity")
+    );
     assert_eq!(probe.quantity(build).value(), "not-a-number");
-    assert_eq!(probe.quantity(deploy).name(), "lines[1].quantity");
+    assert_eq!(
+        probe.quantity(deploy).name().as_deref(),
+        Some("lines[1].quantity")
+    );
     assert_eq!(probe.quantity(deploy).value(), "4");
     assert!(probe.quantity(deploy).parse_error().is_none());
     assert!(!handle.can_submit());
@@ -3593,9 +3602,15 @@ fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_reorder() {
 
     // As with removal, the standing blocker cannot move; the rendered row that owns it can.
     assert_eq!(parse_blocked_items(&handle), vec![build]);
-    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
+    assert_eq!(
+        probe.quantity(build).name().as_deref(),
+        Some("lines[0].quantity")
+    );
     assert_eq!(probe.quantity(build).value(), "not-a-number");
-    assert_eq!(probe.quantity(design).name(), "lines[1].quantity");
+    assert_eq!(
+        probe.quantity(design).name().as_deref(),
+        Some("lines[1].quantity")
+    );
     assert_eq!(probe.quantity(design).value(), "2");
     assert!(probe.quantity(design).parse_error().is_none());
     assert!(probe.quantity(deploy).parse_error().is_none());
@@ -3643,7 +3658,10 @@ fn keyed_row_components_correct_their_position_after_a_sibling_is_removed() {
         probe.position(build),
         CollectionRowPosition { index: 1, count: 2 }
     );
-    assert_eq!(probe.quantity(build).name(), "lines[1].quantity");
+    assert_eq!(
+        probe.quantity(build).name().as_deref(),
+        Some("lines[1].quantity")
+    );
 
     // Removing an earlier row corrects the rendered index of every row after it.
     lines
@@ -3655,7 +3673,10 @@ fn keyed_row_components_correct_their_position_after_a_sibling_is_removed() {
         probe.position(build),
         CollectionRowPosition { index: 0, count: 1 }
     );
-    assert_eq!(probe.quantity(build).name(), "lines[0].quantity");
+    assert_eq!(
+        probe.quantity(build).name().as_deref(),
+        Some("lines[0].quantity")
+    );
 }
 
 #[test]
@@ -3726,7 +3747,7 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
         .expect("inserted item should be present");
     let description = inserted_item.text(description_path.clone());
 
-    assert_eq!(description.name(), "lines[2].description");
+    assert_eq!(description.name().as_deref(), Some("lines[2].description"));
     assert_eq!(description.validation_errors()[0].error(), &"required");
     assert!(description.visible_validation_errors().is_empty());
 
@@ -3745,7 +3766,10 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
         .expect("moved item should be present");
     let moved_description = moved_item.text(description_path);
 
-    assert_eq!(moved_description.name(), "lines[0].description");
+    assert_eq!(
+        moved_description.name().as_deref(),
+        Some("lines[0].description")
+    );
     assert_eq!(
         moved_description.validation_errors()[0].error(),
         &"required"
@@ -3837,9 +3861,12 @@ fn collection_item_addressing_tracks_one_logical_item_across_public_surfaces() {
     let moved_description = moved_item.text(description_path);
     let moved_quantity = moved_item.number(quantity_path);
 
-    assert_eq!(moved_item.index(), 0);
-    assert_eq!(moved_description.name(), "lines[0].description");
-    assert_eq!(moved_quantity.name(), "lines[0].quantity");
+    assert_eq!(moved_item.index(), Some(0));
+    assert_eq!(
+        moved_description.name().as_deref(),
+        Some("lines[0].description")
+    );
+    assert_eq!(moved_quantity.name().as_deref(), Some("lines[0].quantity"));
     assert_eq!(moved_description.value(), "");
     assert_eq!(
         moved_description.validation_errors()[0].expect_field(),
@@ -4784,7 +4811,7 @@ fn form_config_registers_collection_item_field_validator_templates() {
         .expect("inserted item should be present");
     let quantity = inserted_item.number(quantity_path);
 
-    assert_eq!(quantity.name(), "lines[2].quantity");
+    assert_eq!(quantity.name().as_deref(), Some("lines[2].quantity"));
     assert_eq!(
         quantity.validation_errors()[0].error(),
         &"quantity_required"
@@ -4799,7 +4826,7 @@ fn form_config_registers_collection_item_field_validator_templates() {
         .expect("moved item should be present");
     let moved_quantity = moved_item.number(InvoiceCollectionLine::fields().quantity());
 
-    assert_eq!(moved_quantity.name(), "lines[0].quantity");
+    assert_eq!(moved_quantity.name().as_deref(), Some("lines[0].quantity"));
     assert_eq!(
         moved_quantity.validation_errors()[0].error(),
         &"quantity_required"
@@ -4826,7 +4853,7 @@ fn form_config_registers_collection_item_value_validator_templates() {
         .selected_item(&Topic::Dioxus)
         .expect("selected value should expose its logical item");
 
-    assert_eq!(dioxus.name(), "topics[1]");
+    assert_eq!(dioxus.name().as_deref(), Some("topics[1]"));
     assert_eq!(dioxus.validation_errors()[0].error(), &"topic_unavailable");
 
     topics.option(Topic::Dioxus).on_change(false);
@@ -6430,7 +6457,7 @@ fn dioxus_collection_checkbox_binding_updates_metadata_and_reorders() {
     let enabled = second.checkbox(enabled_path.clone());
     let input_id = enabled.accessibility().input_id().to_owned();
 
-    assert_eq!(enabled.name(), "rows[1].enabled");
+    assert_eq!(enabled.name().as_deref(), Some("rows[1].enabled"));
     assert_eq!(
         input_id,
         format!(
@@ -6472,7 +6499,7 @@ fn dioxus_collection_checkbox_binding_updates_metadata_and_reorders() {
 
     let moved = rows.items()[0].checkbox(enabled_path.clone());
 
-    assert_eq!(moved.name(), "rows[0].enabled");
+    assert_eq!(moved.name().as_deref(), Some("rows[0].enabled"));
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
     assert!(moved.checked());
     assert_eq!(
@@ -6491,7 +6518,7 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
     let plan = second.select(plan_path.clone());
     let input_id = plan.accessibility().input_id().to_owned();
 
-    assert_eq!(plan.name(), "rows[1].plan");
+    assert_eq!(plan.name().as_deref(), Some("rows[1].plan"));
     assert_eq!(
         input_id,
         format!(
@@ -6531,7 +6558,7 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
 
     let moved = rows.items()[0].select(plan_path.clone());
 
-    assert_eq!(moved.name(), "rows[0].plan");
+    assert_eq!(moved.name().as_deref(), Some("rows[0].plan"));
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
     assert_eq!(moved.value(), Some(Plan::Starter));
     assert!(moved.is_selected(&Plan::Starter));
@@ -6552,7 +6579,7 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
     let plan = second.select_with(plan_path.clone(), parse_plan, format_plan);
     let input_id = plan.accessibility().input_id().to_owned();
 
-    assert_eq!(plan.name(), "rows[1].plan");
+    assert_eq!(plan.name().as_deref(), Some("rows[1].plan"));
     assert_eq!(plan.value(), "pro");
     assert_eq!(plan.typed_value(), Some(Plan::Pro));
     assert!(plan.is_rendered_selected("pro"));
@@ -6597,7 +6624,7 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
 
     let moved = rows.items()[0].select_with(plan_path.clone(), parse_plan, format_plan);
 
-    assert_eq!(moved.name(), "rows[0].plan");
+    assert_eq!(moved.name().as_deref(), Some("rows[0].plan"));
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
     assert_eq!(moved.value(), "starter");
     assert_eq!(moved.typed_value(), Some(Plan::Starter));
@@ -6617,7 +6644,7 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
     let plan = second.radio_group(plan_path.clone());
     let input_id = plan.accessibility().input_id().to_owned();
 
-    assert_eq!(plan.name(), "rows[1].plan");
+    assert_eq!(plan.name().as_deref(), Some("rows[1].plan"));
     assert_eq!(plan.value(), Some(Plan::Pro));
     assert!(plan.is_selected(&Plan::Pro));
     assert!(!plan.is_selected(&Plan::Enterprise));
@@ -6650,7 +6677,7 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
 
     let moved = rows.items()[0].radio_group(plan_path.clone());
 
-    assert_eq!(moved.name(), "rows[0].plan");
+    assert_eq!(moved.name().as_deref(), Some("rows[0].plan"));
     assert_eq!(moved.accessibility().input_id(), input_id.as_str());
     assert_eq!(moved.value(), Some(Plan::Starter));
     assert!(moved.is_selected(&Plan::Starter));
@@ -6724,6 +6751,20 @@ fn dioxus_collection_bindings_read_an_unresolved_item_without_panicking() {
     assert!(!leaves.label.is_blurred());
     assert!(leaves.label.validation_errors().is_empty());
     assert!(leaves.starts_on.parse_error().is_none());
+
+    // No leaf renders a name that could collide with a row that is still live.
+    assert_eq!(leaves.label.name(), None);
+    assert_eq!(leaves.enabled.name(), None);
+    assert_eq!(leaves.plan.name(), None);
+    assert_eq!(leaves.rendered_plan.name(), None);
+    assert_eq!(leaves.radio_plan.name(), None);
+    assert_eq!(leaves.starts_on.name(), None);
+    assert_eq!(leaves.label.index(), None);
+    assert_eq!(leaves.enabled.index(), None);
+    assert_eq!(leaves.plan.index(), None);
+    assert_eq!(leaves.rendered_plan.index(), None);
+    assert_eq!(leaves.radio_plan.index(), None);
+    assert_eq!(leaves.starts_on.index(), None);
 }
 
 #[test]
@@ -6739,6 +6780,11 @@ fn dioxus_multi_select_item_reads_an_unselected_value_without_panicking() {
 
     assert!(rust.is_resolved());
     assert_eq!(rust.value(), Some(Topic::Rust));
+    assert_eq!(rust.index(), Some(0));
+    assert_eq!(rust.name().as_deref(), Some("topics[0]"));
+
+    let dioxus = topics.items()[1].clone();
+    let accessibility_id = dioxus.accessibility().input_id().to_owned();
 
     topics.set_selected(Topic::Rust, false);
 
@@ -6746,6 +6792,13 @@ fn dioxus_multi_select_item_reads_an_unselected_value_without_panicking() {
 
     assert!(!rust.is_resolved());
     assert_eq!(rust.value(), None);
+    assert_eq!(rust.index(), None);
+    assert_eq!(rust.name(), None);
+
+    // The surviving selected value moved up, and its identity-derived accessibility ID did not.
+    assert_eq!(dioxus.index(), Some(0));
+    assert_eq!(dioxus.name().as_deref(), Some("topics[0]"));
+    assert_eq!(dioxus.accessibility().input_id(), accessibility_id.as_str());
     assert!(!rust.is_touched());
     assert!(!rust.is_blurred());
     assert!(rust.validation_errors().is_empty());
@@ -6809,6 +6862,213 @@ fn dioxus_collection_is_resolved_reads_without_borrowing_the_core_mutably() {
     assert!(!handle.read_core(|_| leaves.label.is_resolved()));
 }
 
+/// Four lines, so removing the first leaves three rows whose names must not collide with the names
+/// retained bindings for the original rows render.
+fn four_line_invoice_collection_form() -> InvoiceCollectionForm {
+    InvoiceCollectionForm {
+        lines: ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|description| InvoiceCollectionLine {
+                description: description.to_owned(),
+                quantity: 1,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn dioxus_retained_collection_binding_renders_the_live_index_derived_name() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let description_path = InvoiceCollectionLine::fields().description();
+    let items = lines.items();
+    let second = items[1].clone();
+    let retained = second.text(description_path.clone());
+
+    assert_eq!(retained.name().as_deref(), Some("lines[1].description"));
+
+    assert!(lines.remove(items[0].identity()).is_some());
+
+    let rebuilt = lines.items().remove(0);
+
+    assert_eq!(rebuilt.identity(), second.identity());
+    assert_eq!(
+        retained.name(),
+        rebuilt.text(description_path).name(),
+        "a retained binding and a freshly built one address the same logical item"
+    );
+    assert_eq!(retained.name().as_deref(), Some("lines[0].description"));
+    assert_eq!(second.index(), Some(0));
+    assert_eq!(retained.value(), "Build");
+}
+
+#[test]
+fn dioxus_no_two_resolved_collection_bindings_render_the_same_field_name() {
+    let handle = FormHandle::new(four_line_invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let description_path = InvoiceCollectionLine::fields().description();
+    let items = lines.items();
+    let retained: Vec<_> = items
+        .iter()
+        .map(|item| item.text(description_path.clone()))
+        .collect();
+
+    assert!(lines.remove(items[0].identity()).is_some());
+
+    let rebuilt: Vec<_> = lines
+        .items()
+        .into_iter()
+        .map(|item| item.text(description_path.clone()))
+        .collect();
+    let rendered: Vec<String> = retained
+        .iter()
+        .chain(rebuilt.iter())
+        .filter(|binding| binding.is_resolved())
+        .filter_map(|binding| binding.name())
+        .collect();
+    let distinct: BTreeSet<&String> = rendered.iter().collect();
+
+    assert_eq!(
+        distinct.len(),
+        3,
+        "three live rows render three names: {rendered:?}"
+    );
+    assert_eq!(retained[0].name(), None);
+}
+
+#[test]
+fn dioxus_retained_radio_group_bindings_never_share_a_rendered_group_name() {
+    // A colliding radio group `name` does not merely mislabel a control: it merges two rows into
+    // one group, so selecting an option in one row clears the selection in another.
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-radios-live");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let plan_path = CollectionHelperRow::fields().plan();
+    let items = rows.items();
+    let retained = items[1].radio_group(plan_path.clone());
+
+    assert_eq!(retained.name().as_deref(), Some("rows[1].plan"));
+
+    assert!(rows.remove(items[0].identity()).is_some());
+
+    let rebuilt = rows.items()[0].radio_group(plan_path);
+
+    assert_eq!(retained.name(), rebuilt.name());
+    assert_eq!(retained.name().as_deref(), Some("rows[0].plan"));
+
+    retained.select(Plan::Enterprise);
+
+    assert_eq!(rebuilt.value(), Some(Plan::Enterprise));
+}
+
+#[test]
+fn dioxus_collection_binding_accessors_agree_about_resolution() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let second = lines.items()[1].clone();
+    let quantity = second.select(InvoiceCollectionLine::fields().quantity());
+
+    assert!(quantity.is_resolved());
+    assert_eq!(quantity.index(), Some(1));
+    assert_eq!(quantity.name().as_deref(), Some("lines[1].quantity"));
+    assert_eq!(quantity.value(), Some(1));
+
+    assert!(lines.remove(second.identity()).is_some());
+
+    assert!(!quantity.is_resolved());
+    assert_eq!(quantity.index(), None);
+    assert_eq!(quantity.name(), None);
+    assert_eq!(quantity.value(), None);
+    assert_eq!(second.index(), None);
+}
+
+#[test]
+fn dioxus_retained_collection_binding_names_follow_every_structure_mutation() {
+    let handle = FormHandle::new(four_line_invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let description_path = InvoiceCollectionLine::fields().description();
+    let items = lines.items();
+    let third = items[2].clone();
+    let retained = third.text(description_path);
+
+    assert_eq!(retained.name().as_deref(), Some("lines[2].description"));
+
+    assert!(lines.remove(items[0].identity()).is_some());
+
+    assert_eq!(retained.name().as_deref(), Some("lines[1].description"));
+
+    lines
+        .insert(
+            0,
+            InvoiceCollectionLine {
+                description: "inserted".to_owned(),
+                quantity: 1,
+            },
+        )
+        .expect("insert index should be valid");
+
+    assert_eq!(retained.name().as_deref(), Some("lines[2].description"));
+
+    assert!(lines.move_to_index(third.identity(), 0));
+
+    assert_eq!(retained.name().as_deref(), Some("lines[0].description"));
+
+    assert!(lines.swap(0, 2));
+
+    assert_eq!(retained.name().as_deref(), Some("lines[2].description"));
+}
+
+#[test]
+fn dioxus_collection_identity_and_accessibility_stay_infallible_across_a_sibling_removal() {
+    let handle =
+        FormHandle::new_with_id_namespace(invoice_collection_form(), "collection-live-index");
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let items = lines.items();
+    let second = items[1].clone();
+    let description = second.text(InvoiceCollectionLine::fields().description());
+    let input_id = description.accessibility().input_id().to_owned();
+
+    assert!(lines.remove(items[0].identity()).is_some());
+
+    assert_eq!(second.identity(), lines.items()[0].identity());
+    assert_eq!(description.accessibility().input_id(), input_id.as_str());
+}
+
+#[test]
+fn dioxus_collection_name_and_index_read_without_borrowing_the_core_mutably() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let second = lines.items()[1].clone();
+    let description = second.text(InvoiceCollectionLine::fields().description());
+
+    // `read_core` holds an immutable core borrow for the whole closure, so an accessor that reached
+    // for a mutable borrow would panic here rather than answer.
+    assert_eq!(
+        handle.read_core(|_| description.name()).as_deref(),
+        Some("lines[1].description")
+    );
+    assert_eq!(handle.read_core(|_| description.index()), Some(1));
+    assert_eq!(handle.read_core(|_| second.index()), Some(1));
+}
+
+#[test]
+fn dioxus_shortening_the_collection_path_directly_keeps_name_and_value_agreeing() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines_path = InvoiceCollectionForm::fields().lines();
+    let lines = handle.collection(lines_path.clone());
+    let second = lines.items()[1].clone();
+    let description = second.text(InvoiceCollectionLine::fields().description());
+
+    // Writing the collection path directly mutates the draft `Vec` without touching collection
+    // state, leaving an index that resolves for an item the draft no longer holds.
+    handle.set_field(lines_path, Vec::new());
+
+    assert_eq!(description.name(), None);
+    assert_eq!(description.index(), None);
+    assert_eq!(description.value(), "");
+    assert!(!description.is_resolved());
+}
+
 #[test]
 fn dioxus_collection_writes_through_an_unresolved_binding_are_no_ops() {
     let handle =
@@ -6839,7 +7099,7 @@ fn dioxus_collection_writes_through_an_unresolved_binding_are_no_ops() {
 
 #[derive(Debug, Eq, PartialEq)]
 struct CollectionDateHookSnapshot {
-    name: String,
+    name: Option<String>,
     rendered_value: String,
     parse_error_count: usize,
     form_parse_error_count: usize,
@@ -6924,7 +7184,7 @@ fn collection_item_date_hook_preserves_parse_state_and_updates_name_after_reorde
     assert_eq!(
         probe.snapshots.borrow().as_slice(),
         [CollectionDateHookSnapshot {
-            name: "rows[1].starts_on".to_owned(),
+            name: Some("rows[1].starts_on".to_owned()),
             rendered_value: "2026-02-02".to_owned(),
             parse_error_count: 0,
             form_parse_error_count: 0,
@@ -6947,7 +7207,7 @@ fn collection_item_date_hook_preserves_parse_state_and_updates_name_after_reorde
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionDateHookSnapshot {
-            name: "rows[1].starts_on".to_owned(),
+            name: Some("rows[1].starts_on".to_owned()),
             rendered_value: "not-a-date".to_owned(),
             parse_error_count: 1,
             form_parse_error_count: 1,
@@ -6986,7 +7246,7 @@ fn collection_item_date_hook_preserves_parse_state_and_updates_name_after_reorde
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionDateHookSnapshot {
-            name: "rows[0].starts_on".to_owned(),
+            name: Some("rows[0].starts_on".to_owned()),
             rendered_value: "not-a-date".to_owned(),
             parse_error_count: 1,
             form_parse_error_count: 1,
@@ -7009,7 +7269,7 @@ fn collection_item_date_hook_preserves_parse_state_and_updates_name_after_reorde
     assert_eq!(
         probe.snapshots.borrow().last(),
         Some(&CollectionDateHookSnapshot {
-            name: "rows[0].starts_on".to_owned(),
+            name: Some("rows[0].starts_on".to_owned()),
             rendered_value: "2026-03-04".to_owned(),
             parse_error_count: 0,
             form_parse_error_count: 0,
@@ -7631,7 +7891,7 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
     let rust = topics
         .selected_item(&Topic::Rust)
         .expect("initial value should be selected");
-    assert_eq!(rust.name(), "topics[0]");
+    assert_eq!(rust.name().as_deref(), Some("topics[0]"));
     assert_eq!(rust.value(), Some(Topic::Rust));
     assert!(!rust.is_dirty());
     assert!(!rust.is_touched());
@@ -7647,8 +7907,8 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
         .selected_item()
         .expect("user-selected value should have an item identity");
     assert!(selected_dioxus.field_identity().is_collection_item_value());
-    assert_eq!(selected_dioxus.index(), 1);
-    assert_eq!(selected_dioxus.name(), "topics[1]");
+    assert_eq!(selected_dioxus.index(), Some(1));
+    assert_eq!(selected_dioxus.name().as_deref(), Some("topics[1]"));
     assert_eq!(selected_dioxus.value(), Some(Topic::Dioxus));
     assert!(selected_dioxus.is_touched());
     assert!(selected_dioxus.is_dirty());
@@ -15134,8 +15394,8 @@ fn browser_submission_control_names_use_field_name_overrides_and_collection_inde
     assert_eq!(submit.method(), "post");
     assert_eq!(submit.action(), "/invoices");
     assert_eq!(
-        product_name.name(),
-        "invoice.invoice_lines[0].product.product-name"
+        product_name.name().as_deref(),
+        Some("invoice.invoice_lines[0].product.product-name")
     );
 }
 
