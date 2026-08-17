@@ -89,8 +89,8 @@ fn build() -> FormHandle<InvoiceForm> {
 /// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
 /// index key would hand a reordered or removed row's parse state to whichever
 /// item lands on that index next. The handle travels as a prop, so the page
-/// needs no Form Context Scope, and the row's own `items()` call keeps it
-/// subscribed to the collection.
+/// needs no Form Context Scope, and the row's own reads of the collection keep
+/// it subscribed to it.
 #[component]
 fn LineRow(
     form: FormHandle<InvoiceForm>,
@@ -98,15 +98,15 @@ fn LineRow(
     total_cents: u32,
 ) -> Element {
     let collection = form.collection(InvoiceForm::fields().lines());
-    let items = collection.items();
-    let count = items.len();
-    let item = items
-        .into_iter()
-        .find(|candidate| candidate.identity() == item)
-        .expect("the page renders one row per line the collection currently holds");
+    // A guard rather than a reachable path: the page unmounts a removed row before it
+    // renders again. It has to precede the row's first hook.
+    let Some(item) = collection.item(item) else {
+        return rsx! {};
+    };
+    let count = collection.items().len();
 
     let f = InvoiceLine::fields();
-    // The row is resolved out of the collection's current items, so its index resolves.
+    // The lookup above resolved the item, so its index resolves too.
     let index = item.index().expect("a rendered row has a live index");
     let description = item.text(f.description());
     let quantity = use_collection_item_number(item.clone(), f.quantity());

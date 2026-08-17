@@ -4467,6 +4467,20 @@ impl<Model, Item, Error> CollectionBinding<Model, Item, Error> {
         self.handle.collection_items(self.path.clone())
     }
 
+    /// Resolves one logical item from a **Collection Item Identity** already in hand.
+    ///
+    /// Returns `None` once that item is gone from the collection, so a caller holding an identity
+    /// across a mutation learns about the removal at the lookup instead of from an accessor.
+    ///
+    /// The lookup registers the same read on the collection's value [`Self::items`] does, so a
+    /// scope that renders one item through it re-renders when the collection's structure changes.
+    pub fn item(
+        &self,
+        item: CollectionItemIdentity,
+    ) -> Option<CollectionItemBinding<Model, Item, Error>> {
+        self.handle.collection_item(self.path.clone(), item)
+    }
+
     /// Appends an item programmatically and returns its logical identity.
     pub fn append_programmatic(&self, item: Item) -> CollectionItemIdentity {
         self.handle.push_collection_item(self.path.clone(), item)
@@ -7412,6 +7426,27 @@ impl<Model, Error> FormHandle<Model, Error> {
                 item: item.identity(),
             })
             .collect()
+    }
+
+    /// Resolves one logical collection item from an identity the caller already holds.
+    ///
+    /// Registers the same collection-value read [`Self::collection_items`] does, because that read
+    /// is what wakes a scope when the collection's structure changes: **Field Ancestry** is strict
+    /// between a collection and its own items (ADR-0020), so an item-child selector would never
+    /// hear about a removed sibling. Unlike `collection_items` the lookup itself is read-only.
+    fn collection_item<Item>(
+        &self,
+        path: FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+    ) -> Option<CollectionItemBinding<Model, Item, Error>> {
+        self.reactivity.track_field_value(&path.identity());
+        self.collection_item_index(&path, item)?;
+
+        Some(CollectionItemBinding {
+            handle: self.clone(),
+            collection_path: path,
+            item,
+        })
     }
 
     fn push_collection_item<Item>(

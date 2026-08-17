@@ -16,14 +16,14 @@ use dioform::advanced::{
     ValidatorId,
 };
 use dioform::{
-    CollectionCheckboxBinding, CollectionItemBinding, CollectionParsedTextBinding,
-    CollectionRadioGroupBinding, CollectionRenderedSelectBinding, CollectionSelectBinding,
-    CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle, FieldGroup, FieldPath,
-    FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace, FormListenerEvent,
-    FormValidationError, ParsedTextBinding, ProgressiveSubmitResult, SelectedFile,
-    SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError, SubmitErrors,
-    SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode, ValidationStatus,
-    ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
+    CollectionBinding, CollectionCheckboxBinding, CollectionItemBinding,
+    CollectionParsedTextBinding, CollectionRadioGroupBinding, CollectionRenderedSelectBinding,
+    CollectionSelectBinding, CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle,
+    FieldGroup, FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace,
+    FormListenerEvent, FormValidationError, ParsedTextBinding, ProgressiveSubmitResult,
+    SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError,
+    SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
+    ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
     use_collection_item_number, use_date, use_date_with, use_debounced_field_listener_for_origin,
     use_debounced_form_listener_for_origin, use_field_binding_listener, use_field_blur_listener,
@@ -2886,6 +2886,64 @@ fn dioxus_collection_binding_updates_reorders_and_names_item_fields() {
 }
 
 #[test]
+fn dioxus_collection_binding_resolves_an_item_from_an_identity_in_hand() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let appended = lines.append(InvoiceCollectionLine {
+        description: "Review".to_owned(),
+        quantity: 3,
+    });
+
+    let item = lines
+        .item(appended)
+        .expect("an identity the collection just returned resolves to its item");
+
+    assert_eq!(item.identity(), appended);
+    assert_eq!(item.index(), Some(2));
+    assert_eq!(
+        item.text(InvoiceCollectionLine::fields().description())
+            .value(),
+        "Review"
+    );
+}
+
+#[test]
+fn dioxus_collection_binding_does_not_resolve_a_removed_identity() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let items = lines.items();
+    let first = items[0].identity();
+    let second = items[1].identity();
+
+    assert!(lines.remove(first).is_some());
+
+    assert!(lines.item(first).is_none());
+    assert_eq!(
+        lines.item(second).and_then(|item| item.index()),
+        Some(0),
+        "the surviving item resolves at the index the removal left it on"
+    );
+}
+
+#[test]
+fn dioxus_collection_binding_resolves_an_item_at_its_live_index_after_a_reorder() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let second = lines.items()[1].identity();
+
+    assert!(lines.move_to_index(second, 0));
+
+    let moved = lines
+        .item(second)
+        .expect("a reordered item is still in the collection");
+    let description = moved.text(InvoiceCollectionLine::fields().description());
+
+    assert_eq!(moved.index(), Some(0));
+    assert_eq!(description.name().as_deref(), Some("lines[0].description"));
+    assert_eq!(description.value(), "Build");
+}
+
+#[test]
 fn dioxus_collection_binding_composes_nested_collection_and_child_field_paths() {
     let handle = FormHandle::new(nested_invoice_collection_form());
     let lines_path = NestedInvoiceCollectionForm::fields()
@@ -3256,9 +3314,8 @@ fn collection_item_parsed_hook_probe(probe: Rc<CollectionParsedHookProbe>) -> El
             }
         }
     };
-    let item = items
-        .into_iter()
-        .find(|item| item.identity() == tracked_item)
+    let item = lines
+        .item(tracked_item)
         .expect("tracked collection item should still be mounted");
     let quantity = use_collection_item_number(item, InvoiceCollectionLine::fields().quantity());
     let snapshot = form.snapshot();
@@ -3450,18 +3507,17 @@ impl PartialEq for CollectionRowProps {
 
 fn collection_parsed_row(props: CollectionRowProps) -> Element {
     // The row takes the handle as a prop, so the parent needs no Form Context Scope. Its own
-    // `items()` call is what subscribes it to the collection's value: Field Ancestry is strict
-    // between a collection and its items, so nothing else would wake the row when a sibling is
-    // removed or the items are reordered.
-    let items = props
+    // reads of the collection are what subscribe it to the collection's value: Field Ancestry is
+    // strict between a collection and its items, so nothing else would wake the row when a sibling
+    // is removed or the items are reordered. The early return precedes the row's first hook, so no
+    // hook slot is skipped while a later one is claimed.
+    let lines = props
         .form
-        .collection(InvoiceCollectionForm::fields().lines())
-        .items();
-    let count = items.len();
-    let item = items
-        .into_iter()
-        .find(|candidate| candidate.identity() == props.item)
-        .expect("the parent renders one row per item it currently holds");
+        .collection(InvoiceCollectionForm::fields().lines());
+    let Some(item) = lines.item(props.item) else {
+        return VNode::empty();
+    };
+    let count = lines.items().len();
     let index = item
         .index()
         .expect("a row resolved out of the current items renders at a live index");
@@ -3983,9 +4039,7 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
     handle.validate_all(ValidationTrigger::Manual);
 
     let inserted_item = lines
-        .items()
-        .into_iter()
-        .find(|item| item.identity() == inserted)
+        .item(inserted)
         .expect("inserted item should be present");
     let description = inserted_item.text(description_path.clone());
 
@@ -4001,11 +4055,7 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
     );
     assert!(lines.move_to_index(inserted, 0));
 
-    let moved_item = lines
-        .items()
-        .into_iter()
-        .find(|item| item.identity() == inserted)
-        .expect("moved item should be present");
+    let moved_item = lines.item(inserted).expect("moved item should be present");
     let moved_description = moved_item.text(description_path);
 
     assert_eq!(
@@ -4096,9 +4146,7 @@ fn collection_item_addressing_tracks_one_logical_item_across_public_surfaces() {
     assert!(lines.move_to_index(tracked_identity, 0));
 
     let moved_item = lines
-        .items()
-        .into_iter()
-        .find(|item| item.identity() == tracked_identity)
+        .item(tracked_identity)
         .expect("tracked item should still be present");
     let moved_description = moved_item.text(description_path);
     let moved_quantity = moved_item.number(quantity_path);
@@ -5047,9 +5095,7 @@ fn form_config_registers_collection_item_field_validator_templates() {
     handle.validate_all(ValidationTrigger::Manual);
 
     let inserted_item = lines
-        .items()
-        .into_iter()
-        .find(|item| item.identity() == inserted)
+        .item(inserted)
         .expect("inserted item should be present");
     let quantity = inserted_item.number(quantity_path);
 
@@ -5061,11 +5107,7 @@ fn form_config_registers_collection_item_field_validator_templates() {
 
     assert!(lines.move_to_index(inserted, 0));
 
-    let moved_item = lines
-        .items()
-        .into_iter()
-        .find(|item| item.identity() == inserted)
-        .expect("moved item should be present");
+    let moved_item = lines.item(inserted).expect("moved item should be present");
     let moved_quantity = moved_item.number(InvoiceCollectionLine::fields().quantity());
 
     assert_eq!(moved_quantity.name().as_deref(), Some("lines[0].quantity"));
@@ -6200,6 +6242,81 @@ fn collection_structure_selectors_rerender_without_rerendering_item_value_reader
     );
 }
 
+struct CollectionItemLookupProbe {
+    form: FormHandle<InvoiceCollectionForm>,
+    item: CollectionItemIdentity,
+    resolved_indexes: RefCell<Vec<Option<usize>>>,
+}
+
+impl CollectionItemLookupProbe {
+    fn new() -> Self {
+        let form = FormHandle::new(invoice_collection_row_form());
+        let item = form
+            .collection(InvoiceCollectionForm::fields().lines())
+            .items()[0]
+            .identity();
+
+        Self {
+            form,
+            item,
+            resolved_indexes: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn lines(&self) -> CollectionBinding<InvoiceCollectionForm, InvoiceCollectionLine> {
+        self.form
+            .collection(InvoiceCollectionForm::fields().lines())
+    }
+}
+
+fn collection_item_lookup_probe(probe: Rc<CollectionItemLookupProbe>) -> Element {
+    let index = probe.lines().item(probe.item).and_then(|item| item.index());
+
+    probe.resolved_indexes.borrow_mut().push(index);
+
+    VNode::empty()
+}
+
+#[test]
+fn a_collection_item_lookup_rerenders_its_reader_on_a_collection_mutation() {
+    let probe = Rc::new(CollectionItemLookupProbe::new());
+    let mut dom = VirtualDom::new_with_props(collection_item_lookup_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.resolved_indexes.borrow().as_slice(), [Some(0)]);
+
+    let lines = probe.lines();
+    let last = lines.items()[2].identity();
+
+    assert!(lines.remove(last).is_some());
+    dom.render_immediate_to_vec();
+
+    // Removing a *later* sibling leaves this item's index alone, so the repeated `Some(0)` is the
+    // assertion: the reader woke at all. Field Ancestry is strict between a collection and its own
+    // items, so only the collection-value read the lookup registers could have woken it.
+    assert_eq!(
+        probe.resolved_indexes.borrow().as_slice(),
+        [Some(0), Some(0)]
+    );
+
+    assert!(lines.move_to_index(probe.item, 1));
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.resolved_indexes.borrow().as_slice(),
+        [Some(0), Some(0), Some(1)]
+    );
+
+    assert!(lines.remove(probe.item).is_some());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.resolved_indexes.borrow().as_slice(),
+        [Some(0), Some(0), Some(1), None]
+    );
+}
+
 struct FieldMetadataSelectorProbe {
     form: FormHandle<ProfileForm>,
     email_touched_values: RefCell<Vec<bool>>,
@@ -7104,6 +7221,27 @@ fn dioxus_collection_is_resolved_reads_without_borrowing_the_core_mutably() {
     assert!(!handle.read_core(|_| leaves.label.is_resolved()));
 }
 
+#[test]
+fn dioxus_collection_item_lookup_reads_without_borrowing_the_core_mutably() {
+    let handle =
+        FormHandle::new_with_id_namespace(collection_helper_form(), "collection-item-lookup-reads");
+    let rows = handle.collection(CollectionHelperForm::fields().rows());
+    let second = rows.items()[1].identity();
+
+    // `read_core` holds an immutable core borrow for the whole closure. Unlike `items()`, which
+    // takes a mutable borrow to ensure item validator state, the identity lookup is a pure read.
+    assert_eq!(
+        handle
+            .read_core(|_| rows.item(second))
+            .map(|item| item.index()),
+        Some(Some(1))
+    );
+
+    assert!(rows.remove(second).is_some());
+
+    assert!(handle.read_core(|_| rows.item(second)).is_none());
+}
+
 /// Four lines, so removing the first leaves three rows whose names must not collide with the names
 /// retained bindings for the original rows render.
 fn four_line_invoice_collection_form() -> InvoiceCollectionForm {
@@ -7428,9 +7566,8 @@ fn collection_item_date_hook_probe(probe: Rc<CollectionDateHookProbe>) -> Elemen
             }
         }
     };
-    let item = items
-        .into_iter()
-        .find(|item| item.identity() == tracked_item)
+    let item = rows
+        .item(tracked_item)
         .expect("tracked collection item should still be mounted");
     let starts_on = use_collection_item_date(item, CollectionHelperRow::fields().starts_on());
     let snapshot = form.snapshot();

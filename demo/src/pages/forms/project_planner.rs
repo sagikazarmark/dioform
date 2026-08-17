@@ -75,17 +75,17 @@ fn initial() -> ProjectForm {
 /// `CollectionItemIdentity`: the hook state lives in the row's own scope, so an
 /// index key would hand a removed or reordered row's parse state to whichever
 /// item lands on that index next. The handle travels as a prop, so the page
-/// needs no Form Context Scope, and the row's own `items()` call keeps it
-/// subscribed to the collection.
+/// needs no Form Context Scope, and the row's own reads of the collection keep
+/// it subscribed to it.
 #[component]
 fn MilestoneRow(form: FormHandle<ProjectForm>, item: CollectionItemIdentity) -> Element {
     let collection = form.collection(milestones_path());
-    let items = collection.items();
-    let count = items.len();
-    let item = items
-        .into_iter()
-        .find(|candidate| candidate.identity() == item)
-        .expect("the page renders one row per milestone the collection currently holds");
+    // A guard rather than a reachable path: the page unmounts a removed row before it
+    // renders again. It has to precede the row's first hook.
+    let Some(item) = collection.item(item) else {
+        return rsx! {};
+    };
+    let count = collection.items().len();
 
     let f = Milestone::fields();
     let title = item.text(f.title());

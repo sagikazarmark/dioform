@@ -23,12 +23,9 @@ fn InvoiceEditor() -> Element {
 
 #[component]
 fn InvoiceLineRow(form: FormHandle<InvoiceForm>, item: CollectionItemIdentity) -> Element {
-    let item = form
-        .collection(InvoiceForm::fields().lines())
-        .items()
-        .into_iter()
-        .find(|candidate| candidate.identity() == item)
-        .expect("the page renders one row per item the collection currently holds");
+    let Some(item) = form.collection(InvoiceForm::fields().lines()).item(item) else {
+        return rsx! {};
+    };
 
     let description = item.text(InvoiceLine::fields().description());
     let quantity = use_collection_item_number(
@@ -63,6 +60,8 @@ A row that calls a collection-item hook must be a component keyed by the item id
 Row components take the **Form Handle** and the item identity as props. A handle compares by observable identity ([ADR-0024](adr/0024-compare-form-handles-by-observable-identity.md)), so it is an ordinary `#[component]` prop, and a page that renders collection rows needs no **Form Context Scope**. Context access stays available for a subtree of renderless helpers deep enough that threading the handle is the greater cost (see [Form Context Access](form-context.md)); a keyed row is not that case.
 
 Resolve the item from the collection inside the row rather than accepting a resolved row value from the parent. That lookup is also the row's subscription to the collection's value, and **Field Ancestry** is strict between a collection and its own items, so nothing else wakes the row when the collection's structure changes. A row that stopped reading the collection would never re-render after a reorder or a removal: its accessors would still *answer* correctly when called, because the index resolves live, but the row would keep painting the values and the sibling count from its last render — leaving, for example, an enabled "move down" control on a row that is now last.
+
+[`item(identity)`](#resolving-one-item-by-identity) is that lookup: it answers `None` once the item no longer belongs to the collection, and it registers the same collection-value read `items()` does, so the subscription above is intact either way. A row that renders one item wants `item()`; `items()` remains the parent's call, and the row's own call when it needs the sibling count as well. The early return above is a guard rather than a reachable path — Dioxus flushes the parent first, so a removed row unmounts before it renders again — but it must come **before the row's first hook**. Returning ahead of every `use_` call leaves the scope's hook slots untouched; skipping one hook while claiming a later one mis-indexes them and panics.
 
 Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
 
@@ -244,6 +243,33 @@ matching **Form Observer** transition (`CollectionItemsSwapped`, `CollectionItem
 `CollectionCleared`) and integrates with **Reset** and **Reinitialization** through the existing form
 lifecycle.
 
+## Resolving One Item by Identity
+
+`item(identity)` is the read side of that identity-keyed family. Pass it an identity already in hand
+— the one `append` or `insert` just returned, one captured in an event handler or in application
+state, one delivered by a **Form Observer** transition — and it resolves to that item's binding, or
+to `None` once the item no longer belongs to the collection:
+
+```rust
+let lines = form.collection(InvoiceForm::fields().lines());
+let added = lines.append(InvoiceLine {
+    description: String::new(),
+    quantity: 1,
+});
+
+if let Some(item) = lines.item(added) {
+    item.text(InvoiceLine::fields().description())
+        .set_value("Deploy");
+}
+```
+
+The binding behaves exactly as the one `items()` yields for that item: it reports the live rendered
+index, so it keeps answering correctly after a reorder. Answering the absence at the lookup is the
+alternative to holding an [**Unresolved Binding**](#unresolved-bindings) and asking it afterwards —
+useful when the caller can act on the item being gone, as a row that returns early can.
+
+`MultiSelectBinding` has no such lookup; see [Multi-Select Fields](#multi-select-fields).
+
 ## Multi-Select Fields
 
 True multi-select helpers use the same direct `Vec<Item>` collection machinery, but the selected
@@ -269,6 +295,12 @@ chooses native checkboxes, a custom listbox, command palette rows, chips, or any
 values can be inspected through `selected_values()` or `items()`. Each `MultiSelectItem` exposes its
 opaque `CollectionItemIdentity`, item-level metadata, dirty state, accessibility helper, and
 validation errors.
+
+A multi-select is keyed by **value** rather than by identity: `is_selected(value)`,
+`selected_item(value)` and `selected_identity(value)` are the lookups, and `select` / `deselect` /
+`toggle` take a value too. It therefore has no `item(identity)` counterpart — a caller holding one of
+its identities also holds the value that produced it
+([ADR-0027](adr/0027-add-an-identity-keyed-collection-item-accessor.md)).
 
 Use `item_validator(...).check(...)` when a rule applies to every selected value. Validation errors
 attach to the selected value identity, so removing that selected value clears its item-scoped state
