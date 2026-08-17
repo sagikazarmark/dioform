@@ -66,6 +66,8 @@ Resolve the item from the collection inside the row rather than accepting a reso
 
 Bindings that own no hook state — `item.text(...)`, `item.select(...)`, `item.checkbox(...)` — are safe to build anywhere, but keeping the whole row in one keyed component keeps the rule simple.
 
+That rule is about *rows*. A scope that is not a row may bind a collection item freely: a page-level control bound to the first line, a detail panel bound to the selected row, a virtualized slot. Such a scope renders a different item when the collection moves under it, and the mounted **Parse Blocker** is **re-addressed** to the item the scope renders now ([ADR-0026](adr/0026-re-address-a-parse-blocker-to-the-item-its-mount-renders.md)). Re-addressing drops the in-flight raw text and the parse error held for the previous item — text typed for one logical item is not input for another — so the input renders the new item's formatted value. Reordering changes nothing, because reordering does not change an item's identity. A binding clone retained past the change, such as one parked in an event handler, keeps addressing its own item: its value writes still land there, while its parse reads and writes go inert rather than driving the mount that has moved on.
+
 For a collection under a nested named struct, compose the generated direct field paths with `FieldPath::join`:
 
 ```rust

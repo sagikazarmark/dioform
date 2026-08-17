@@ -703,6 +703,11 @@ where
 /// Call this from a row component keyed by [`CollectionItemIdentity::key`]. The registration is
 /// captured in the calling scope's hook slot, so a plain `fn` row helper or an index-keyed row
 /// reattaches it to the wrong item after a removal or a reorder.
+///
+/// A scope that is not a row may bind a collection item too. When such a scope renders a different
+/// item, its mounted parse blocker is re-addressed to the item it renders now: the raw text and
+/// parse error held for the previous item are dropped, and the input renders the new item's
+/// formatted value.
 pub fn use_collection_item_parsed_text<Model, Item, Value, Error>(
     item: CollectionItemBinding<Model, Item, Error>,
     path: FieldPath<Item, Value>,
@@ -729,6 +734,11 @@ where
 /// by [`CollectionItemIdentity::key`]. It keeps mounted parse state stable across rerenders, and the
 /// returned binding derives its rendered field name from the item's live index rather than from the
 /// index it was built with.
+///
+/// A scope that is not a row may bind a collection item too. When such a scope renders a different
+/// item, its mounted parse blocker is re-addressed to the item it renders now: the raw text and
+/// parse error held for the previous item are dropped, and the input renders the new item's
+/// formatted value.
 pub fn use_collection_item_parsed_text_with<
     Model,
     Item,
@@ -762,6 +772,15 @@ where
         parser,
         formatter,
     } = state;
+
+    // This render is the only place that sees the scope move from one item to another, so it is
+    // where the mounted registration is re-addressed (ADR-0026). Re-addressing ends the blocker
+    // held for the item the scope used to render; addressing the same item again is a no-op.
+    registration.re_address(CollectionItemFieldAddress::identity_for(
+        &item.collection_path,
+        item.item,
+        &path,
+    ));
 
     CollectionParsedTextBinding {
         base: CollectionFieldBindingCore::new(
@@ -2099,6 +2118,17 @@ mod field_binding {
     /// selector tracking together. Parsed-input bindings layer parser state on top through the
     /// narrow [`TypedFieldBinding`] interface below.
     pub(super) trait TypedFieldBinding<Value> {
+        /// Returns the **Field Identity** this caller addresses.
+        ///
+        /// A parsed binding carries it into every parse read and write so the mount can tell
+        /// whether the caller still belongs to it (ADR-0026). Neither core resolves anything to
+        /// answer: a collection item child identity follows from the item and the child path
+        /// alone, so an unresolved binding still has an address.
+        fn field_identity(&self) -> FieldIdentity;
+
+        /// Returns whether the addressed target still resolves.
+        fn is_resolved(&self) -> bool;
+
         fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result;
@@ -2297,6 +2327,14 @@ mod field_binding {
     impl<Model, Item, Value, Error> TypedFieldBinding<Value>
         for CollectionFieldBindingCore<Model, Item, Value, Error>
     {
+        fn field_identity(&self) -> FieldIdentity {
+            self.identity()
+        }
+
+        fn is_resolved(&self) -> bool {
+            CollectionFieldBindingCore::is_resolved(self)
+        }
+
         fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result,
@@ -2424,6 +2462,14 @@ mod field_binding {
     }
 
     impl<Model, Value, Error> TypedFieldBinding<Value> for FieldBindingCore<Model, Value, Error> {
+        fn field_identity(&self) -> FieldIdentity {
+            self.path.identity()
+        }
+
+        fn is_resolved(&self) -> bool {
+            true
+        }
+
         fn read_value_or<Result, Read>(&self, read: Read, unresolved: Result) -> Result
         where
             Read: FnOnce(&Value) -> Result,
@@ -2456,6 +2502,11 @@ mod field_binding {
 
 use field_binding::{CollectionFieldBindingCore, FieldBindingCore};
 
+/// Parse behavior layered over a typed binding.
+///
+/// Every entry point takes the caller's own binding as well as the registration it shares with the
+/// mount, because the mount owns the **Parse Blocker** while the caller's **Field Identity** is
+/// what proves the caller still belongs to it (ADR-0026).
 mod parsed_input {
     use super::field_binding::TypedFieldBinding;
     use super::*;
@@ -2468,7 +2519,7 @@ mod parsed_input {
     where
         Binding: TypedFieldBinding<Value>,
     {
-        match parse_error(registration) {
+        match parse_error(binding, registration) {
             Some(error) => error.raw_value,
             None => binding.read_value_or(|value| formatter.as_ref()(value), String::new()),
         }
@@ -2481,7 +2532,7 @@ mod parsed_input {
     ) where
         Binding: TypedFieldBinding<Value>,
     {
-        registration.clear_error();
+        registration.clear_error(&binding.field_identity());
         binding.set_programmatic(value);
     }
 
@@ -2497,12 +2548,17 @@ mod parsed_input {
 
         match parser.as_ref()(&raw_value) {
             Ok(value) => {
-                registration.clear_error();
+                registration.clear_error(&binding.field_identity());
                 binding.set_user(value);
             }
             Err(error) => {
                 binding.mark_touched();
-                registration.set_error(raw_value, error);
+
+                // Raising a blocker is a write, so it stays silent when the addressed target no
+                // longer resolves, exactly as the value write beside it does (ADR-0022).
+                if binding.is_resolved() {
+                    registration.set_error(&binding.field_identity(), raw_value, error);
+                }
             }
         }
     }
@@ -2513,15 +2569,21 @@ mod parsed_input {
     ) where
         Binding: TypedFieldBinding<Value>,
     {
-        if parse_error(registration).is_some() {
+        if parse_error(binding, registration).is_some() {
             binding.blur_without_validation();
         } else {
             binding.blur();
         }
     }
 
-    pub(super) fn parse_error(registration: &ParseBindingRegistration) -> Option<ParseError> {
-        registration.parse_error()
+    pub(super) fn parse_error<Binding, Value>(
+        binding: &Binding,
+        registration: &ParseBindingRegistration,
+    ) -> Option<ParseError>
+    where
+        Binding: TypedFieldBinding<Value>,
+    {
+        registration.parse_error(&binding.field_identity())
     }
 }
 
@@ -2529,18 +2591,23 @@ struct ParseBindingRegistrationInner {
     adapter: AdapterRuntime,
     reactivity: Rc<FormReactivity>,
     id: ParseBindingId,
-    field: FieldIdentity,
 }
 
 impl Drop for ParseBindingRegistrationInner {
     fn drop(&mut self) {
-        if self.adapter.unregister_parse_binding(self.id) {
+        if let Some(field) = self.adapter.unregister_parse_binding(self.id) {
             self.reactivity
-                .notify_selector_transition(SelectorTransition::ParseChanged(self.field.clone()));
+                .notify_selector_transition(SelectorTransition::ParseChanged(field));
         }
     }
 }
 
+/// A shared handle on one mounted parse binding.
+///
+/// The mount owns the **Parse Blocker**; the address it was raised for lives with the adapter entry
+/// and moves when the scope re-addresses it (ADR-0026). Every clone of this handle shares that one
+/// mount, so each read and write passes its caller's own **Field Identity** to prove it still
+/// belongs to it.
 struct ParseBindingRegistration {
     inner: Rc<ParseBindingRegistrationInner>,
 }
@@ -2554,47 +2621,73 @@ impl Clone for ParseBindingRegistration {
 }
 
 impl ParseBindingRegistration {
-    fn new(
-        adapter: AdapterRuntime,
-        reactivity: Rc<FormReactivity>,
-        id: ParseBindingId,
-        field: FieldIdentity,
-    ) -> Self {
+    fn new(adapter: AdapterRuntime, reactivity: Rc<FormReactivity>, id: ParseBindingId) -> Self {
         Self {
             inner: Rc::new(ParseBindingRegistrationInner {
                 adapter,
                 reactivity,
                 id,
-                field,
             }),
         }
     }
 
-    fn parse_error(&self) -> Option<ParseError> {
+    /// Points this mount at the field its scope renders now, ending the blocker it held for the
+    /// previous one.
+    ///
+    /// Only the render sees the change, so the hook is the one that calls this. The transition is
+    /// the part that must not be skipped: a blocker left behind belongs to no mounted binding, and
+    /// no UI could see it to clear it.
+    fn re_address(&self, field: FieldIdentity) {
+        if let Some(previous) = self
+            .inner
+            .adapter
+            .re_address_parse_binding(self.inner.id, field)
+        {
+            self.inner
+                .reactivity
+                .notify_selector_transition(SelectorTransition::ParseChanged(previous));
+        }
+    }
+
+    /// Returns whether a caller's address is still the one this mount renders.
+    fn addresses(&self, caller: &FieldIdentity) -> bool {
         self.inner
-            .reactivity
-            .track_field_parse_errors(&self.inner.field);
+            .adapter
+            .parse_binding_addresses(self.inner.id, caller)
+    }
+
+    fn parse_error(&self, caller: &FieldIdentity) -> Option<ParseError> {
+        self.inner.reactivity.track_field_parse_errors(caller);
+
+        if !self.addresses(caller) {
+            return None;
+        }
+
         self.inner.adapter.parse_error(self.inner.id)
     }
 
-    fn set_error(&self, raw_value: String, message: String) {
-        let field = self.inner.field.clone();
+    fn set_error(&self, caller: &FieldIdentity, raw_value: String, message: String) {
+        if !self.addresses(caller) {
+            return;
+        }
 
         self.inner
             .adapter
             .set_parse_error(self.inner.id, raw_value, message);
         self.inner
             .reactivity
-            .notify_selector_transition(SelectorTransition::ParseChanged(field));
+            .notify_selector_transition(SelectorTransition::ParseChanged(caller.clone()));
     }
 
-    fn clear_error(&self) {
-        let field = self.inner.field.clone();
+    fn clear_error(&self, caller: &FieldIdentity) {
+        if !self.addresses(caller) {
+            return;
+        }
 
         self.inner.adapter.clear_parse_error(self.inner.id);
         self.inner
             .reactivity
-            .notify_selector_transition(SelectorTransition::ParseChanged(field));
+            .notify_selector_transition(SelectorTransition::ParseChanged(caller.clone()));
     }
 }
 
@@ -5099,6 +5192,11 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     }
 
     /// Creates a parsed text binding for a child field.
+    ///
+    /// In Dioxus components, prefer [`use_collection_item_parsed_text`] so the parse binding and
+    /// its mounted parse blocker remain stable across rerenders: this constructor mints a fresh
+    /// registration per call and drops it with the binding, so a per-render caller never holds a
+    /// blocker.
     pub fn parsed_text<Value>(
         &self,
         path: FieldPath<Item, Value>,
@@ -5115,6 +5213,11 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     }
 
     /// Creates a parsed text binding for a child field.
+    ///
+    /// In Dioxus components, prefer [`use_collection_item_parsed_text_with`] so the parse binding
+    /// and its mounted parse blocker remain stable across rerenders: this constructor mints a
+    /// fresh registration per call and drops it with the binding, so a per-render caller never
+    /// holds a blocker.
     pub fn parsed_text_with<Value, Parser, ParserError, Formatter>(
         &self,
         path: FieldPath<Item, Value>,
@@ -9273,8 +9376,8 @@ impl<Model, Error> FormHandle<Model, Error> {
     }
 
     fn register_parse_binding(&self, field: FieldIdentity) -> ParseBindingRegistration {
-        let id = self.adapter.register_parse_binding(field.clone());
-        ParseBindingRegistration::new(self.adapter.clone(), Rc::clone(&self.reactivity), id, field)
+        let id = self.adapter.register_parse_binding(field);
+        ParseBindingRegistration::new(self.adapter.clone(), Rc::clone(&self.reactivity), id)
     }
 
     fn unregister_collection_item_parse_bindings(
@@ -9388,6 +9491,9 @@ impl<Model, Error> FormHandle<Model, Error> {
     ///
     /// This is intended for custom field values that should remain typed in the form draft but need
     /// application-supplied rendered text conversion.
+    ///
+    /// In Dioxus components, prefer [`use_parsed_text_with`] so the parse binding and its mounted
+    /// parse blocker remain stable across rerenders.
     pub fn parsed_text_with<Value, Parser, ParserError, Formatter>(
         &self,
         path: FieldPath<Model, Value>,
@@ -10405,7 +10511,7 @@ impl<Model, Item, Value, Error> CollectionParsedTextBinding<Model, Item, Value, 
 
     /// Returns this mounted binding's parse error, if rendered input is currently unparsable.
     pub fn parse_error(&self) -> Option<ParseError> {
-        parsed_input::parse_error(&self.registration)
+        parsed_input::parse_error(&self.base, &self.registration)
     }
 
     /// Returns validation errors for this item child field.
@@ -11207,7 +11313,7 @@ impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
 
     /// Returns this mounted binding's parse error, if rendered input is currently unparsable.
     pub fn parse_error(&self) -> Option<ParseError> {
-        parsed_input::parse_error(&self.registration)
+        parsed_input::parse_error(&self.base, &self.registration)
     }
 
     /// Returns validation errors for this field.

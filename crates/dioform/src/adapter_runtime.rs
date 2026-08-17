@@ -250,7 +250,23 @@ impl AdapterRuntime {
         self.parse.register_parse_binding(field)
     }
 
-    pub(super) fn unregister_parse_binding(&self, id: ParseBindingId) -> bool {
+    pub(super) fn re_address_parse_binding(
+        &self,
+        id: ParseBindingId,
+        field: FieldIdentity,
+    ) -> Option<FieldIdentity> {
+        self.parse.re_address_parse_binding(id, field)
+    }
+
+    pub(super) fn parse_binding_addresses(
+        &self,
+        id: ParseBindingId,
+        field: &FieldIdentity,
+    ) -> bool {
+        self.parse.parse_binding_addresses(id, field)
+    }
+
+    pub(super) fn unregister_parse_binding(&self, id: ParseBindingId) -> Option<FieldIdentity> {
         self.parse.unregister_parse_binding(id)
     }
 

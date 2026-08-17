@@ -11,6 +11,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
+    mem,
 };
 
 use dioform_core::__private::CollectionItemFieldAddress;
@@ -21,6 +22,12 @@ use crate::{CollectionItemIdentity, FieldIdentity, ParseError, SelectedFile};
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct ParseBindingId(u64);
 
+/// One mounted parse binding: the field it currently addresses and the blocker it holds for it.
+///
+/// The field is the mount's address rather than a fixed key. A scope that renders a different
+/// collection item re-addresses its entry through
+/// [`re_address_parse_binding`](ParseState::re_address_parse_binding) (ADR-0026), which is why the
+/// field-scoped queries, the collection item sweep, and unregistration all read it live.
 struct ParseBindingState {
     field: FieldIdentity,
     parse_error: Option<ParseError>,
@@ -48,13 +55,63 @@ impl ParseState {
         id
     }
 
-    /// Removes a parse binding, returning whether it held a parse error.
-    pub(super) fn unregister_parse_binding(&self, id: ParseBindingId) -> bool {
+    /// Re-addresses a parse binding to the field its mount now renders, dropping the raw text and
+    /// parse error it held for the previous field.
+    ///
+    /// Returns the previous field when a parse error was cleared as a result, so the caller can
+    /// notify that field's parse selector: a blocker must never outlive the address it was raised
+    /// for. Re-addressing a binding whose entry was swept away by a collection item removal
+    /// registers it again under the same identity, so a mount that outlived the row it used to
+    /// render is not left mute.
+    pub(super) fn re_address_parse_binding(
+        &self,
+        id: ParseBindingId,
+        field: FieldIdentity,
+    ) -> Option<FieldIdentity> {
+        let mut bindings = self.bindings.borrow_mut();
+
+        let Some(binding) = bindings.get_mut(&id) else {
+            bindings.insert(
+                id,
+                ParseBindingState {
+                    field,
+                    parse_error: None,
+                },
+            );
+
+            return None;
+        };
+
+        if binding.field == field {
+            return None;
+        }
+
+        let previous = mem::replace(&mut binding.field, field);
+
+        binding.parse_error.take().map(|_| previous)
+    }
+
+    /// Returns whether one parse binding currently addresses a field.
+    ///
+    /// This is how a caller proves it still belongs to the mount it shares a registration with: a
+    /// binding clone retained past a re-addressing keeps its own address and stops matching. A
+    /// binding whose entry was swept away addresses nothing.
+    pub(super) fn parse_binding_addresses(
+        &self,
+        id: ParseBindingId,
+        field: &FieldIdentity,
+    ) -> bool {
         self.bindings
-            .borrow_mut()
-            .remove(&id)
-            .and_then(|binding| binding.parse_error)
-            .is_some()
+            .borrow()
+            .get(&id)
+            .is_some_and(|binding| &binding.field == field)
+    }
+
+    /// Removes a parse binding, returning the field it addressed when it held a parse error.
+    pub(super) fn unregister_parse_binding(&self, id: ParseBindingId) -> Option<FieldIdentity> {
+        let binding = self.bindings.borrow_mut().remove(&id)?;
+
+        binding.parse_error.is_some().then_some(binding.field)
     }
 
     /// Removes all parse bindings addressed to one collection item, returning the fields whose

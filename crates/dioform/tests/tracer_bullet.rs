@@ -3626,6 +3626,248 @@ fn keyed_row_components_keep_parse_blockers_on_the_typed_item_after_reorder() {
     assert_eq!(probe.quantity(design).value(), "also-not-a-number");
 }
 
+/// A scope that binds a collection item positionally instead of as an identity-keyed row: the
+/// ADR-0026 case, where the item a mounted scope renders changes without the scope remounting.
+#[derive(Default)]
+struct PositionalCollectionParseProbe {
+    handle: RefCell<Option<FormHandle<InvoiceCollectionForm>>>,
+    quantity: RefCell<Option<CollectionRowQuantity>>,
+}
+
+impl PositionalCollectionParseProbe {
+    fn handle(&self) -> FormHandle<InvoiceCollectionForm> {
+        self.handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose the form handle")
+            .clone()
+    }
+
+    /// Returns the parsed binding the scope built for whichever item it rendered last.
+    fn quantity(&self) -> CollectionRowQuantity {
+        self.quantity
+            .borrow()
+            .as_ref()
+            .expect("the probe scope should have rendered a parsed binding")
+            .clone()
+    }
+}
+
+fn positional_collection_parse_probe(probe: Rc<PositionalCollectionParseProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(invoice_collection_form()));
+    let items = form
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items();
+    let quantity =
+        use_collection_item_number(items[0].clone(), InvoiceCollectionLine::fields().quantity());
+
+    probe.handle.borrow_mut().replace(form);
+    probe.quantity.borrow_mut().replace(quantity);
+
+    VNode::empty()
+}
+
+/// Mounts the positional scope over the two-line invoice form and returns both item identities.
+fn mounted_positional_collection_scope() -> (
+    Rc<PositionalCollectionParseProbe>,
+    VirtualDom,
+    [CollectionItemIdentity; 2],
+) {
+    let probe = Rc::new(PositionalCollectionParseProbe::default());
+    let mut dom = VirtualDom::new_with_props(positional_collection_parse_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let identities: [CollectionItemIdentity; 2] = probe
+        .handle()
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()
+        .iter()
+        .map(CollectionItemBinding::identity)
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("the probe form starts with two lines");
+
+    (probe, dom, identities)
+}
+
+#[test]
+fn a_re_addressed_scope_moves_its_parse_blocker_to_the_item_it_renders() {
+    let (probe, mut dom, [design, build]) = mounted_positional_collection_scope();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    probe.quantity().on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![design]);
+    assert!(!handle.can_submit());
+
+    lines
+        .remove(design)
+        .expect("the first line should be removable");
+    dom.render_immediate_to_vec();
+
+    // The scope renders the second line now. The blocker it raised for the first one is gone from
+    // the form-level parse errors rather than merely hidden behind the binding it belonged to.
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+    assert!(probe.quantity().parse_error().is_none());
+    assert_eq!(probe.quantity().value(), "1");
+    assert_eq!(
+        probe.quantity().name().as_deref(),
+        Some("lines[0].quantity")
+    );
+
+    // A scope whose previously addressed row was removed still raises blockers for the row it
+    // addresses now.
+    probe.quantity().on_input("still-not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![build]);
+    assert_eq!(probe.quantity().value(), "still-not-a-number");
+    assert!(!handle.can_submit());
+
+    // A binding built fresh for the item on screen reports the same blocker on its field surface.
+    assert!(
+        lines.items()[0]
+            .number(InvoiceCollectionLine::fields().quantity())
+            .accessibility()
+            .has_parse_errors()
+    );
+
+    // And the scope can clear what it raised.
+    probe.quantity().on_input("7");
+    dom.render_immediate_to_vec();
+
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+}
+
+#[test]
+fn re_addressing_ends_the_blocker_raised_for_the_item_a_scope_left_behind() {
+    let (probe, mut dom, [design, _build]) = mounted_positional_collection_scope();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    probe.quantity().on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![design]);
+
+    // Inserting ahead of the blocked line leaves it alive and unchanged: nothing sweeps its
+    // registration, and only the render that re-addresses can end the blocker it holds.
+    let inserted = lines
+        .insert(
+            0,
+            InvoiceCollectionLine {
+                description: "Discovery".to_owned(),
+                quantity: 5,
+            },
+        )
+        .expect("inserting at the front of a two-line collection should succeed");
+    dom.render_immediate_to_vec();
+
+    assert!(lines.items()[1].is_resolved());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+    assert!(probe.quantity().parse_error().is_none());
+    assert_eq!(probe.quantity().value(), "5");
+
+    // The line the scope left behind renders its own value again rather than the raw text typed
+    // for it, and a binding built fresh for it reports no blocker either.
+    let left_behind = lines.items()[1].number(InvoiceCollectionLine::fields().quantity());
+
+    assert_eq!(left_behind.value(), "2");
+    assert!(!left_behind.accessibility().has_parse_errors());
+
+    // The re-addressed registration raises its next blocker for the inserted line.
+    probe.quantity().on_input("not-a-number-either");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![inserted]);
+}
+
+#[test]
+fn a_re_addressed_scope_blocks_the_item_minted_by_a_reinitialization() {
+    let (probe, mut dom, [design, _build]) = mounted_positional_collection_scope();
+    let handle = probe.handle();
+
+    probe.quantity().on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(parse_blocked_items(&handle), vec![design]);
+
+    handle.reinitialize(invoice_collection_form());
+    dom.render_immediate_to_vec();
+
+    let reinitialized = handle
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()[0]
+        .identity();
+
+    assert_ne!(reinitialized, design);
+
+    probe.quantity().on_input("not-a-number-either");
+    dom.render_immediate_to_vec();
+
+    // The blocker names the item the scope renders, so the UI that would clear it can see it.
+    assert_eq!(parse_blocked_items(&handle), vec![reinitialized]);
+    assert!(!handle.can_submit());
+    assert_eq!(probe.quantity().value(), "not-a-number-either");
+
+    probe.quantity().on_input("3");
+    dom.render_immediate_to_vec();
+
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+}
+
+#[test]
+fn a_retained_binding_clone_stops_driving_a_re_addressed_mount() {
+    let (probe, mut dom, [_design, _build]) = mounted_positional_collection_scope();
+    let handle = probe.handle();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+
+    // A handler clone taken while the scope still rendered the first line.
+    let retained = probe.quantity();
+
+    assert!(lines.swap(0, 1));
+    dom.render_immediate_to_vec();
+
+    // The scope re-addressed to the line that moved into its slot, while the retained clone still
+    // addresses the first line — which resolves perfectly well, one index down.
+    assert_eq!(probe.quantity().value(), "1");
+    assert!(retained.is_resolved());
+
+    retained.on_input("not-a-number");
+    dom.render_immediate_to_vec();
+
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+    assert!(retained.parse_error().is_none());
+    assert!(probe.quantity().parse_error().is_none());
+    assert_eq!(probe.quantity().value(), "1");
+}
+
+#[test]
+fn a_parse_write_through_an_unresolved_item_leaves_parse_state_unchanged() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let quantity = lines.items()[0].number(InvoiceCollectionLine::fields().quantity());
+
+    // Reinitializing retires every item identity while leaving this registration mounted.
+    handle.reinitialize(invoice_collection_form());
+
+    assert!(!quantity.is_resolved());
+
+    quantity.on_input("not-a-number");
+
+    assert!(quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+}
+
 #[test]
 fn keyed_row_components_correct_their_position_after_a_sibling_is_removed() {
     let (probe, mut dom, [design, build, deploy]) = mounted_collection_rows();

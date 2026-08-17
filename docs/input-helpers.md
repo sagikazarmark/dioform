@@ -113,6 +113,11 @@ input names update after reordering. The row's hook state lives in the scope tha
 a plain `fn` row helper or an index key hands that state to the wrong item after a removal or a
 reorder; see [Collection Fields](collection-fields.md).
 
+A scope that is not a row may bind a collection item too, and a scope that renders a different item
+than it did last render re-addresses its Parse Blocker to the item it renders now. That drops the
+in-flight raw text and parse error held for the previous item, and the input renders the new item's
+formatted value; see [Collection Fields](collection-fields.md).
+
 ## Parsing Versus Validation
 
 Input Parsing converts rendered input into a typed Field value. Field Validation and Form Validation
