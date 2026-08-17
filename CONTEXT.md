@@ -75,8 +75,12 @@ A **Field Binding** whose addressed **Field** has no value in the **Form Draft**
 _Avoid_: Stale binding, dangling binding, removed row
 
 **Field Ancestry**:
-The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, and selectors for either respond when the other is written.
+The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, selectors, and **Form Listeners** for either respond when the other is written.
 _Avoid_: Path prefix, string match, parent pointer
+
+**Listener Reach**:
+The part of **Field Ancestry** one **Form Listener** surface uses to decide which events reach a listener, chosen per surface to match what the event asserts about the listener's **Field**: value replacement asserts the value at a path was replaced and reaches both directions, while events reporting that something happened *inside* a **Field** reach only outward, from the **Field** the event names to the **Fields** that contain it ([ADR-0028](docs/adr/0028-match-listener-reach-to-what-each-event-asserts.md)).
+_Avoid_: Bubbling, event propagation, subscription filter
 
 **Identity Path Separator**:
 The character reserved to delimit static path segments inside a **Field Identity**, so **Field Ancestry** is decidable from an identity alone and never from a rendered **Field Name**.
@@ -299,7 +303,7 @@ Headless **Dioxus Adapter** behavior that connects application-rendered control 
 _Avoid_: Input component, form component, binding module
 
 **Field Binding Lifecycle Listener**:
-A **Form Listener** scoped to hook-owned **Field Binding** mount and unmount events for one **Field**, independent of whether the listener hook runs before or after the binding hook in the same component.
+A **Form Listener** registered against hook-owned **Field Binding** mount and unmount events for one **Field** and the **Fields** it contains, independent of whether the listener hook runs before or after the binding hook in the same component.
 _Avoid_: Validator, input component lifecycle owner
 
 **Variant Field**:
@@ -343,7 +347,7 @@ Application-owned side-effect behavior registered for semantic form events, dist
 _Avoid_: Validator, observer, input component callback
 
 **Field Listener**:
-A **Form Listener** scoped to one **Field** through a typed **Field Path**.
+A **Form Listener** registered against one **Field** through a typed **Field Path**, reaching the events its surface's **Listener Reach** admits rather than only those naming that **Field** exactly.
 _Avoid_: Field-local validator, Dioxus event handler
 
 **Form Listener Event**:
@@ -846,7 +850,11 @@ Domain expert: No. A **Conditional Field** may be hidden or unmounted without mu
 
 Developer: If a nested object is replaced wholesale, do the fields inside it count as changed?
 
-Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the **Fields** it contains and the **Fields** that contain it: their values, their **Validation Errors**, and their **Stale Submit Errors** all respond.
+Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the **Fields** it contains and the **Fields** that contain it: their values, their **Validation Errors**, their **Stale Submit Errors**, and their value-replacement **Field Listeners** all respond.
+
+Developer: Does a **Blurred Field** work the same way — does blurring a leaf blur the object containing it?
+
+Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, because a blur happened inside them, but none of them becomes a **Blurred Field** and none of them starts showing **Validation Errors** the user never had a chance to fix.
 
 Developer: So a **Stale Submit Error** on a nested object clears when the user edits one leaf inside it?
 

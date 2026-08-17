@@ -180,3 +180,8 @@ Field listeners (`field_listeners`, `debounced_field_callbacks`, `field_blur_cal
 `field_binding_listeners`) resolve callbacks by exact identity and are the same class of defect on a
 different surface. `reset_field` emits no `ValidationChanged` at all. Both are deferred to follow-up
 issues; the predicate this ADR introduces is what makes them cheap to fix.
+
+[ADR-0028](0028-match-listener-reach-to-what-each-event-asserts.md) settles the listener half and
+narrows this paragraph on the fix rather than the diagnosis: the four surfaces are one defect class,
+but they do not take one reach. Value replacement uses this predicate as written; blur and binding
+lifecycle assert containment rather than replacement and reach outward only.
