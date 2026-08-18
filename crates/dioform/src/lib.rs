@@ -5712,22 +5712,30 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     /// form-core state is left unchanged; adapter-owned **Parse Error** and **Raw Input State** are
     /// still cleared.
     ///
-    /// This slice targets direct **Field Paths**. Resetting a whole **Collection Field** or an
-    /// individual collection-item child field is out of scope; use whole-form [`Self::reset`] for
-    /// collections, since a single-field reset does not reconcile collection-item identities or
-    /// item-scoped validator state.
+    /// Resetting a **Collection Field** preserves the identities and mounted binding registrations
+    /// of baseline rows while clearing their item-scoped validator results, **Parse Errors**, and
+    /// **Raw Input State**. Rows added since the baseline are dropped, their identities retired, and
+    /// their parse bindings unregistered. State belonging to other fields and collections is not
+    /// cleared.
     pub fn reset_field<Value>(&self, path: FieldPath<Model, Value>)
     where
         Value: Clone + PartialEq,
     {
         let field = path.identity();
-        self.write_core(|core| core.reset_field(path));
+        let dropped_items = self.write_core(|core| core.reset_field(path));
+        for item in dropped_items {
+            self.unregister_collection_item_parse_bindings(field.clone(), item);
+        }
         let cleared_parse = self.adapter.clear_field_parse_errors(&field);
+        let cleared_item_fields = self.adapter.clear_collection_item_parse_errors(&field);
 
         self.notify_selectors(SelectorTransition::FieldValueChanged(field.clone()));
         self.notify_selectors(SelectorTransition::FieldMetadataChanged(field.clone()));
         if cleared_parse {
-            self.notify_selectors(SelectorTransition::ParseChanged(field));
+            self.notify_selectors(SelectorTransition::ParseChanged(field.clone()));
+        }
+        for item_field in cleared_item_fields {
+            self.notify_selectors(SelectorTransition::ParseChanged(item_field));
         }
 
         // A reset changes validation state well beyond the field it names: it invalidates async

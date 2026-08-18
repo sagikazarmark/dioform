@@ -295,6 +295,13 @@ impl AdapterRuntime {
         self.parse.clear_field_parse_errors(field)
     }
 
+    pub(super) fn clear_collection_item_parse_errors(
+        &self,
+        collection: &FieldIdentity,
+    ) -> Vec<FieldIdentity> {
+        self.parse.clear_collection_item_parse_errors(collection)
+    }
+
     pub(super) fn parse_error(&self, id: ParseBindingId) -> Option<ParseError> {
         self.parse.parse_error(id)
     }

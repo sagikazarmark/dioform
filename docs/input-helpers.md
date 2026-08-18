@@ -134,8 +134,10 @@ check typed values. A failed parse:
 A successful parse updates the typed field through the user update path, clears the binding's Parse
 Error and Parse Blocker, and participates in configured value-change validation.
 
-Reset, reinitialization, and unmounting parsed bindings clear mounted parse state. Unmounting a
-parsed binding unregisters its Parse Blocker without mutating the Form Draft.
+Reset, reinitialization, and unmounting parsed bindings clear mounted parse state. Resetting one
+Collection Field clears the parse state of its retained rows and unregisters parsed bindings for
+rows the reset drops, without touching other collections. Unmounting a parsed binding unregisters
+its Parse Blocker without mutating the Form Draft.
 
 ## Manual Typed Setters
 

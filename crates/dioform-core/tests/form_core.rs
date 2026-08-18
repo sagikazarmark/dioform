@@ -8311,6 +8311,150 @@ fn resetting_the_collection_field_itself_restores_its_baseline_items() {
 }
 
 #[test]
+fn resetting_a_collection_clears_kept_item_validator_results() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let kept = form.collection_items(lines_path())[0].identity();
+    let quantity = line_field_identity(kept, "quantity");
+
+    form.register_sync_collection_item_field_validator(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        |value, _context| {
+            if *value == 0 {
+                vec!["quantity required"]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+    form.set_user_collection_item_field(lines_path(), kept, line_quantity_path(), 0);
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+    assert!(!form.submit_availability().is_available());
+
+    form.reset_field(lines_path());
+
+    assert_eq!(
+        form.collection_item_field_value(lines_path(), kept, line_quantity_path()),
+        Some(&2)
+    );
+    assert!(
+        form.field_validation_errors_by_identity(&quantity)
+            .is_empty()
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Unknown
+    );
+    assert!(form.submit_availability().is_available());
+
+    form.validate_all(ValidationTrigger::Manual);
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Valid
+    );
+}
+
+#[test]
+fn resetting_an_unchanged_collection_clears_item_validator_results() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let kept = form.collection_items(lines_path())[0].identity();
+    let quantity = line_field_identity(kept, "quantity");
+
+    form.register_sync_collection_item_field_validator(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        |_value, _context| vec!["quantity rejected"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+
+    form.reset_field(lines_path());
+
+    assert!(
+        form.field_validation_errors_by_identity(&quantity)
+            .is_empty()
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Unknown
+    );
+}
+
+#[test]
+fn resetting_a_collection_clears_direct_item_validator_results_in_place() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let kept = form.collection_items(lines_path())[0].identity();
+    let quantity = line_field_identity(kept, "quantity");
+
+    form.register_sync_field_identity_validator_for_triggers(
+        quantity.clone(),
+        "direct quantity",
+        ValidationTrigger::Manual,
+        |_model, _context| vec!["quantity rejected"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+
+    form.reset_field(lines_path());
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Unknown
+    );
+    form.validate_all(ValidationTrigger::Manual);
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+}
+
+#[test]
+fn resetting_a_static_field_preserves_unrelated_collection_item_validator_results() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+    let line_name = line_field_identity_for(item, "customer.name");
+
+    form.register_sync_collection_item_field_validator(
+        nested_invoice_lines_path(),
+        line_customer_name_path(),
+        "line name",
+        |_value, _context| vec!["line name rejected"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+    form.set_user_field(nested_customer_path(), nested_customer("Ada"));
+
+    form.reset_field(nested_customer_path());
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&line_name)[0].status(),
+        ValidationStatus::Invalid
+    );
+    assert_eq!(
+        form.field_validation_errors_by_identity(&line_name)[0].error(),
+        &"line name rejected"
+    );
+}
+
+#[test]
 fn clearing_a_collection_that_has_no_baseline_rows_does_not_rewind_its_counter() {
     let mut form = FormCore::new(InvoiceForm { lines: Vec::new() });
     let appended = form.push_user_collection_item(lines_path(), line("Support"));

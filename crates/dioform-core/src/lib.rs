@@ -3416,10 +3416,15 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     /// materialize absent parent values.
     ///
     /// A `Vec<Item>` path reaches this method like any other, and a tracked collection reached that
-    /// way is reset the way [`Self::reset`] resets it: the baseline rows keep their **Collection
-    /// Item Identity**, and the identities of rows added since the baseline are retired along with
-    /// their item-scoped state.
-    pub fn reset_field<Value>(&mut self, path: FieldPath<Model, Value>)
+    /// way is reset the way [`Self::reset`] resets it: baseline rows keep their **Collection Item
+    /// Identity** while their item-scoped validator results are cleared in place, and rows added
+    /// since the baseline are retired along with their item-scoped state. The returned identities
+    /// are the rows that were dropped, so integration layers can release their own item-scoped
+    /// state.
+    pub fn reset_field<Value>(
+        &mut self,
+        path: FieldPath<Model, Value>,
+    ) -> Vec<CollectionItemIdentity>
     where
         Value: Clone + PartialEq,
     {
@@ -3435,7 +3440,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
                 .field_has_validation_state(&field_identity)
             && !self.submission.has_error_for_field(&field_identity)
         {
-            return;
+            return Vec::new();
         }
 
         if !value_matches_baseline {
@@ -3443,15 +3448,18 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             *path.get_mut(self.draft.current_mut()) = baseline;
         }
 
-        self.restore_collection_items_from_baseline(&field_identity);
+        let dropped_collection_items = self.restore_collection_items_from_baseline(&field_identity);
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();
         self.increment_field_version(&field_identity);
         self.validation_chains.clear_field_results(&field_identity);
+        self.validation_chains
+            .clear_collection_item_field_results(&field_identity);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
         self.clear_submit_errors_for_field(&field_identity);
         self.emit_observer_event(FormObserverEvent::FieldReset { field });
+        dropped_collection_items
     }
 }
 
@@ -6376,14 +6384,19 @@ impl<Model, Error> FormCore<Model, Error> {
     /// [`Self::reset_field`] is generic over its value type, so a `Vec<Item>` field path reaches it
     /// and restores the vector value while nothing follows it in the collection's identity state.
     /// A field that is not a tracked collection does not match and passes through untouched.
-    fn restore_collection_items_from_baseline(&mut self, collection: &FieldIdentity) {
+    fn restore_collection_items_from_baseline(
+        &mut self,
+        collection: &FieldIdentity,
+    ) -> Vec<CollectionItemIdentity> {
         let Some(state) = self.field_store.collection_mut(collection) else {
-            return;
+            return Vec::new();
         };
 
-        for item in state.restore_baseline_items() {
+        let dropped_items = state.restore_baseline_items();
+        for item in dropped_items.iter().copied() {
             self.clear_collection_item_state(collection, item);
         }
+        dropped_items
     }
 
     fn ensure_collection_item_validator_states_for_collection(

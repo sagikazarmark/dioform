@@ -114,9 +114,10 @@ The `Model` type is fixed across `reinitialize`, so a static collection path can
 path under an absent optional parent can leave an entry behind, bounded by the number of distinct
 collection paths ever reached rather than growing per reset.
 
-`reset_field` is generic over its value type, so `Value = Vec<Item>` compiles and never touches
-`CollectionState` — the documentation says collections are out of scope there but nothing enforces it.
-A single monotonic counter covers that path without naming it.
+At the time of this decision, `reset_field` was generic over its value type, so `Value = Vec<Item>`
+compiled without touching `CollectionState`; a single monotonic counter still covered that path.
+The later collection-reset support now reconciles `CollectionState`: baseline identities survive and
+identities added after the baseline are retired.
 
 `state_snapshot` builds collection identity state from whatever the field store holds, and
 `ensure_collection_state` is lazy, so a snapshot captured before a collection was ever read carries an

@@ -105,6 +105,13 @@ struct InvoiceCollectionLine {
     quantity: u32,
 }
 
+#[derive(Clone, Debug, Eq, Form, PartialEq)]
+struct ResetScopedCollectionForm {
+    title: String,
+    lines: Vec<InvoiceCollectionLine>,
+    other_lines: Vec<InvoiceCollectionLine>,
+}
+
 #[derive(Clone, Debug, Default, Eq, Form, PartialEq)]
 struct NestedCustomerForm {
     invoice: NestedCustomerInvoice,
@@ -5169,6 +5176,173 @@ fn removing_collection_item_clears_parse_state_and_submit_blocker() {
     );
     assert!(called.get());
     assert_eq!(handle.last_submit_status(), Some(SubmitStatus::Succeeded));
+}
+
+#[test]
+fn resetting_a_collection_clears_kept_and_dropped_item_parse_state() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines_path = InvoiceCollectionForm::fields().lines();
+    let lines = handle.collection(lines_path.clone());
+    let kept = lines.items()[0].clone();
+    let kept_quantity = kept.number(InvoiceCollectionLine::fields().quantity());
+    let dropped = lines.append(InvoiceCollectionLine {
+        description: "Support".to_owned(),
+        quantity: 3,
+    });
+    let dropped_quantity = lines
+        .item(dropped)
+        .expect("appended item should resolve")
+        .number(InvoiceCollectionLine::fields().quantity());
+
+    kept_quantity.on_input("kept-invalid");
+    dropped_quantity.on_input("dropped-invalid");
+    assert_eq!(handle.parse_errors().len(), 2);
+
+    handle.reset_field(lines_path);
+
+    assert_eq!(handle.snapshot(), invoice_collection_form());
+    assert_eq!(kept_quantity.value(), "2");
+    assert!(kept_quantity.parse_error().is_none());
+    assert!(dropped_quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+
+    kept_quantity.on_input("invalid-again");
+    assert_eq!(kept_quantity.value(), "invalid-again");
+    assert!(kept_quantity.parse_error().is_some());
+
+    dropped_quantity.on_input("still-dropped");
+    assert!(dropped_quantity.parse_error().is_none());
+    assert_eq!(handle.parse_errors().len(), 1);
+}
+
+#[test]
+fn resetting_an_unchanged_collection_clears_kept_item_parse_state() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines_path = InvoiceCollectionForm::fields().lines();
+    let quantity = handle.collection(lines_path.clone()).items()[0]
+        .number(InvoiceCollectionLine::fields().quantity());
+
+    quantity.on_input("not-a-number");
+    assert_eq!(handle.snapshot(), invoice_collection_form());
+    assert_eq!(quantity.value(), "not-a-number");
+
+    handle.reset_field(lines_path);
+
+    assert_eq!(handle.snapshot(), invoice_collection_form());
+    assert_eq!(quantity.value(), "2");
+    assert!(quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+}
+
+#[test]
+fn reset_field_preserves_parse_state_outside_the_reset_collection() {
+    let handle = FormHandle::new(ResetScopedCollectionForm {
+        title: "Invoice".to_owned(),
+        lines: vec![InvoiceCollectionLine {
+            description: "Design".to_owned(),
+            quantity: 2,
+        }],
+        other_lines: vec![InvoiceCollectionLine {
+            description: "Review".to_owned(),
+            quantity: 4,
+        }],
+    });
+    let fields = ResetScopedCollectionForm::fields();
+    let title = handle.text(fields.title());
+    let lines = handle.collection(fields.lines());
+    let other_lines = handle.collection(fields.other_lines());
+    let other_quantity = other_lines.items()[0].number(InvoiceCollectionLine::fields().quantity());
+
+    other_quantity.on_input("other-invalid");
+    title.on_input("Changed");
+    handle.reset_field(fields.title());
+
+    assert_eq!(other_quantity.value(), "other-invalid");
+    assert!(other_quantity.parse_error().is_some());
+
+    lines.append(InvoiceCollectionLine {
+        description: "Support".to_owned(),
+        quantity: 1,
+    });
+    handle.reset_field(fields.lines());
+
+    assert_eq!(other_quantity.value(), "other-invalid");
+    assert!(other_quantity.parse_error().is_some());
+    assert_eq!(handle.parse_errors().len(), 1);
+}
+
+struct CollectionResetParseSelectorProbe {
+    form: FormHandle<InvoiceCollectionForm>,
+    first: CollectionParsedTextBinding<InvoiceCollectionForm, InvoiceCollectionLine, u32>,
+    second: CollectionParsedTextBinding<InvoiceCollectionForm, InvoiceCollectionLine, u32>,
+    first_snapshots: RefCell<Vec<bool>>,
+    second_snapshots: RefCell<Vec<bool>>,
+}
+
+impl CollectionResetParseSelectorProbe {
+    fn new() -> Self {
+        let form = FormHandle::new(invoice_collection_form());
+        let lines = form.collection(InvoiceCollectionForm::fields().lines());
+        let items = lines.items();
+        let quantity = InvoiceCollectionLine::fields().quantity();
+
+        Self {
+            form,
+            first: items[0].number(quantity.clone()),
+            second: items[1].number(quantity),
+            first_snapshots: RefCell::new(Vec::new()),
+            second_snapshots: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+fn first_collection_parse_selector_probe(probe: Rc<CollectionResetParseSelectorProbe>) -> Element {
+    probe
+        .first_snapshots
+        .borrow_mut()
+        .push(probe.first.parse_error().is_some());
+    VNode::empty()
+}
+
+fn second_collection_parse_selector_probe(probe: Rc<CollectionResetParseSelectorProbe>) -> Element {
+    probe
+        .second_snapshots
+        .borrow_mut()
+        .push(probe.second.parse_error().is_some());
+    VNode::empty()
+}
+
+#[test]
+fn resetting_a_collection_notifies_each_cleared_item_parse_selector() {
+    let probe = Rc::new(CollectionResetParseSelectorProbe::new());
+    let mut first_dom =
+        VirtualDom::new_with_props(first_collection_parse_selector_probe, Rc::clone(&probe));
+    let mut second_dom =
+        VirtualDom::new_with_props(second_collection_parse_selector_probe, Rc::clone(&probe));
+    first_dom.rebuild_in_place();
+    second_dom.rebuild_in_place();
+
+    probe.first.on_input("first-invalid");
+    probe.second.on_input("second-invalid");
+    first_dom.render_immediate_to_vec();
+    second_dom.render_immediate_to_vec();
+
+    probe
+        .form
+        .reset_field(InvoiceCollectionForm::fields().lines());
+    first_dom.render_immediate_to_vec();
+    second_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.first_snapshots.borrow().as_slice(),
+        [false, true, false]
+    );
+    assert_eq!(
+        probe.second_snapshots.borrow().as_slice(),
+        [false, true, false]
+    );
 }
 
 #[test]

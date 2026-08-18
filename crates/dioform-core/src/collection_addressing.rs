@@ -93,6 +93,12 @@ impl CollectionItemFieldAddress {
             .static_path()
             .is_some_and(|collection| field.is_collection_item_for(collection, item))
     }
+
+    pub fn matches_collection(field: &FieldIdentity, collection: &FieldIdentity) -> bool {
+        collection
+            .static_path()
+            .is_some_and(|collection| field.collection_path() == Some(collection))
+    }
 }
 
 fn collection_item_field_name(collection: &str, index: usize, field: &str) -> String {

@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use super::{
-    CollectionItemIdentity, CollectionState, FieldAncestry, FieldIdentity, FormValidationError,
-    FormValidatorContext, ValidationErrorView, ValidationStatus, ValidationStatusView,
-    ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId,
-    ValidatorSource, validation_lifecycle,
+    CollectionItemFieldAddress, CollectionItemIdentity, CollectionState, FieldAncestry,
+    FieldIdentity, FormValidationError, FormValidatorContext, ValidationErrorView,
+    ValidationStatus, ValidationStatusView, ValidationTarget, ValidationTrigger,
+    ValidationTriggers, ValidatorContext, ValidatorId, ValidatorSource, validation_lifecycle,
 };
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -411,10 +411,32 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         }
     }
 
+    pub(super) fn clear_collection_item_field_results(&mut self, collection: &FieldIdentity) {
+        for (key, validator) in self.field_validators.iter_mut() {
+            if CollectionItemFieldAddress::matches_collection(&key.field, collection) {
+                validator.lifecycle.clear();
+            }
+        }
+
+        for (key, validator) in self.collection_item_field_validator_states.iter_mut() {
+            if CollectionItemFieldAddress::matches_collection(&key.field, collection) {
+                validator.clear();
+            }
+        }
+    }
+
     pub(super) fn field_has_validation_state(&self, field: &FieldIdentity) -> bool {
         self.field_validators.iter().any(|(key, validator)| {
-            &key.field == field && validator.lifecycle.status() != ValidationStatus::Unknown
-        })
+            (&key.field == field
+                || CollectionItemFieldAddress::matches_collection(&key.field, field))
+                && validator.lifecycle.status() != ValidationStatus::Unknown
+        }) || self
+            .collection_item_field_validator_states
+            .iter()
+            .any(|(key, validator)| {
+                CollectionItemFieldAddress::matches_collection(&key.field, field)
+                    && validator.status() != ValidationStatus::Unknown
+            })
     }
 
     pub(super) fn sorted_field_entries(

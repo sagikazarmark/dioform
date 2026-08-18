@@ -10,7 +10,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     mem,
 };
 
@@ -179,6 +179,24 @@ impl ParseState {
             }
         }
         cleared
+    }
+
+    /// Clears parse errors for mounted fields belonging to one collection while retaining their
+    /// bindings, returning each field whose rendered raw state changed.
+    pub(super) fn clear_collection_item_parse_errors(
+        &self,
+        collection: &FieldIdentity,
+    ) -> Vec<FieldIdentity> {
+        let mut changed_fields = BTreeSet::new();
+        for binding in self.bindings.borrow_mut().values_mut() {
+            if CollectionItemFieldAddress::matches_collection(&binding.field, collection)
+                && binding.parse_error.is_some()
+            {
+                binding.parse_error = None;
+                changed_fields.insert(binding.field.clone());
+            }
+        }
+        changed_fields.into_iter().collect()
     }
 
     /// Returns the parse error for one binding, if any.

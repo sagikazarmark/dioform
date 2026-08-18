@@ -62,7 +62,7 @@ Status legend:
 | `swapValues` / `replaceValue` / `clearValues` | `swap` / `replace` (in-place, identity-preserving) / `clear` on `CollectionBinding`, with `_programmatic` variants; item-scoped state follows Collection Item Identity | Implemented |
 | Nested arrays (`items[i].sub[j]`) | Nested Collection Field traversal with nested Collection Item Identity | Tracked [#147] |
 | Developer-managed array item keys | Library-owned Collection Item Identity; metadata follows items through insert/remove/reorder with **no app keys** | Divergent by design (deeper) |
-| `resetField(name)` | Single-field `reset_field(path)`: restores baseline, clears the field's metadata + field-scoped validation + parse state (direct fields; collections use whole-form reset) | Implemented |
+| `resetField(name)` | Single-field `reset_field(path)`: restores baseline and clears the field's metadata, field-scoped validation, and parse state; collection paths also reconcile item identities and clear that collection's item-validator results and parse state | Implemented |
 | (no file model) | First-class File Fields with cardinality + file-aware submit snapshots, stored outside the Form Draft | Divergent by design (beyond TanStack) |
 
 ## State and meta

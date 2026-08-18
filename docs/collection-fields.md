@@ -198,8 +198,11 @@ different row ([ADR-0025](adr/0025-mint-collection-item-identities-from-a-never-
   round trip returns each row to the binding that held it. The counter never drops to the snapshot's
   value: it stays at the higher of the live and restored one, and a live collection the snapshot
   says nothing about has its identities retired rather than renumbered from zero.
-- `reset_field(path)` on the collection's own `Vec<Item>` path behaves like `reset()` for that one
-  collection.
+- `reset_field(path)` on the collection's own `Vec<Item>` path uses `reset()`'s identity
+  reconciliation for that one collection. Baseline rows keep their identities and mounted bindings,
+  while their item-scoped validator results, **Parse Errors**, and **Raw Input State** are cleared.
+  Added rows are dropped, their identities retired, and their parse bindings unregistered. Other
+  collections are untouched.
 
 A snapshot minted by a *different* form instance or process is a documented limitation. Its
 identities come from an unrelated allocator history, so they can collide with live ones and a
