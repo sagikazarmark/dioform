@@ -860,6 +860,10 @@ Developer: Does a **Blurred Field** work the same way — does blurring a leaf b
 
 Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, because a blur happened inside them, but none of them becomes a **Blurred Field** and none of them starts showing **Validation Errors** the user never had a chance to fix.
 
+Developer: A multi-select option control renders under the **Collection Field**'s **Field Name** but represents one selected value. Which one did the user leave?
+
+Domain expert: Both. That element is the rendered control for the **Collection Field** and for the one value it represents, so a blur on it is exact for each. It says nothing about the other selected values, whose controls the user never touched, and blurring one option must not start showing their **Validation Errors** ([ADR-0031](docs/adr/0031-blur-the-multi-select-option-the-user-left.md)).
+
 Developer: So a **Stale Submit Error** on a nested object clears when the user edits one leaf inside it?
 
 Domain expert: Yes. A **Stale Submit Error** is defined against the field value, and editing a leaf changes the containing value. A verdict that must survive edits to the values it was about belongs at form scope.
