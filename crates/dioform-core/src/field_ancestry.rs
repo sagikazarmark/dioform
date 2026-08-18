@@ -61,6 +61,44 @@ impl FieldAncestry {
             },
         }
     }
+
+    /// Returns whether `container` contains `field`, or both identities address the same field.
+    ///
+    /// Unlike [`Self::relates`], this predicate is directional. It supports surfaces whose event
+    /// reports that something happened inside a field without implying the same event happened to
+    /// fields contained by the triggering field.
+    ///
+    /// A static collection identity contains its own collection-item identities even though the
+    /// symmetric relation stays strict at that boundary. This prevents a collection field from
+    /// having less outward reach than a more distant static ancestor while still excluding static
+    /// descendants and sibling collections.
+    pub fn contains(container: &FieldIdentity, field: &FieldIdentity) -> bool {
+        if container == field {
+            return true;
+        }
+
+        match (
+            container.collection_item_parts(),
+            field.collection_item_parts(),
+        ) {
+            (
+                Some((container_collection, container_item, container_field)),
+                Some((field_collection, field_item, field_field)),
+            ) => {
+                container_collection == field_collection
+                    && container_item == field_item
+                    && is_item_field_ancestor(container_field, field_field)
+            }
+            (None, Some((collection, _, _))) => container
+                .static_path()
+                .is_some_and(|path| path == collection || is_static_ancestor(path, collection)),
+            (None, None) => match (container.static_path(), field.static_path()) {
+                (Some(container), Some(field)) => is_static_ancestor(container, field),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 /// Returns whether a path's segments are all non-empty, so the separator delimits real segments.
@@ -156,6 +194,16 @@ mod tests {
     }
 
     #[test]
+    fn static_containment_is_directional() {
+        let customer = FieldIdentity::new("invoice.customer");
+        let name = FieldIdentity::new("invoice.customer.name");
+
+        assert!(FieldAncestry::contains(&customer, &customer));
+        assert!(FieldAncestry::contains(&customer, &name));
+        assert!(!FieldAncestry::contains(&name, &customer));
+    }
+
+    #[test]
     fn static_ancestry_is_anchored_on_the_separator() {
         assert_unrelated(
             &FieldIdentity::new("counterparty"),
@@ -189,6 +237,19 @@ mod tests {
     }
 
     #[test]
+    fn item_field_containment_is_directional_within_one_item() {
+        let customer = FieldIdentity::collection_item("invoice.lines", item(1), "customer");
+        let name = FieldIdentity::collection_item("invoice.lines", item(1), "customer.name");
+
+        assert!(FieldAncestry::contains(&customer, &name));
+        assert!(!FieldAncestry::contains(&name, &customer));
+        assert!(!FieldAncestry::contains(
+            &customer,
+            &FieldIdentity::collection_item("invoice.lines", item(2), "customer.name"),
+        ));
+    }
+
+    #[test]
     fn item_child_fields_do_not_relate_across_items_or_collections() {
         assert_unrelated(
             &FieldIdentity::collection_item("invoice.lines", item(1), "customer"),
@@ -218,6 +279,28 @@ mod tests {
             &FieldIdentity::new("invoice.lines"),
             &FieldIdentity::collection_item_value("invoice.lines", item(1)),
         );
+    }
+
+    #[test]
+    fn a_collection_field_contains_its_own_item_fields_for_directional_reach() {
+        let item_field = FieldIdentity::collection_item("invoice.lines", item(1), "product.name");
+
+        assert!(FieldAncestry::contains(
+            &FieldIdentity::new("invoice.lines"),
+            &item_field,
+        ));
+        assert!(FieldAncestry::contains(
+            &FieldIdentity::new("invoice"),
+            &item_field,
+        ));
+        assert!(!FieldAncestry::contains(
+            &FieldIdentity::new("invoice.lines.product"),
+            &item_field,
+        ));
+        assert!(!FieldAncestry::contains(
+            &FieldIdentity::new("invoice.notes"),
+            &item_field,
+        ));
     }
 
     #[test]

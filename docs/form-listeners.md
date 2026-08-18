@@ -34,7 +34,7 @@ Both directions are the same fact. Writing a Field is a whole-subtree assignment
 
 A listener registered on a Collection Field additionally hears value replacements of its own items' fields, so a listener on `invoice.lines` hears both a pushed row and an edited one. Those item events carry a collection item identity: read `collection_path()` and `collection_item_identity()` to identify the row, not `as_str()`, which is item-relative and returns only the child-field segment. That is also why the exact-identity comparison above does not hold for a listener registered on a Collection Field — it never receives its own static identity for an item write.
 
-Reach belongs to the event rather than to the listener, so it is decided per surface. Form-level listeners are unchanged: they already run for every field. Blur listeners and binding lifecycle listeners report that something happened *inside* a Field rather than that a value was replaced, so they do not take this reach and currently still dispatch on exact Field Identity.
+Reach belongs to the event rather than to the listener, so it is decided per surface. Form-level listeners are unchanged: they already run for every field. Blur listeners and binding lifecycle listeners report that something happened *inside* a Field rather than that a value was replaced. Blur listeners therefore reach outward only, while binding lifecycle listeners currently still dispatch on exact Field Identity.
 
 ## Form-Level Listeners
 
@@ -44,7 +44,13 @@ Form-level listener context exposes the `FormHandle`, the triggering `FieldIdent
 
 ## Blur Listeners
 
-Use `use_field_blur_listener(form, path, listener)` when a side effect should run after one field is marked blurred. Use `use_form_blur_listener(form, listener)` when one listener should observe blur events for every field in the form, including direct collection item fields. Field blur listener context exposes the `FormHandle` and triggering `FieldIdentity`. Form blur listener context exposes the `FormHandle`, triggering `FieldIdentity`, and rendered field name. Blur listeners do not expose field values by default.
+Use `use_field_blur_listener(form, path, listener)` when a side effect should run after that Field or a Field it contains is marked blurred. Reach is outward only: a listener on `invoice.customer` hears a blur of `invoice.customer.name`, while a listener on `invoice.customer.name` does not hear a blur of `invoice.customer`. A Collection Field listener hears blurs inside its own items, but sibling collections and static descendants of the collection path do not. The Identity Path Separator anchors the boundary, so a blur of `counterparty_account.name` does not reach a listener on `counterparty`.
+
+Each triggering blur produces one callback. Moving focus between two children of the same container therefore runs the container listener twice; the listener does not debounce or synthesize a single "left the container" event.
+
+Field blur listener context exposes the `FormHandle`, the triggering `FieldIdentity`, the listener's registered `FieldIdentity`, and accessors that distinguish a direct blur from a contained Field's blur. `field_identity()` always returns the triggering identity. Blur and touched metadata stay exact: inside a container listener reached by a child blur, `is_field_blurred(container)` and `is_field_touched(container)` remain `false` unless the container itself was separately marked. Blur listeners do not expose field values by default.
+
+Use `use_form_blur_listener(form, listener)` when one listener should observe blur events for every field in the form, including direct collection item fields. Form blur listener context exposes the `FormHandle`, triggering `FieldIdentity`, and rendered field name.
 
 ## Binding Lifecycle Listeners
 
@@ -114,6 +120,8 @@ Field Listeners do not participate in Submit Availability and Submit Listeners d
 ## Reentry
 
 Listeners can create cycles if they write fields that trigger the same listener again. Dioform detects same-callback reentry and panics with a listener-specific message rather than exposing an internal borrow failure. Prefer origin-filtered listeners for user-driven side effects, especially when a listener writes back to the same field or to a field with another listener.
+
+Field blur listeners use the same reentry protection. A blur callback that causes another blur at or below its registered Field panics; there is no origin-filtered blur-listener variant that can opt out of listener-caused events.
 
 Listener Reach widens what counts as a cycle. A listener on a container that resets one of its own fields writes inside its own reach and so re-enters itself, which is the common dependent-field reset written against a container instead of a leaf. Use `use_field_listener_for_origin(..., FieldUpdateOrigin::User, ...)`: listener-caused writes are Programmatic Updates, so the origin filter resolves it. Dioform does not silently drop the second dispatch — a dropped side effect on a surface whose job is autosave or audit is worse than a development-time panic.
 

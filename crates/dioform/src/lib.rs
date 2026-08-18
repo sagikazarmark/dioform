@@ -249,6 +249,16 @@ pub fn use_debounced_field_listener_for_origin<Model, Value, Error, DelayFactory
 }
 
 /// Registers a field-scoped listener for blur events during this component's lifetime.
+///
+/// The listener runs when `path` blurs and when any **Field** contained by `path` blurs. It does not
+/// run when a **Field** containing `path` blurs. Each child blur is a separate event, including when
+/// focus moves between children of the same container.
+///
+/// [`FieldBlurListenerContext::field_identity`] reports the triggering **Field**. Its direct and
+/// contained-field accessors distinguish that identity from the listener's `path`. Blur and touched
+/// metadata stay exact, so a callback reached by a child blur can observe that `path` itself is not
+/// blurred or touched. A callback that causes another blur in its own reach re-enters and panics;
+/// this surface has no origin-filtered variant.
 pub fn use_field_blur_listener<Model, Value, Error, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -2822,6 +2832,10 @@ type DebouncedFieldListenerSchedule<Model, Error> =
 type FieldBlurListenerId = u64;
 type FieldBlurListenerCallback<Model, Error> =
     Box<dyn FnMut(FieldBlurListenerContext<Model, Error>) + 'static>;
+struct FieldBlurListenerDispatch<Model, Error> {
+    listener_field: FieldIdentity,
+    callback: Rc<RefCell<FieldBlurListenerCallback<Model, Error>>>,
+}
 type FieldBindingListenerId = u64;
 type FieldBindingListenerCallback<Model, Error> =
     Box<dyn FnMut(FieldBindingListenerContext<Model, Error>) + 'static>;
@@ -3006,15 +3020,12 @@ const MAX_LISTENER_CAUSED_DEBOUNCED_RUNS: u32 = 16;
 /// its own items' fields, which it would otherwise miss while hearing structure mutations, leaving
 /// the nearer registration with strictly less than a listener on an enclosing **Field**.
 ///
-/// The widening lives in this filter rather than in [`FieldAncestry`], which selectors and
-/// validators depend on staying strict, and rather than in a second identity co-dispatched at each
-/// write site, which would relate every static descendant of the collection path downward to its
-/// items. See ADR-0028.
+/// The widening comes from directional [`FieldAncestry::contains`], while symmetric
+/// [`FieldAncestry::relates`] stays strict for selectors and validators. Keeping it in the
+/// directional predicate avoids a second identity co-dispatched at each write site, which would
+/// relate every static descendant of the collection path downward to its items. See ADR-0028.
 fn value_replacement_reaches(listener: &FieldIdentity, written: &FieldIdentity) -> bool {
-    FieldAncestry::relates(listener, written)
-        || written
-            .collection_path()
-            .is_some_and(|collection| listener.static_path() == Some(collection))
+    FieldAncestry::relates(listener, written) || FieldAncestry::contains(listener, written)
 }
 
 fn bump_debounced_generation(generation: &Cell<u64>) -> u64 {
@@ -3470,11 +3481,14 @@ impl<Model, Error> FormListeners<Model, Error> {
     fn field_blur_callbacks(
         &self,
         field: &FieldIdentity,
-    ) -> Vec<Rc<RefCell<FieldBlurListenerCallback<Model, Error>>>> {
+    ) -> Vec<FieldBlurListenerDispatch<Model, Error>> {
         self.field_blur_listeners
             .iter()
-            .filter(|listener| &listener.field == field)
-            .map(|listener| Rc::clone(&listener.callback))
+            .filter(|listener| FieldAncestry::contains(&listener.field, field))
+            .map(|listener| FieldBlurListenerDispatch {
+                listener_field: listener.field.clone(),
+                callback: Rc::clone(&listener.callback),
+            })
             .collect()
     }
 
@@ -3836,8 +3850,11 @@ impl<Model, Error> FieldListenerContext<Model, Error> {
 }
 
 /// Context supplied to a field blur listener callback.
+///
+/// The triggering field may be the field the listener registered on or a field contained by it.
 pub struct FieldBlurListenerContext<Model, Error = String> {
     form: FormHandle<Model, Error>,
+    listener_field: FieldIdentity,
     field: FieldIdentity,
 }
 
@@ -3850,6 +3867,22 @@ impl<Model, Error> FieldBlurListenerContext<Model, Error> {
     /// Returns the field whose blur event triggered this listener.
     pub fn field_identity(&self) -> FieldIdentity {
         self.field.clone()
+    }
+
+    /// Returns the field identity this listener was registered on.
+    pub fn listener_field_identity(&self) -> FieldIdentity {
+        self.listener_field.clone()
+    }
+
+    /// Returns whether the listener's own field produced the blur event.
+    pub fn is_direct_blur(&self) -> bool {
+        self.listener_field == self.field
+    }
+
+    /// Returns whether a field contained by the listener's field produced the blur event.
+    pub fn is_contained_field_blur(&self) -> bool {
+        self.listener_field != self.field
+            && FieldAncestry::contains(&self.listener_field, &self.field)
     }
 }
 
@@ -6552,12 +6585,13 @@ impl<Model, Error> FormHandle<Model, Error> {
     fn dispatch_field_blur_listeners(&self, field: FieldIdentity) {
         let callbacks = self.listeners.borrow().field_blur_callbacks(&field);
 
-        for callback in callbacks {
+        for dispatch in callbacks {
             let context = FieldBlurListenerContext {
                 form: self.clone(),
+                listener_field: dispatch.listener_field,
                 field: field.clone(),
             };
-            let Ok(mut callback) = callback.try_borrow_mut() else {
+            let Ok(mut callback) = dispatch.callback.try_borrow_mut() else {
                 panic!(
                     "field blur listener re-entered while it was already running; avoid \
                      listener-caused blur cycles"

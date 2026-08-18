@@ -126,6 +126,7 @@ struct NestedCustomerInvoice {
 #[derive(Clone, Debug, Default, Eq, Form, PartialEq)]
 struct NestedCustomer {
     name: String,
+    tax_id: String,
 }
 
 fn nested_customer_path() -> FieldPath<NestedCustomerForm, NestedCustomer> {
@@ -136,6 +137,10 @@ fn nested_customer_path() -> FieldPath<NestedCustomerForm, NestedCustomer> {
 
 fn nested_customer_name_path() -> FieldPath<NestedCustomerForm, String> {
     nested_customer_path().join(NestedCustomer::fields().name())
+}
+
+fn nested_customer_tax_id_path() -> FieldPath<NestedCustomerForm, String> {
+    nested_customer_path().join(NestedCustomer::fields().tax_id())
 }
 
 fn nested_customer_account_path() -> FieldPath<NestedCustomerForm, NestedCustomer> {
@@ -151,6 +156,7 @@ fn nested_customer_account_name_path() -> FieldPath<NestedCustomerForm, String> 
 fn nested_customer(name: &str) -> NestedCustomer {
     NestedCustomer {
         name: name.to_owned(),
+        tax_id: String::new(),
     }
 }
 
@@ -262,6 +268,30 @@ fn nested_invoice_collection_form() -> NestedInvoiceCollectionForm {
             }],
         },
     }
+}
+
+fn reset_scoped_collection_form() -> ResetScopedCollectionForm {
+    ResetScopedCollectionForm {
+        title: "Invoice".to_owned(),
+        lines: vec![InvoiceCollectionLine {
+            description: "Design".to_owned(),
+            quantity: 2,
+        }],
+        other_lines: vec![InvoiceCollectionLine {
+            description: "Review".to_owned(),
+            quantity: 4,
+        }],
+    }
+}
+
+/// A static path below `lines`, which must not receive an item field's blur event.
+fn below_reset_lines_path() -> FieldPath<ResetScopedCollectionForm, String> {
+    FieldPath::direct(
+        FieldIdentity::new("lines.description"),
+        "lines.description",
+        |form| &form.lines[0].description,
+        |form| &mut form.lines[0].description,
+    )
 }
 
 struct AsyncGate<T> {
@@ -488,6 +518,23 @@ struct NestedFieldListenerProbe {
 }
 
 #[derive(Default)]
+struct NestedBlurListenerProbe {
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    customer_events: RefCell<Vec<FieldBlurReachEvent>>,
+    name_events: RefCell<Vec<FieldIdentity>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct FieldBlurReachEvent {
+    triggering_field: FieldIdentity,
+    listener_field: FieldIdentity,
+    is_direct: bool,
+    is_contained: bool,
+    listener_is_blurred: bool,
+    listener_is_touched: bool,
+}
+
+#[derive(Default)]
 struct NestedContainerWriteProbe {
     handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
     listener_runs: Cell<usize>,
@@ -530,6 +577,15 @@ struct CollectionBlurListenerProbe {
     description:
         RefCell<Option<CollectionTextBinding<InvoiceCollectionForm, InvoiceCollectionLine>>>,
     events: RefCell<Vec<(String, String, Option<String>)>>,
+}
+
+#[derive(Default)]
+struct CollectionFieldBlurReachProbe {
+    description:
+        RefCell<Option<CollectionTextBinding<ResetScopedCollectionForm, InvoiceCollectionLine>>>,
+    lines_events: RefCell<Vec<FieldIdentity>>,
+    other_lines_events: RefCell<Vec<FieldIdentity>>,
+    below_lines_events: RefCell<Vec<FieldIdentity>>,
 }
 
 #[derive(Default)]
@@ -820,6 +876,54 @@ fn field_blur_listener_dependent_reset_probe(probe: Rc<FieldListenerProbe>) -> E
     VNode::empty()
 }
 
+fn nested_field_blur_listener_probe(probe: Rc<NestedBlurListenerProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+    let name_probe = Rc::clone(&probe);
+
+    use_field_blur_listener(form.clone(), nested_customer_path(), move |context| {
+        listener_probe
+            .customer_events
+            .borrow_mut()
+            .push(FieldBlurReachEvent {
+                triggering_field: context.field_identity(),
+                listener_field: context.listener_field_identity(),
+                is_direct: context.is_direct_blur(),
+                is_contained: context.is_contained_field_blur(),
+                listener_is_blurred: context.form().is_field_blurred(nested_customer_path()),
+                listener_is_touched: context.form().is_field_touched(nested_customer_path()),
+            });
+    });
+    use_field_blur_listener(form.clone(), nested_customer_name_path(), move |context| {
+        name_probe
+            .name_events
+            .borrow_mut()
+            .push(context.field_identity());
+    });
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn nested_field_blur_reentry_probe(probe: Rc<NestedContainerWriteProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_blur_listener(form.clone(), nested_customer_path(), move |context| {
+        listener_probe
+            .listener_runs
+            .set(listener_probe.listener_runs.get() + 1);
+        context
+            .form()
+            .mark_field_blurred(nested_customer_name_path());
+    });
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
 fn form_blur_listener_field_identification_probe(probe: Rc<FormListenerProbe>) -> Element {
     let form = use_form_handle(|| {
         FormHandle::new(ProfileForm {
@@ -861,6 +965,48 @@ fn collection_item_form_blur_listener_probe(probe: Rc<CollectionBlurListenerProb
 
     let lines = form.collection(InvoiceCollectionForm::fields().lines());
     let description = lines.items()[0].text(InvoiceCollectionLine::fields().description());
+    probe.description.borrow_mut().replace(description);
+
+    VNode::empty()
+}
+
+fn collection_field_blur_listener_probe(probe: Rc<CollectionFieldBlurReachProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(reset_scoped_collection_form()));
+    let lines_probe = Rc::clone(&probe);
+    let other_lines_probe = Rc::clone(&probe);
+    let below_lines_probe = Rc::clone(&probe);
+
+    use_field_blur_listener(
+        form.clone(),
+        ResetScopedCollectionForm::fields().lines(),
+        move |context| {
+            lines_probe
+                .lines_events
+                .borrow_mut()
+                .push(context.field_identity());
+        },
+    );
+    use_field_blur_listener(
+        form.clone(),
+        ResetScopedCollectionForm::fields().other_lines(),
+        move |context| {
+            other_lines_probe
+                .other_lines_events
+                .borrow_mut()
+                .push(context.field_identity());
+        },
+    );
+    use_field_blur_listener(form.clone(), below_reset_lines_path(), move |context| {
+        below_lines_probe
+            .below_lines_events
+            .borrow_mut()
+            .push(context.field_identity());
+    });
+
+    let description = form
+        .collection(ResetScopedCollectionForm::fields().lines())
+        .items()[0]
+        .text(InvoiceCollectionLine::fields().description());
     probe.description.borrow_mut().replace(description);
 
     VNode::empty()
@@ -2176,6 +2322,102 @@ fn field_blur_listener_can_reset_dependent_field_after_blur() {
 }
 
 #[test]
+fn field_blur_listener_on_a_container_hears_each_nested_child_without_widening_metadata() {
+    let probe = Rc::new(NestedBlurListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_field_blur_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.text(nested_customer_name_path()).on_blur();
+    handle.text(nested_customer_tax_id_path()).on_blur();
+
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        [
+            FieldBlurReachEvent {
+                triggering_field: FieldIdentity::new("invoice.customer.name"),
+                listener_field: FieldIdentity::new("invoice.customer"),
+                is_direct: false,
+                is_contained: true,
+                listener_is_blurred: false,
+                listener_is_touched: false,
+            },
+            FieldBlurReachEvent {
+                triggering_field: FieldIdentity::new("invoice.customer.tax_id"),
+                listener_field: FieldIdentity::new("invoice.customer"),
+                is_direct: false,
+                is_contained: true,
+                listener_is_blurred: false,
+                listener_is_touched: false,
+            },
+        ]
+    );
+    assert_eq!(
+        probe.name_events.borrow().as_slice(),
+        [FieldIdentity::new("invoice.customer.name")]
+    );
+    assert!(!handle.is_field_blurred(nested_customer_path()));
+    assert!(!handle.is_field_touched(nested_customer_path()));
+
+    handle.text(nested_customer_account_name_path()).on_blur();
+
+    assert_eq!(probe.customer_events.borrow().len(), 2);
+}
+
+#[test]
+fn field_blur_listener_on_a_leaf_does_not_hear_a_containing_field_blur() {
+    let probe = Rc::new(NestedBlurListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_field_blur_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.mark_field_blurred(nested_customer_path());
+
+    assert!(probe.name_events.borrow().is_empty());
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        [FieldBlurReachEvent {
+            triggering_field: FieldIdentity::new("invoice.customer"),
+            listener_field: FieldIdentity::new("invoice.customer"),
+            is_direct: true,
+            is_contained: false,
+            listener_is_blurred: true,
+            listener_is_touched: true,
+        }]
+    );
+}
+
+#[test]
+#[should_panic(expected = "field blur listener re-entered while it was already running")]
+fn field_blur_listener_reentry_through_a_contained_field_still_panics() {
+    let probe = Rc::new(NestedContainerWriteProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_field_blur_reentry_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .mark_field_blurred(nested_customer_name_path());
+}
+
+#[test]
 fn form_blur_listener_identifies_blurred_field_without_default_values() {
     let probe = Rc::new(FormListenerProbe::default());
     let mut dom = VirtualDom::new_with_props(
@@ -2303,6 +2545,30 @@ fn form_blur_listener_reports_collection_item_field_blur() {
             Some("lines".to_owned()),
         )]
     );
+}
+
+#[test]
+fn collection_field_blur_listener_hears_its_item_but_siblings_and_descendants_do_not() {
+    let probe = Rc::new(CollectionFieldBlurReachProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(collection_field_blur_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    probe
+        .description
+        .borrow()
+        .as_ref()
+        .expect("probe should expose the collection item description binding")
+        .on_blur();
+
+    let lines_events = probe.lines_events.borrow();
+
+    assert_eq!(lines_events.len(), 1);
+    assert_eq!(lines_events[0].collection_path(), Some("lines"));
+    assert_eq!(lines_events[0].as_str(), "description");
+    assert!(probe.other_lines_events.borrow().is_empty());
+    assert!(probe.below_lines_events.borrow().is_empty());
 }
 
 #[test]
