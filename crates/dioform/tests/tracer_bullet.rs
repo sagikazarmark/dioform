@@ -7015,6 +7015,38 @@ fn field_value_selectors_do_not_rerender_unrelated_field_readers() {
     assert_eq!(probe.terms_values.borrow().as_slice(), [false, true]);
 }
 
+/// A selector registration is created by a reactive read and never by a write (ADR-0029), so a
+/// write to a field nothing has read has no reader to wake. The reader that mounts afterwards must
+/// still see what that write left behind, and must wake on the next write like any other reader.
+#[test]
+fn a_field_reader_mounting_after_a_write_nothing_had_read_sees_it_and_wakes_on_the_next_write() {
+    let probe = Rc::new(FieldSelectorProbe::new());
+
+    probe
+        .form
+        .set_user_field(ProfileForm::fields().email(), "ada@example.com".to_owned());
+
+    let mut email_dom = VirtualDom::new_with_props(email_value_selector_probe, Rc::clone(&probe));
+
+    email_dom.rebuild_in_place();
+
+    assert_eq!(
+        probe.email_values.borrow().as_slice(),
+        ["ada@example.com".to_owned()]
+    );
+
+    probe.form.set_user_field(
+        ProfileForm::fields().email(),
+        "grace@example.com".to_owned(),
+    );
+    email_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.email_values.borrow().as_slice(),
+        ["ada@example.com".to_owned(), "grace@example.com".to_owned()]
+    );
+}
+
 struct NestedFieldSelectorProbe {
     form: FormHandle<NestedCustomerForm>,
     customer_values: RefCell<Vec<NestedCustomer>>,
@@ -7176,6 +7208,44 @@ fn collection_item_value_selectors_rerender_when_a_field_containing_the_collecti
     assert_eq!(
         probe.product_name_values.borrow().as_slice(),
         ["Keyboard".to_owned(), "Mouse".to_owned()]
+    );
+}
+
+/// The same holds one **Field Ancestry** hop away from the write: the blind write addresses a
+/// collection-item child, and the write the mounted reader must wake on addresses the field
+/// containing the **Collection Field**, which never resolves the item's identity itself. It is the
+/// containing field rather than the collection field because **Field Ancestry** is strict between a
+/// collection and its own items.
+#[test]
+fn a_collection_item_reader_mounting_after_a_write_nothing_had_read_wakes_through_field_ancestry() {
+    let probe = Rc::new(NestedCollectionItemSelectorProbe::new());
+
+    probe.product_name.set_value("Mouse");
+
+    let mut product_name_dom = VirtualDom::new_with_props(
+        nested_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+
+    product_name_dom.rebuild_in_place();
+
+    assert_eq!(probe.product_name_values.borrow().as_slice(), ["Mouse"]);
+
+    probe.form.set_user_field(
+        NestedInvoiceCollectionForm::fields().invoice(),
+        NestedInvoice {
+            lines: vec![NestedInvoiceLine {
+                product: NestedProduct {
+                    name: "Trackball".to_owned(),
+                },
+            }],
+        },
+    );
+    product_name_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.product_name_values.borrow().as_slice(),
+        ["Mouse".to_owned(), "Trackball".to_owned()]
     );
 }
 

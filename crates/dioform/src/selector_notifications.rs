@@ -1,6 +1,8 @@
+use std::{collections::HashSet, hash::Hash};
+
 use dioform_core::__private::FieldAncestry;
 
-use super::{FieldIdentity, FormReactivity};
+use super::{FieldIdentity, FieldReactivity, FormReactivity, ReactiveSubscribers};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum SelectorTransition {
@@ -24,7 +26,7 @@ pub(super) enum SelectorTransition {
     ParseChanged(FieldIdentity),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum SelectorNotification {
     WholeForm,
     Snapshot,
@@ -193,26 +195,28 @@ impl SelectorTransition {
     /// Assembles a transition that is composed of several simpler ones over the same write.
     ///
     /// The legs are deduplicated against each other because they overlap by construction. The
-    /// ancestry expansion runs after them and outside [`extend_unique`]: it is the only part that
-    /// scales with the number of tracked identities, and `extend_unique` is a linear scan per item.
+    /// ancestry expansion runs after them and outside the dedup: it emits the value selector of
+    /// tracked identities other than the written ones, which no leg emits, so it cannot repeat
+    /// anything already collected.
     fn composite_notifications(
         legs: impl IntoIterator<Item = Vec<SelectorNotification>>,
         tracked_fields: impl IntoIterator<Item = FieldIdentity>,
         written: &[FieldIdentity],
     ) -> Vec<SelectorNotification> {
         let tracked_fields: Vec<_> = tracked_fields.into_iter().collect();
-        let mut notifications = Vec::new();
+        let mut notifications = UniqueList::new();
 
         for leg in legs {
-            extend_unique(&mut notifications, leg);
+            notifications.extend(leg);
         }
 
-        extend_unique(
-            &mut notifications,
-            Self::ValidationChanged.selector_notifications(tracked_fields.iter().cloned()),
-        );
-        extend_field_value_ancestry(&mut notifications, tracked_fields, written);
         notifications
+            .extend(Self::ValidationChanged.selector_notifications(tracked_fields.iter().cloned()));
+
+        let mut assembled = notifications.into_items();
+
+        extend_field_value_ancestry(&mut assembled, tracked_fields, written);
+        assembled
     }
 }
 
@@ -223,10 +227,10 @@ impl SelectorTransition {
 /// those here would add a redundant second wake on the write path; metadata and parse errors are
 /// scoped to the written field by the write itself.
 ///
-/// Expansion filters the identities that are *already* tracked. It must never derive ancestors by
-/// splitting the written path and notifying them, because looking a field up in the reactivity map
-/// inserts it, which would grow that map with identities nothing ever read. The written fields
-/// themselves are skipped: their value selectors are already in `notifications`.
+/// Expansion filters the identities that are *already* registered rather than deriving ancestors
+/// by splitting the written path: an identity nothing has read reactively has no subscriber to
+/// wake, so naming it would only lengthen the emitted sequence. The written fields themselves are
+/// skipped: their value selectors are already in `notifications`.
 fn extend_field_value_ancestry(
     notifications: &mut Vec<SelectorNotification>,
     tracked_fields: impl IntoIterator<Item = FieldIdentity>,
@@ -246,14 +250,37 @@ fn extend_field_value_ancestry(
     }
 }
 
-fn extend_unique(
-    notifications: &mut Vec<SelectorNotification>,
-    new_notifications: impl IntoIterator<Item = SelectorNotification>,
-) {
-    for notification in new_notifications {
-        if !notifications.contains(&notification) {
-            notifications.push(notification);
+/// An append-only list that skips values it already holds, keeping them in encounter order.
+///
+/// Membership is answered by a set kept alongside the list rather than by scanning it. The
+/// `ValidationChanged` leg of a composite transition contributes two notifications per registered
+/// identity, so a scan makes assembly quadratic in that count on every collection-item write.
+///
+/// It is generic over its item type only so that cost can be asserted: comparisons are what a scan
+/// spends, and a `SelectorNotification` cannot count its own.
+struct UniqueList<T> {
+    items: Vec<T>,
+    seen: HashSet<T>,
+}
+
+impl<T: Clone + Eq + Hash> UniqueList<T> {
+    fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            seen: HashSet::new(),
         }
+    }
+
+    fn extend(&mut self, values: impl IntoIterator<Item = T>) {
+        for value in values {
+            if self.seen.insert(value.clone()) {
+                self.items.push(value);
+            }
+        }
+    }
+
+    fn into_items(self) -> Vec<T> {
+        self.items
     }
 }
 
@@ -280,29 +307,183 @@ impl FormReactivity {
                 self.visible_form_validation_errors.notify_changed();
             }
             SelectorNotification::ParseErrors => self.parse_errors.notify_changed(),
-            SelectorNotification::FieldValue(field) => self.field(&field).value.notify_changed(),
+            SelectorNotification::FieldValue(field) => {
+                self.notify_registered_field(&field, |reactivity| &reactivity.value);
+            }
             SelectorNotification::FieldMetadata(field) => {
-                self.field(&field).metadata.notify_changed();
+                self.notify_registered_field(&field, |reactivity| &reactivity.metadata);
             }
             SelectorNotification::FieldValidationErrors(field) => {
-                self.field(&field).validation_errors.notify_changed();
+                self.notify_registered_field(&field, |reactivity| &reactivity.validation_errors);
             }
             SelectorNotification::VisibleFieldValidationErrors(field) => {
-                self.field(&field)
-                    .visible_validation_errors
-                    .notify_changed();
+                self.notify_registered_field(&field, |reactivity| {
+                    &reactivity.visible_validation_errors
+                });
             }
             SelectorNotification::FieldParseErrors(field) => {
-                self.field(&field).parse_errors.notify_changed();
+                self.notify_registered_field(&field, |reactivity| &reactivity.parse_errors);
             }
-            SelectorNotification::AllFieldSelectors(field) => self.field(&field).notify_all(),
+            SelectorNotification::AllFieldSelectors(field) => {
+                if let Some(reactivity) = self.registered_field(&field) {
+                    reactivity.notify_all();
+                }
+            }
+        }
+    }
+
+    /// Wakes one of a field's selectors, doing nothing when the field has no registration.
+    ///
+    /// A subscriber is added only by a reactive read, which registers the field first, so a field
+    /// with no registration provably has no subscriber this notification could have missed. A
+    /// reader mounting afterwards registers the field on its own read and reads current state
+    /// (ADR-0029).
+    ///
+    /// This is the notifying counterpart of [`FormReactivity::track_field`] and takes the same
+    /// selector accessor, so the two sides of one selector are named the same way.
+    fn notify_registered_field(
+        &self,
+        field: &FieldIdentity,
+        selector: impl FnOnce(&FieldReactivity) -> &ReactiveSubscribers,
+    ) {
+        if let Some(reactivity) = self.registered_field(field) {
+            selector(&reactivity).notify_changed();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, hash::Hasher, rc::Rc};
+
     use super::*;
+
+    /// A stand-in notification that counts how many times it is compared for equality.
+    ///
+    /// Equality is what a dedup backed by a scan spends its time on, and it is invisible to the
+    /// assertions over emitted notifications, which are identical either way.
+    #[derive(Clone, Debug, Eq)]
+    struct CountedNotification {
+        value: usize,
+        comparisons: Rc<Cell<usize>>,
+    }
+
+    impl PartialEq for CountedNotification {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons.set(self.comparisons.get() + 1);
+            self.value == other.value
+        }
+    }
+
+    impl Hash for CountedNotification {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.value.hash(state);
+        }
+    }
+
+    /// How many comparisons per item a constant-cost dedup is allowed. A set answers membership in
+    /// about one comparison per repeated item; a scan needs half the collected length per item,
+    /// which over [`DEDUPLICATED_ITEMS`] items exceeds this by two orders of magnitude.
+    const COMPARISONS_PER_ITEM: usize = 4;
+
+    /// Enough items that a quadratic dedup separates from a constant-cost one by a wide margin.
+    const DEDUPLICATED_ITEMS: usize = 512;
+
+    /// A collection-item write feeds two notifications per registered identity through the dedup,
+    /// so a membership test that scans what is already collected makes assembly quadratic in that
+    /// count on every keystroke in a collection row.
+    #[test]
+    fn deduplicating_notifications_costs_a_bounded_number_of_comparisons_per_item() {
+        let comparisons = Rc::new(Cell::new(0));
+        let counted = |value| CountedNotification {
+            value,
+            comparisons: Rc::clone(&comparisons),
+        };
+
+        let mut unique = UniqueList::new();
+
+        unique.extend((0..DEDUPLICATED_ITEMS).map(counted));
+        unique.extend((0..DEDUPLICATED_ITEMS).map(counted));
+
+        assert_eq!(
+            unique
+                .into_items()
+                .iter()
+                .map(|notification| notification.value)
+                .collect::<Vec<_>>(),
+            (0..DEDUPLICATED_ITEMS).collect::<Vec<_>>(),
+            "the dedup keeps encounter order and drops repeats"
+        );
+        assert!(
+            comparisons.get() <= COMPARISONS_PER_ITEM * DEDUPLICATED_ITEMS,
+            "deduplicating {DEDUPLICATED_ITEMS} items took {} comparisons, which is more than a \
+             constant per item",
+            comparisons.get()
+        );
+    }
+
+    #[test]
+    fn deduplicating_notifications_appends_in_encounter_order() {
+        let mut unique = UniqueList::new();
+
+        unique.extend([
+            SelectorNotification::Submit,
+            SelectorNotification::WholeForm,
+            SelectorNotification::Submit,
+        ]);
+        unique.extend([
+            SelectorNotification::WholeForm,
+            SelectorNotification::ParseErrors,
+        ]);
+
+        assert_eq!(
+            unique.into_items(),
+            vec![
+                SelectorNotification::Submit,
+                SelectorNotification::WholeForm,
+                SelectorNotification::ParseErrors,
+            ]
+        );
+    }
+
+    /// Assembles a collection-item write against the written identities plus `children` registered
+    /// child fields of the same collection.
+    fn collection_item_write_notifications(children: usize) -> Vec<SelectorNotification> {
+        let collection = FieldIdentity::new("lines");
+        let field = FieldIdentity::new("lines.description");
+        let registered: Vec<_> = [collection.clone(), field.clone()]
+            .into_iter()
+            .chain((0..children).map(|index| FieldIdentity::new(format!("lines.child{index}"))))
+            .collect();
+
+        SelectorTransition::CollectionItemFieldValueChanged { collection, field }
+            .selector_notifications(registered)
+    }
+
+    /// Each registered identity must cost the emitted sequence the same fixed number of
+    /// notifications however many are already registered, and none of them twice. A dedup that
+    /// scaled with what it had already collected would still emit this sequence, so the comparison
+    /// bound above is what pins its cost; this pins the sequence the bound is allowed to assume.
+    #[test]
+    fn a_collection_item_write_emits_a_fixed_number_of_notifications_per_registered_identity() {
+        let none = collection_item_write_notifications(0);
+        let some = collection_item_write_notifications(DEDUPLICATED_ITEMS);
+        let twice_as_many = collection_item_write_notifications(2 * DEDUPLICATED_ITEMS);
+
+        assert_eq!(
+            twice_as_many.len() - some.len(),
+            some.len() - none.len(),
+            "the notifications one registered identity adds depend on how many came before it"
+        );
+
+        let unique: HashSet<_> = twice_as_many.iter().collect();
+
+        assert_eq!(
+            unique.len(),
+            twice_as_many.len(),
+            "a notification is emitted more than once"
+        );
+    }
 
     #[test]
     fn field_value_change_maps_to_form_and_field_notifications() {

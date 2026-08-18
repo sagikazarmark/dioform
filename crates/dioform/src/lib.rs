@@ -1971,6 +1971,20 @@ impl ReactiveSubscribers {
             self.subscribers.remove(&subscriber);
         }
     }
+
+    /// Counts the reactive scopes subscribed to this selector.
+    ///
+    /// `Subscribers::visit` runs its closure zero times on a poisoned lock, which is
+    /// indistinguishable from an empty list. Only the registration invariant test reads this, and
+    /// it asserts a non-zero count, so that failure mode reports a subscriber as missing rather
+    /// than reporting a missing one as present.
+    #[cfg(test)]
+    fn subscriber_count(&self) -> usize {
+        let mut count = 0;
+
+        self.subscribers.visit(|_| count += 1);
+        count
+    }
 }
 
 #[derive(Default)]
@@ -1983,6 +1997,16 @@ struct FieldReactivity {
 }
 
 impl FieldReactivity {
+    /// Counts the reactive scopes subscribed to any of this field's selectors.
+    #[cfg(test)]
+    fn subscriber_count(&self) -> usize {
+        self.value.subscriber_count()
+            + self.metadata.subscriber_count()
+            + self.validation_errors.subscriber_count()
+            + self.visible_validation_errors.subscriber_count()
+            + self.parse_errors.subscriber_count()
+    }
+
     fn notify_all(&self) {
         self.value.notify_changed();
         self.metadata.notify_changed();
@@ -2039,25 +2063,46 @@ impl FormReactivity {
     }
 
     fn track_field_value(&self, field: &FieldIdentity) {
-        self.field(field).value.track_read();
+        self.track_field(field, |reactivity| &reactivity.value);
     }
 
     fn track_field_metadata(&self, field: &FieldIdentity) {
-        self.field(field).metadata.track_read();
+        self.track_field(field, |reactivity| &reactivity.metadata);
     }
 
     fn track_field_validation_errors(&self, field: &FieldIdentity) {
-        self.field(field).validation_errors.track_read();
+        self.track_field(field, |reactivity| &reactivity.validation_errors);
     }
 
     fn track_visible_field_validation_errors(&self, field: &FieldIdentity) {
-        self.field(field).visible_validation_errors.track_read();
+        self.track_field(field, |reactivity| &reactivity.visible_validation_errors);
     }
 
     fn track_field_parse_errors(&self, field: &FieldIdentity) {
-        self.field(field).parse_errors.track_read();
+        self.track_field(field, |reactivity| &reactivity.parse_errors);
     }
 
+    /// Subscribes the current reactive scope to one of a field's selectors, registering the field
+    /// only when there is a scope to subscribe.
+    ///
+    /// The gate is exactly the predicate [`ReactiveSubscribers::track_read`] uses to decide whether
+    /// to subscribe, which is what keeps a subscriber from existing without its registration
+    /// (ADR-0029). A read outside a reactive scope — a binding accessor or a **Form Listener**
+    /// callback invoked outside a render — would otherwise register a field that can never gain a
+    /// subscriber, and the non-inserting notification path depends on that not happening.
+    fn track_field(
+        &self,
+        field: &FieldIdentity,
+        selector: impl FnOnce(&FieldReactivity) -> &ReactiveSubscribers,
+    ) {
+        if ReactiveContext::current().is_none() {
+            return;
+        }
+
+        selector(&self.field(field)).track_read();
+    }
+
+    /// Resolves a field's registration, creating it if this is the first reactive read of it.
     fn field(&self, field: &FieldIdentity) -> Rc<FieldReactivity> {
         Rc::clone(
             self.fields
@@ -2065,6 +2110,15 @@ impl FormReactivity {
                 .entry(field.clone())
                 .or_insert_with(|| Rc::new(FieldReactivity::default())),
         )
+    }
+
+    /// Resolves a field's registration without creating one.
+    ///
+    /// Notification resolves through this rather than through [`FormReactivity::field`]: a field
+    /// nobody has read reactively has no subscriber to wake, so registering it on a write buys
+    /// nothing and grows the map every notification fans out over (ADR-0029).
+    fn registered_field(&self, field: &FieldIdentity) -> Option<Rc<FieldReactivity>> {
+        self.fields.borrow().get(field).map(Rc::clone)
     }
 
     fn tracked_field_identities(&self) -> Vec<FieldIdentity> {
@@ -12034,11 +12088,164 @@ impl<Model: Clone, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
 
 #[cfg(test)]
 mod tests {
+    use dioxus_core::{Element, VNode, VirtualDom};
+
     use super::*;
 
     /// Handle identity does not involve the model, so the smallest one will do.
     fn model() -> String {
         "ada@example.com".to_owned()
+    }
+
+    /// A form model with one field to read and one to write blind, which is all the selector
+    /// registration tests below address.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Contact {
+        email: String,
+        phone: String,
+    }
+
+    /// A form with no reader of any kind, so every registration in it came from the test body.
+    fn contact_form() -> FormHandle<Contact> {
+        FormHandle::new(Contact {
+            email: "ada@example.com".to_owned(),
+            phone: String::new(),
+        })
+    }
+
+    /// The **Field** the probe below reads.
+    fn email() -> FieldPath<Contact, String> {
+        FieldPath::direct(
+            FieldIdentity::new("email"),
+            "email",
+            |contact| &contact.email,
+            |contact| &mut contact.email,
+        )
+    }
+
+    /// The **Field** nothing ever reads reactively, written to blind.
+    fn phone() -> FieldPath<Contact, String> {
+        FieldPath::direct(
+            FieldIdentity::new("phone"),
+            "phone",
+            |contact| &contact.phone,
+            |contact| &mut contact.phone,
+        )
+    }
+
+    /// Reads every field-scoped **Form Selector** the form exposes for one **Field**.
+    fn read_every_field_selector(form: &FormHandle<Contact>, path: FieldPath<Contact, String>) {
+        form.field_value(path.clone());
+        form.field_metadata(path.clone());
+        form.field_validation_errors(path.clone());
+        form.visible_field_validation_errors(path.clone());
+        form.field_parse_errors(path.clone());
+        form.field_accessibility(path);
+    }
+
+    /// Asserts that nothing in the form is registered, naming what registered it when it is.
+    fn assert_no_registrations(form: &FormHandle<Contact>, made_by: &str) {
+        let fields = form.reactivity.fields.borrow();
+
+        assert!(
+            fields.is_empty(),
+            "{made_by} registered {:?}",
+            fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A mounted reader of one **Field**, which is the only registration its form should hold.
+    struct ContactProbe {
+        form: FormHandle<Contact>,
+        email_values: RefCell<Vec<String>>,
+    }
+
+    impl ContactProbe {
+        fn new() -> Self {
+            Self {
+                form: contact_form(),
+                email_values: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    fn email_value_selector_probe(probe: Rc<ContactProbe>) -> Element {
+        probe
+            .email_values
+            .borrow_mut()
+            .push(probe.form.field_value(email()));
+
+        VNode::empty()
+    }
+
+    /// A **Selector Registration** exists because a **Form Selector** for that **Field** was read
+    /// inside a reactive scope, and for no other reason (ADR-0029). Notification resolves
+    /// registrations without creating them, so writing a **Field** nothing has read registers
+    /// nothing — otherwise every write grows the map that every later notification fans out over.
+    ///
+    /// This test and the two below it are inline rather than in `tests/` because the map they
+    /// inspect is private.
+    #[test]
+    fn writing_a_field_no_reactive_scope_has_read_creates_no_selector_registration() {
+        let form = contact_form();
+
+        form.set_user_field(email(), "grace@example.com".to_owned());
+        form.set_field(phone(), "555-0100".to_owned());
+        form.validate_all(ValidationTrigger::Submit);
+        form.reset();
+
+        assert_no_registrations(&form, "writes");
+    }
+
+    /// `ReactiveSubscribers::track_read` subscribes only inside a `ReactiveContext`, so a read
+    /// outside one that still registered its **Field** would leave a **Selector Registration**
+    /// nothing can ever subscribe to.
+    #[test]
+    fn reading_a_field_selector_outside_a_reactive_scope_creates_no_selector_registration() {
+        let form = contact_form();
+
+        read_every_field_selector(&form, email());
+
+        assert_no_registrations(&form, "non-reactive reads");
+    }
+
+    /// The invariant both halves rest on: a subscriber exists only if its registration exists, so
+    /// a registration without one is a registration a notification can never need. A notification
+    /// that finds nothing therefore provably had no subscriber to miss.
+    #[test]
+    fn every_selector_registration_has_a_subscriber_after_writes_and_non_reactive_reads() {
+        let probe = Rc::new(ContactProbe::new());
+        let mut dom = VirtualDom::new_with_props(email_value_selector_probe, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+
+        assert_eq!(
+            probe.email_values.borrow().as_slice(),
+            ["ada@example.com".to_owned()],
+            "the probe must have read the field it registers"
+        );
+
+        probe.form.set_user_field(phone(), "555-0100".to_owned());
+        probe
+            .form
+            .set_user_field(email(), "grace@example.com".to_owned());
+        read_every_field_selector(&probe.form, phone());
+        read_every_field_selector(&probe.form, email());
+        probe.form.validate_all(ValidationTrigger::Submit);
+
+        let fields = probe.form.reactivity.fields.borrow();
+
+        assert!(
+            !fields.is_empty(),
+            "the mounted reader must have registered its own field"
+        );
+
+        for (field, reactivity) in fields.iter() {
+            assert!(
+                reactivity.subscriber_count() > 0,
+                "{field:?} is registered with no subscriber"
+            );
+        }
     }
 
     /// Reports whether both handles share every one of their `Rc`-shaped fields.
