@@ -3420,6 +3420,323 @@ fn dioxus_reset_field_emits_a_field_reset_observer_event() {
     )));
 }
 
+struct ResetFieldSubmitErrorProbe {
+    form: FormHandle<NestedCustomerForm, &'static str>,
+    name_error_counts: RefCell<Vec<usize>>,
+}
+
+impl ResetFieldSubmitErrorProbe {
+    fn new() -> Self {
+        Self {
+            form: FormHandle::new_with_error_type(NestedCustomerForm::default()),
+            name_error_counts: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+fn reset_field_submit_error_probe(probe: Rc<ResetFieldSubmitErrorProbe>) -> Element {
+    // Subscribes only to the contained leaf's validation-error selector. Resetting the *containing*
+    // field wakes the leaf's value selector through **Field Ancestry**, never its validation-error
+    // selector, so a re-render here means the reset notified validation subscribers.
+    let error_count = probe
+        .form
+        .field_validation_errors(nested_customer_name_path())
+        .len();
+
+    probe.name_error_counts.borrow_mut().push(error_count);
+
+    VNode::empty()
+}
+
+/// Pins issue #39: resetting a containing field clears **Submit Errors** across its **Field
+/// Ancestry**, so a mounted reader of a contained leaf's **Validation Errors** must be notified.
+/// No async validators and no timers are involved: this is the synchronous case.
+#[test]
+fn reset_field_notifies_a_contained_fields_validation_error_reader() {
+    let probe = Rc::new(ResetFieldSubmitErrorProbe::new());
+
+    // Write the leaf so the containing field differs from baseline, then have the server reject the
+    // submission with an error targeting that leaf.
+    probe
+        .form
+        .set_field(nested_customer_name_path(), "ada".to_owned());
+    assert_eq!(
+        probe.form.submit(|_submitted| SubmitError::field(
+            nested_customer_name_path(),
+            "name_unavailable"
+        )),
+        SubmitResult::Rejected
+    );
+
+    let mut dom = VirtualDom::new_with_props(reset_field_submit_error_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1]);
+
+    // Ancestry-scoped submit-error clearing drops the leaf's error in **Form Core** ...
+    probe.form.reset_field(nested_customer_path());
+    assert!(
+        probe
+            .form
+            .field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+
+    // ... and the mounted reader re-reads it.
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1, 0]);
+}
+
+#[derive(Default)]
+struct ResetFieldFormAsyncProbe {
+    gate: AsyncGate<Vec<FormValidationError<&'static str>>>,
+    handle: RefCell<Option<FormHandle<SignupForm, &'static str>>>,
+    write_email: RefCell<Option<Box<ActionHandler>>>,
+    validate_all: RefCell<Option<Box<ActionHandler>>>,
+    reset_email: RefCell<Option<Box<ActionHandler>>>,
+    form_error_counts: RefCell<Vec<usize>>,
+}
+
+fn reset_field_form_async_probe(probe: Rc<ResetFieldFormAsyncProbe>) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<SignupForm, &'static str> =
+                FormHandle::new_with_error_type(SignupForm {
+                    email: "ada@example.com".to_owned(),
+                });
+            let gate = probe.gate.clone();
+
+            form.async_validator("account")
+                .on(ValidationTrigger::Manual)
+                .check(move |_snapshot| gate.future());
+
+            form
+        }
+    });
+
+    let runtime = dioxus_core::Runtime::current();
+    let scope = runtime.current_scope_id();
+    let write_email = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.set_user_field(SignupForm::fields().email(), "grace@example.com".to_owned());
+            });
+        }
+    };
+    let validate_all = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.validate_all(ValidationTrigger::Manual);
+            });
+        }
+    };
+    let reset_email = {
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.reset_field(SignupForm::fields().email());
+            });
+        }
+    };
+
+    // Subscribes to the form-level validation-error selector, which only a validation-changed
+    // notification wakes — never a field's own value or metadata transition.
+    let error_count = form.form_validation_errors().len();
+
+    probe.handle.borrow_mut().replace(form);
+    probe
+        .write_email
+        .borrow_mut()
+        .replace(Box::new(write_email));
+    probe
+        .validate_all
+        .borrow_mut()
+        .replace(Box::new(validate_all));
+    probe
+        .reset_email
+        .borrow_mut()
+        .replace(Box::new(reset_email));
+    probe.form_error_counts.borrow_mut().push(error_count);
+
+    VNode::empty()
+}
+
+/// Pins issue #39 for form-level errors: a reset marks pending and resolved async **Form
+/// Validation** stale, so a mounted reader of the form-level **Validation Errors** must be notified.
+#[test]
+fn reset_field_notifies_a_form_level_validation_error_reader() {
+    let probe = Rc::new(ResetFieldFormAsyncProbe::default());
+    let mut dom = VirtualDom::new_with_props(reset_field_form_async_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    assert_eq!(probe.form_error_counts.borrow().as_slice(), [0]);
+
+    // Give the field reset-relevant state, then resolve the async form validator with a
+    // form-targeted error.
+    run_probe_action(&probe.write_email);
+    run_probe_action(&probe.validate_all);
+    probe
+        .gate
+        .complete(vec![FormValidationError::form("account_unavailable")]);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.form_error_counts.borrow().last(), Some(&1));
+
+    // The reset stales the resolved async form validator, blanking the form-level error ...
+    run_probe_action(&probe.reset_email);
+    assert!(handle.form_validation_errors().is_empty());
+
+    // ... and the mounted reader re-reads it.
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.form_error_counts.borrow().last(), Some(&0));
+}
+
+#[derive(Default)]
+struct ResetFieldCrossFieldAsyncProbe {
+    gate: AsyncGate<Vec<&'static str>>,
+    handle: RefCell<Option<FormHandle<NestedCustomerForm, &'static str>>>,
+    write_account: RefCell<Option<Box<ActionHandler>>>,
+    validate_name: RefCell<Option<Box<ActionHandler>>>,
+    reset_account: RefCell<Option<Box<ActionHandler>>>,
+    name_error_counts: RefCell<Vec<usize>>,
+}
+
+fn reset_field_cross_field_async_probe(probe: Rc<ResetFieldCrossFieldAsyncProbe>) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<NestedCustomerForm, &'static str> =
+                FormHandle::new_with_error_type(NestedCustomerForm::default());
+            let gate = probe.gate.clone();
+
+            form.field(nested_customer_name_path())
+                .async_validator("availability")
+                .on(ValidationTrigger::Manual)
+                .check(move |_value: String, _snapshot| gate.future());
+
+            form
+        }
+    });
+
+    let runtime = dioxus_core::Runtime::current();
+    let scope = runtime.current_scope_id();
+    let write_account = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.set_user_field(nested_customer_account_name_path(), "acme".to_owned());
+            });
+        }
+    };
+    let validate_name = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.validate_field(nested_customer_name_path(), ValidationTrigger::Manual);
+            });
+        }
+    };
+    let reset_account = {
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.reset_field(nested_customer_account_path());
+            });
+        }
+    };
+
+    // Subscribes only to the validated field's validation-error selector. The reset names a
+    // sibling, which is not in **Field Ancestry** with it, so nothing but a validation-changed
+    // notification can wake this reader.
+    let error_count = form
+        .field_validation_errors(nested_customer_name_path())
+        .len();
+
+    probe.handle.borrow_mut().replace(form);
+    probe
+        .write_account
+        .borrow_mut()
+        .replace(Box::new(write_account));
+    probe
+        .validate_name
+        .borrow_mut()
+        .replace(Box::new(validate_name));
+    probe
+        .reset_account
+        .borrow_mut()
+        .replace(Box::new(reset_account));
+    probe.name_error_counts.borrow_mut().push(error_count);
+
+    VNode::empty()
+}
+
+/// Pins issue #39 across **Fields**: a reset invalidates async **Field Validation** model-wide, so a
+/// mounted reader of an unrelated sibling's **Validation Errors** must be notified.
+#[test]
+fn reset_field_notifies_another_fields_validation_error_reader() {
+    let probe = Rc::new(ResetFieldCrossFieldAsyncProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(reset_field_cross_field_async_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [0]);
+
+    // Give the sibling reset-relevant state first: writing it after the validator resolved would
+    // invalidate the result the reset is supposed to invalidate.
+    run_probe_action(&probe.write_account);
+    run_probe_action(&probe.validate_name);
+    probe.gate.complete(vec!["name_unavailable"]);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_error_counts.borrow().last(), Some(&1));
+
+    // Resetting the sibling invalidates the async field validator holding that error ...
+    run_probe_action(&probe.reset_account);
+    assert!(
+        handle
+            .field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+
+    // ... and the mounted reader re-reads it.
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_error_counts.borrow().last(), Some(&0));
+}
+
 #[test]
 fn submit_listener_reports_validate_for_submit_attempt_and_blocker() {
     let probe = Rc::new(SubmitListenerProbe::default());

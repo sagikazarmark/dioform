@@ -185,3 +185,10 @@ issues; the predicate this ADR introduces is what makes them cheap to fix.
 narrows this paragraph on the fix rather than the diagnosis: the four surfaces are one defect class,
 but they do not take one reach. Value replacement uses this predicate as written; blur and binding
 lifecycle assert containment rather than replacement and reach outward only.
+
+The `reset_field` half is settled without this predicate, and narrows the paragraph above on the
+diagnosis rather than the fix: `FormHandle::reset_field` now emits `ValidationChanged` as its last
+transition, hand-emitted the way `apply_field_mutation` emits it for every other mutating field
+method. That transition already fans validation-error selectors out over every tracked identity, so
+the reset needs no ancestry expansion of its own to reach a contained field's, a sibling's, or the
+form's validation subscribers.
