@@ -187,8 +187,12 @@ An application-defined typed value captured for one **Submission** that distingu
 _Avoid_: Submit metadata, submit action, arbitrary event metadata
 
 **Submission Snapshot**:
-An owned submit-time capture for one **Submission** that carries the **Submitted Value** and **Submit Intent** used by application submit behavior and stale-submit-error protection.
-_Avoid_: Submitted value, command object
+An owned submit-time capture for one **Submission** that carries the **Submitted Value** and **Submit Intent** used by application submit behavior and stale-submit-error protection. It is produced once a **Submission** starts, unlike a **Submit Validation Token**, which is what permits it to start.
+_Avoid_: Submitted value, command object, submit validation token
+
+**Submit Validation Token**:
+Proof that submit validation passed for one **Submit Intent** against a specific **Form Draft**, held outside the form while submit-relevant **Async Validation** finishes and presented back when the **Submission** starts, so a submission can only begin against the draft that was validated. It carries no form values, which is what separates it from a **Form Snapshot** or a **Submission Snapshot**, and a write that moves the draft retires it.
+_Avoid_: Submission snapshot, form snapshot, validation result
 
 **Last Submit Status**:
 The latest meaningful outcome of a submit attempt, associated with the attempted **Submit Intent** when the form is intentful. Intentful forms may read the latest status globally or for one **Submit Intent**.
@@ -431,7 +435,7 @@ The source-level state of validation, such as unknown, valid, invalid, pending, 
 _Avoid_: Boolean validity only
 
 **Submit Availability**:
-A UI-oriented indication that submission for a given **Submit Intent** has no current known blockers such as validation errors, parse blockers, required pending validation, or an in-flight submission.
+A UI-oriented indication that submission for a given **Submit Intent** has no current known blockers such as validation errors, parse blockers, required pending validation, or an in-flight submission. It answers about the form, so a refusal whose reason is not a condition of the form — a retired **Submit Validation Token** — is reported by the attempt without ever appearing here ([ADR-0033](docs/adr/0033-report-a-retired-submit-validation-token-as-its-own-submit-blocker.md)).
 _Avoid_: Final submit authorization
 
 **Conditional Field**:
@@ -675,6 +679,14 @@ Domain expert: Yes. Once application submit behavior starts, an **In-Flight Subm
 Developer: Can the UI know which submit button started the in-flight submission?
 
 Domain expert: Yes. Application-facing submit state exposes the **Submit Intent** of the **In-Flight Submission**.
+
+Developer: The form validated, then the user edited a field while the async check was still running. Can the submission still start?
+
+Domain expert: No. The **Submit Validation Token** was proof about the **Form Draft** it validated, and the write retired it, so the attempt is refused rather than submitting a draft nothing validated. That refusal is its own known blocker: the user should submit again, not hunt for errors or wait for a check that is no longer running.
+
+Developer: So can a form report no blockers and still refuse a submit?
+
+Domain expert: Yes, and the two answers are both correct. **Submit Availability** describes the form, which is submittable; the refusal describes an attempt that presented a retired **Submit Validation Token**.
 
 Developer: If the server rejects an old submitted field value after the user changed it, should that field error appear?
 
