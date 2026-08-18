@@ -230,6 +230,10 @@ _Avoid_: Required declaration
 A focused read of form or field state intended to subscribe only to the state a UI actually needs.
 _Avoid_: Whole-form read
 
+**Selector Registration**:
+The **Dioxus Adapter** record holding the subscribers for one **Field**'s **Form Selectors**. It comes into existence only because a **Form Selector** for that **Field** was read inside a reactive scope, so neither writing a **Field** nor reading one outside a reactive scope creates one ([ADR-0029](docs/adr/0029-create-selector-registrations-only-from-reactive-reads.md)).
+_Avoid_: Subscriber list, reactivity entry, tracked field
+
 **Central Validator**:
 A validator registered as durable form behavior rather than tied to a rendered field component's lifecycle.
 _Avoid_: Field-local validator

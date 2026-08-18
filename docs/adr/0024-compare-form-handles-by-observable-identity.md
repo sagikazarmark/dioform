@@ -68,8 +68,9 @@ compare identity, rendered name, and `Rc::ptr_eq` on both accessors, so equal me
 interchangeable. It is not adopted here because `#[derive(Form)]` builds a fresh `FieldPath::direct`
 with fresh closures on every `Model::fields().field()` call, so two independently derived paths to one
 field would compare unequal — correct, never stale, but a contract meaning "equal" only for clones, which
-deserves its own decision rather than arriving as a side effect of this one. That decision is tracked in
-issue #43.
+deserves its own decision rather than arriving as a side effect of this one. That decision is
+[ADR-0030](0030-decline-partial-eq-for-field-paths-and-bindings.md), which declines it and gives the
+exclusion above its reasons.
 
 The derived `…FieldGroupMap` follows `FieldPath` and is excluded with it: its fields are field paths and
 it has no other way to compare them.
