@@ -355,7 +355,7 @@ A semantic form event delivered to a **Form Listener** with contextual metadata 
 _Avoid_: DOM event, validation trigger, observer event
 
 **Debounced Listener**:
-A **Form Listener** scheduled with an application-supplied delay so stale scheduled callbacks are ignored when newer matching listener events arrive; it does not affect validation status, **Submit Availability**, or submission correctness.
+A **Form Listener** scheduled with an application-supplied delay so stale scheduled callbacks are ignored when newer matching listener events arrive; it does not affect validation status, **Submit Availability**, or submission correctness. Because its callback runs after the delay rather than during the write, a listener-caused cycle cannot be caught the way immediate reentry is, so a field-scoped one that keeps running on writes made by listeners, with none from outside a listener in between, reports the cycle instead ([ADR-0028](docs/adr/0028-match-listener-reach-to-what-each-event-asserts.md)).
 _Avoid_: Debounced Validation, submit blocker
 
 **Facade Crate**:

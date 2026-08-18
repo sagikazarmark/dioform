@@ -12,8 +12,8 @@ use std::{
 #[cfg(feature = "serde")]
 use dioform::advanced::FormStateRestoreError;
 use dioform::advanced::{
-    CollectionItemIdentity, FieldUpdateOrigin, FormCore, FormObserverEvent, SubmitAttempt,
-    ValidatorId,
+    CollectionItemIdentity, FieldIdentity, FieldUpdateOrigin, FormCore, FormObserverEvent,
+    SubmitAttempt, ValidatorId,
 };
 use dioform::{
     CollectionBinding, CollectionCheckboxBinding, CollectionItemBinding,
@@ -25,15 +25,26 @@ use dioform::{
     SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
     ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
-    use_collection_item_number, use_date, use_date_with, use_debounced_field_listener_for_origin,
-    use_debounced_form_listener_for_origin, use_field_binding_listener, use_field_blur_listener,
-    use_field_listener, use_field_listener_for_origin, use_form_blur_listener, use_form_config,
-    use_form_context, use_form_handle, use_form_listener, use_form_listener_for_origin,
-    use_multi_select, use_number, use_number_with, use_parsed_text, use_parsed_text_with,
-    use_radio_group, use_select, use_select_with, use_submit_listener,
+    use_collection_item_number, use_date, use_date_with, use_debounced_field_listener,
+    use_debounced_field_listener_for_origin, use_debounced_form_listener_for_origin,
+    use_field_binding_listener, use_field_blur_listener, use_field_listener,
+    use_field_listener_for_origin, use_form_blur_listener, use_form_config, use_form_context,
+    use_form_handle, use_form_listener, use_form_listener_for_origin, use_multi_select, use_number,
+    use_number_with, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
+    use_select_with, use_submit_listener,
 };
 use dioxus::prelude::{Props, dioxus_signals, rsx};
 use dioxus_core::{Element, Event, VNode, VirtualDom, use_hook};
+
+/// How many debounced delays a reschedule-loop test completes before it gives up on the guard.
+const RESCHEDULE_DRIVE_LIMIT: usize = 256;
+
+/// How many **Fields** in one listener's reach a single debounced callback writes, chosen well
+/// above the reschedule bound so counting schedules rather than runs would report a cycle.
+const FAN_OUT_WRITES: usize = 32;
+
+/// How many user updates the reschedule-bound reset test drives, likewise above the bound.
+const USER_UPDATE_ROUNDS: usize = 64;
 
 fn managed_submit_event() -> Event<()> {
     Event::new(Rc::new(()), true)
@@ -120,11 +131,14 @@ fn nested_customer_name_path() -> FieldPath<NestedCustomerForm, String> {
     nested_customer_path().join(NestedCustomer::fields().name())
 }
 
-fn nested_customer_account_name_path() -> FieldPath<NestedCustomerForm, String> {
+fn nested_customer_account_path() -> FieldPath<NestedCustomerForm, NestedCustomer> {
     NestedCustomerForm::fields()
         .invoice()
         .join(NestedCustomerInvoice::fields().customer_account())
-        .join(NestedCustomer::fields().name())
+}
+
+fn nested_customer_account_name_path() -> FieldPath<NestedCustomerForm, String> {
+    nested_customer_account_path().join(NestedCustomer::fields().name())
 }
 
 fn nested_customer(name: &str) -> NestedCustomer {
@@ -205,6 +219,30 @@ fn invoice_collection_row_form() -> InvoiceCollectionForm {
             },
         ],
     }
+}
+
+fn nested_invoice_path() -> FieldPath<NestedInvoiceCollectionForm, NestedInvoice> {
+    NestedInvoiceCollectionForm::fields().invoice()
+}
+
+fn nested_invoice_lines_path() -> FieldPath<NestedInvoiceCollectionForm, Vec<NestedInvoiceLine>> {
+    nested_invoice_path().join(NestedInvoice::fields().lines())
+}
+
+/// A static path whose identity sits *below* a collection path, which no item write addresses.
+fn below_lines_path() -> FieldPath<NestedInvoiceCollectionForm, NestedProduct> {
+    FieldPath::direct(
+        FieldIdentity::new("invoice.lines.product"),
+        "invoice.invoice_lines.product",
+        |form| &form.invoice.lines[0].product,
+        |form| &mut form.invoice.lines[0].product,
+    )
+}
+
+fn nested_invoice_product_name_path() -> FieldPath<NestedInvoiceLine, String> {
+    NestedInvoiceLine::fields()
+        .product()
+        .join(NestedProduct::fields().name())
 }
 
 fn nested_invoice_collection_form() -> NestedInvoiceCollectionForm {
@@ -435,6 +473,35 @@ struct FieldListenerProbe {
 }
 
 #[derive(Default)]
+struct NestedFieldListenerProbe {
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    customer_events: RefCell<Vec<String>>,
+    customer_name_events: RefCell<Vec<String>>,
+    customer_account_events: RefCell<Vec<String>>,
+}
+
+#[derive(Default)]
+struct NestedContainerWriteProbe {
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    listener_runs: Cell<usize>,
+}
+
+#[derive(Default)]
+struct OptionalGroupListenerProbe {
+    handle: RefCell<Option<FormHandle<OptionalCounterpartyForm>>>,
+    counterparty_events: RefCell<Vec<String>>,
+    reference_events: RefCell<Vec<String>>,
+}
+
+#[derive(Default)]
+struct CollectionReachListenerProbe {
+    handle: RefCell<Option<FormHandle<NestedInvoiceCollectionForm>>>,
+    invoice_events: RefCell<Vec<FieldIdentity>>,
+    lines_events: RefCell<Vec<FieldIdentity>>,
+    below_lines_events: RefCell<Vec<FieldIdentity>>,
+}
+
+#[derive(Default)]
 struct ListenerInvariantProbe {
     handle: RefCell<Option<FormHandle<ProfileForm, &'static str>>>,
     observer_events: RefCell<Vec<FormObserverEvent>>,
@@ -468,6 +535,30 @@ struct DebouncedListenerProbe {
     delays: ManualDelays,
     handle: RefCell<Option<FormHandle<ProfileForm>>>,
     snapshots: RefCell<Vec<String>>,
+}
+
+#[derive(Default)]
+struct DebouncedNestedListenerProbe {
+    delays: ManualDelays,
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    customer_events: RefCell<Vec<String>>,
+    customer_name_events: RefCell<Vec<String>>,
+    customer_account_events: RefCell<Vec<String>>,
+}
+
+#[derive(Default)]
+struct DebouncedReschedulingListenerProbe {
+    delays: ManualDelays,
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    runs: Cell<usize>,
+}
+
+#[derive(Default)]
+struct DebouncedListenerChainProbe {
+    delays: ManualDelays,
+    handle: RefCell<Option<FormHandle<NestedCustomerForm>>>,
+    normalizer_runs: Cell<usize>,
+    autosave_runs: Cell<usize>,
 }
 
 #[derive(Default)]
@@ -810,6 +901,334 @@ fn debounced_field_listener_probe(probe: Rc<DebouncedListenerProbe>) -> Element 
                 .snapshots
                 .borrow_mut()
                 .push(context.form().field_value(ProfileForm::fields().email()));
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn nested_field_listener_probe(probe: Rc<NestedFieldListenerProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let customer_probe = Rc::clone(&probe);
+    let customer_name_probe = Rc::clone(&probe);
+    let customer_account_probe = Rc::clone(&probe);
+
+    use_field_listener(form.clone(), nested_customer_path(), move |context| {
+        customer_probe
+            .customer_events
+            .borrow_mut()
+            .push(context.field_identity().as_str().to_owned());
+    });
+    use_field_listener(form.clone(), nested_customer_name_path(), move |context| {
+        customer_name_probe
+            .customer_name_events
+            .borrow_mut()
+            .push(context.field_identity().as_str().to_owned());
+    });
+    use_field_listener(
+        form.clone(),
+        nested_customer_account_path(),
+        move |context| {
+            customer_account_probe
+                .customer_account_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn optional_group_listener_probe(probe: Rc<OptionalGroupListenerProbe>) -> Element {
+    let form = use_form_handle(|| {
+        FormHandle::new(OptionalCounterpartyForm {
+            reference: "INV-1".to_owned(),
+            counterparty: None,
+        })
+    });
+    let counterparty_probe = Rc::clone(&probe);
+    let reference_probe = Rc::clone(&probe);
+
+    use_field_listener(
+        form.clone(),
+        OptionalCounterpartyForm::fields().counterparty(),
+        move |context| {
+            counterparty_probe
+                .counterparty_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+    use_field_listener(
+        form.clone(),
+        OptionalCounterpartyForm::fields().reference(),
+        move |context| {
+            reference_probe
+                .reference_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn collection_reach_listener_probe(probe: Rc<CollectionReachListenerProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(nested_invoice_collection_form()));
+    let invoice_probe = Rc::clone(&probe);
+    let lines_probe = Rc::clone(&probe);
+    let below_lines_probe = Rc::clone(&probe);
+
+    use_field_listener(form.clone(), nested_invoice_path(), move |context| {
+        invoice_probe
+            .invoice_events
+            .borrow_mut()
+            .push(context.field_identity());
+    });
+    use_field_listener(form.clone(), nested_invoice_lines_path(), move |context| {
+        lines_probe
+            .lines_events
+            .borrow_mut()
+            .push(context.field_identity());
+    });
+    use_field_listener(form.clone(), below_lines_path(), move |context| {
+        below_lines_probe
+            .below_lines_events
+            .borrow_mut()
+            .push(context.field_identity());
+    });
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn nested_container_listener_child_write_probe(probe: Rc<NestedContainerWriteProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_listener(form.clone(), nested_customer_path(), move |context| {
+        listener_probe
+            .listener_runs
+            .set(listener_probe.listener_runs.get() + 1);
+        context
+            .form()
+            .set_field(nested_customer_name_path(), "reset".to_owned());
+    });
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn nested_origin_filtered_container_listener_child_write_probe(
+    probe: Rc<NestedContainerWriteProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_listener_for_origin(
+        form.clone(),
+        nested_customer_path(),
+        FieldUpdateOrigin::User,
+        move |context| {
+            listener_probe
+                .listener_runs
+                .set(listener_probe.listener_runs.get() + 1);
+            context
+                .form()
+                .set_field(nested_customer_name_path(), "reset".to_owned());
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn debounced_nested_field_listener_probe(probe: Rc<DebouncedNestedListenerProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let customer_delays = probe.delays.clone();
+    let customer_name_delays = probe.delays.clone();
+    let customer_account_delays = probe.delays.clone();
+    let customer_probe = Rc::clone(&probe);
+    let customer_name_probe = Rc::clone(&probe);
+    let customer_account_probe = Rc::clone(&probe);
+
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_path(),
+        move || customer_delays.future(),
+        move |context| {
+            customer_probe
+                .customer_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_name_path(),
+        move || customer_name_delays.future(),
+        move |context| {
+            customer_name_probe
+                .customer_name_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_account_path(),
+        move || customer_account_delays.future(),
+        move |context| {
+            customer_account_probe
+                .customer_account_events
+                .borrow_mut()
+                .push(context.field_identity().as_str().to_owned());
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn debounced_self_rescheduling_listener_probe(
+    probe: Rc<DebouncedReschedulingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let delays = probe.delays.clone();
+    let listener_probe = Rc::clone(&probe);
+
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_path(),
+        move || delays.future(),
+        move |context| {
+            let runs = listener_probe.runs.get() + 1;
+            listener_probe.runs.set(runs);
+            context
+                .form()
+                .set_field(nested_customer_name_path(), format!("run-{runs}"));
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn debounced_listener_cycle_probe(probe: Rc<DebouncedReschedulingListenerProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let customer_delays = probe.delays.clone();
+    let account_delays = probe.delays.clone();
+    let customer_probe = Rc::clone(&probe);
+    let account_probe = Rc::clone(&probe);
+
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_name_path(),
+        move || customer_delays.future(),
+        move |context| {
+            let runs = customer_probe.runs.get() + 1;
+            customer_probe.runs.set(runs);
+            context
+                .form()
+                .set_field(nested_customer_account_name_path(), format!("run-{runs}"));
+        },
+    );
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_account_name_path(),
+        move || account_delays.future(),
+        move |context| {
+            let runs = account_probe.runs.get() + 1;
+            account_probe.runs.set(runs);
+            context
+                .form()
+                .set_field(nested_customer_name_path(), format!("run-{runs}"));
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn debounced_listener_fan_out_probe(probe: Rc<DebouncedListenerChainProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let normalizer_delays = probe.delays.clone();
+    let autosave_delays = probe.delays.clone();
+    let normalizer_probe = Rc::clone(&probe);
+    let autosave_probe = Rc::clone(&probe);
+
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_name_path(),
+        move || normalizer_delays.future(),
+        move |context| {
+            normalizer_probe
+                .normalizer_runs
+                .set(normalizer_probe.normalizer_runs.get() + 1);
+
+            for write in 0..FAN_OUT_WRITES {
+                context.form().set_field(
+                    nested_customer_account_name_path(),
+                    format!("write-{write}"),
+                );
+            }
+        },
+    );
+    use_debounced_field_listener(
+        form.clone(),
+        NestedCustomerForm::fields().invoice(),
+        move || autosave_delays.future(),
+        move |_context| {
+            autosave_probe
+                .autosave_runs
+                .set(autosave_probe.autosave_runs.get() + 1);
+        },
+    );
+
+    probe.handle.borrow_mut().replace(form);
+
+    VNode::empty()
+}
+
+fn debounced_listener_chain_probe(probe: Rc<DebouncedListenerChainProbe>) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let normalizer_delays = probe.delays.clone();
+    let autosave_delays = probe.delays.clone();
+    let normalizer_probe = Rc::clone(&probe);
+    let autosave_probe = Rc::clone(&probe);
+
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_name_path(),
+        move || normalizer_delays.future(),
+        move |context| {
+            let runs = normalizer_probe.normalizer_runs.get() + 1;
+            normalizer_probe.normalizer_runs.set(runs);
+            context
+                .form()
+                .set_field(nested_customer_account_name_path(), format!("run-{runs}"));
+        },
+    );
+    use_debounced_field_listener(
+        form.clone(),
+        nested_customer_account_name_path(),
+        move || autosave_delays.future(),
+        move |_context| {
+            autosave_probe
+                .autosave_runs
+                .set(autosave_probe.autosave_runs.get() + 1);
         },
     );
 
@@ -1451,6 +1870,225 @@ fn field_listener_same_callback_cycle_panics_with_listener_message() {
 }
 
 #[test]
+fn field_listeners_reach_across_field_ancestry_in_both_directions() {
+    let probe = Rc::new(NestedFieldListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_field_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        ["invoice.customer.name".to_owned()]
+    );
+    assert_eq!(
+        probe.customer_name_events.borrow().as_slice(),
+        ["invoice.customer.name".to_owned()]
+    );
+
+    handle.set_user_field(nested_customer_path(), nested_customer("Grace"));
+
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        [
+            "invoice.customer.name".to_owned(),
+            "invoice.customer".to_owned()
+        ]
+    );
+    assert_eq!(
+        probe.customer_name_events.borrow().as_slice(),
+        [
+            "invoice.customer.name".to_owned(),
+            "invoice.customer".to_owned()
+        ]
+    );
+    assert!(probe.customer_account_events.borrow().is_empty());
+}
+
+#[test]
+fn field_listener_reach_is_anchored_on_the_identity_path_separator() {
+    let probe = Rc::new(NestedFieldListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_field_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_account_name_path(), "Ada".to_owned());
+
+    assert_eq!(
+        probe.customer_account_events.borrow().as_slice(),
+        ["invoice.customer_account.name".to_owned()]
+    );
+    assert!(probe.customer_events.borrow().is_empty());
+    assert!(probe.customer_name_events.borrow().is_empty());
+
+    handle.set_user_field(nested_customer_path(), nested_customer("Grace"));
+
+    assert_eq!(
+        probe.customer_account_events.borrow().as_slice(),
+        ["invoice.customer_account.name".to_owned()]
+    );
+}
+
+#[test]
+fn field_listener_reaches_dotted_identities_from_optional_field_traversal() {
+    let probe = Rc::new(OptionalGroupListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(optional_group_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let counterparty = OptionalCounterparty::mount(
+        OptionalCounterpartyForm::fields()
+            .counterparty()
+            .or(&ABSENT_COUNTERPARTY),
+    );
+    let name = handle.text(counterparty.name());
+
+    name.on_input("Ada");
+
+    assert_eq!(
+        probe.counterparty_events.borrow().as_slice(),
+        ["counterparty.name".to_owned()]
+    );
+    assert!(probe.reference_events.borrow().is_empty());
+}
+
+#[test]
+fn origin_filtered_field_listener_ignores_a_programmatic_write_to_a_contained_field() {
+    let probe = Rc::new(NestedContainerWriteProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        nested_origin_filtered_container_listener_child_write_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert_eq!(probe.listener_runs.get(), 0);
+
+    handle.set_user_field(nested_customer_name_path(), "Grace".to_owned());
+
+    assert_eq!(probe.listener_runs.get(), 1);
+    assert_eq!(handle.field_value(nested_customer_name_path()), "reset");
+}
+
+#[test]
+#[should_panic(expected = "field listener re-entered while it was already running")]
+fn field_listener_writing_a_field_in_its_own_reach_panics_with_the_reentry_message() {
+    let probe = Rc::new(NestedContainerWriteProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        nested_container_listener_child_write_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_path(), nested_customer("Ada"));
+}
+
+#[test]
+fn field_listener_on_a_collection_field_reaches_its_own_item_field_writes() {
+    let probe = Rc::new(CollectionReachListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(collection_reach_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let lines = handle.collection(nested_invoice_lines_path());
+    let row = lines.items()[0].clone();
+    let product_name = row.text(nested_invoice_product_name_path());
+
+    product_name.on_input("Mouse");
+
+    let lines_events = probe.lines_events.borrow();
+    let invoice_events = probe.invoice_events.borrow();
+
+    assert_eq!(lines_events.len(), 1);
+    assert_eq!(lines_events[0].collection_path(), Some("invoice.lines"));
+    assert_eq!(
+        lines_events[0].collection_item_identity(),
+        Some(row.identity())
+    );
+    assert_eq!(invoice_events.len(), 1);
+    assert_eq!(invoice_events[0].collection_path(), Some("invoice.lines"));
+    assert_eq!(
+        invoice_events[0].collection_item_identity(),
+        Some(row.identity())
+    );
+    assert!(probe.below_lines_events.borrow().is_empty());
+}
+
+#[test]
+fn field_listener_on_a_collection_field_still_reaches_structure_mutations() {
+    let probe = Rc::new(CollectionReachListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(collection_reach_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle
+        .collection(nested_invoice_lines_path())
+        .append(NestedInvoiceLine {
+            product: NestedProduct {
+                name: "Cable".to_owned(),
+            },
+        });
+
+    let lines_events = probe.lines_events.borrow();
+
+    assert_eq!(lines_events.len(), 1);
+    assert_eq!(lines_events[0].static_path(), Some("invoice.lines"));
+    assert_eq!(probe.invoice_events.borrow().len(), 1);
+    assert_eq!(probe.below_lines_events.borrow().len(), 1);
+}
+
+#[test]
 fn form_listener_identifies_value_replacement_field_without_default_values() {
     let probe = Rc::new(FormListenerProbe::default());
     let mut dom =
@@ -1753,6 +2391,208 @@ fn debounced_field_listener_runs_once_for_latest_user_update_after_delay() {
         probe.snapshots.borrow().as_slice(),
         ["grace@example.com".to_owned()]
     );
+}
+
+#[test]
+fn debounced_field_listeners_reach_across_field_ancestry_in_both_directions() {
+    let probe = Rc::new(DebouncedNestedListenerProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(debounced_nested_field_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert_eq!(probe.delays.len(), 2);
+
+    probe.delays.complete(0);
+    probe.delays.complete(1);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        ["invoice.customer.name".to_owned()]
+    );
+    assert_eq!(
+        probe.customer_name_events.borrow().as_slice(),
+        ["invoice.customer.name".to_owned()]
+    );
+    assert!(probe.customer_account_events.borrow().is_empty());
+
+    handle.set_user_field(nested_customer_path(), nested_customer("Grace"));
+
+    assert_eq!(probe.delays.len(), 4);
+
+    probe.delays.complete(2);
+    probe.delays.complete(3);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.customer_events.borrow().as_slice(),
+        [
+            "invoice.customer.name".to_owned(),
+            "invoice.customer".to_owned()
+        ]
+    );
+    assert_eq!(
+        probe.customer_name_events.borrow().as_slice(),
+        [
+            "invoice.customer.name".to_owned(),
+            "invoice.customer".to_owned()
+        ]
+    );
+    assert!(probe.customer_account_events.borrow().is_empty());
+}
+
+#[test]
+fn debounced_field_listener_reach_is_anchored_on_the_identity_path_separator() {
+    let probe = Rc::new(DebouncedNestedListenerProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(debounced_nested_field_listener_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_account_name_path(), "Ada".to_owned());
+
+    assert_eq!(probe.delays.len(), 1);
+
+    probe.delays.complete(0);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.customer_account_events.borrow().as_slice(),
+        ["invoice.customer_account.name".to_owned()]
+    );
+    assert!(probe.customer_events.borrow().is_empty());
+    assert!(probe.customer_name_events.borrow().is_empty());
+}
+
+#[test]
+#[should_panic(expected = "debounced field listener ran")]
+fn debounced_field_listener_rescheduling_itself_panics_instead_of_looping() {
+    let probe = Rc::new(DebouncedReschedulingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        debounced_self_rescheduling_listener_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    for delay in 0..RESCHEDULE_DRIVE_LIMIT {
+        assert!(delay < probe.delays.len(), "listener stopped rescheduling");
+        probe.delays.complete(delay);
+        dom.render_immediate_to_vec();
+    }
+
+    unreachable!(
+        "a self-rescheduling debounced listener should panic before it stops rescheduling"
+    );
+}
+
+#[test]
+#[should_panic(expected = "debounced field listener ran")]
+fn debounced_field_listener_cycle_between_two_listeners_panics_instead_of_looping() {
+    let probe = Rc::new(DebouncedReschedulingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(debounced_listener_cycle_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+
+    handle.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    for delay in 0..RESCHEDULE_DRIVE_LIMIT {
+        assert!(delay < probe.delays.len(), "listeners stopped rescheduling");
+        probe.delays.complete(delay);
+        dom.render_immediate_to_vec();
+    }
+
+    unreachable!("a debounced listener cycle should panic before it stops rescheduling");
+}
+
+#[test]
+fn debounced_field_listener_reschedule_bound_resets_on_user_updates() {
+    let probe = Rc::new(DebouncedListenerChainProbe::default());
+    let mut dom = VirtualDom::new_with_props(debounced_listener_chain_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let mut delay = 0;
+
+    for round in 0..USER_UPDATE_ROUNDS {
+        handle.set_user_field(nested_customer_name_path(), format!("user-{round}"));
+
+        while delay < probe.delays.len() {
+            probe.delays.complete(delay);
+            dom.render_immediate_to_vec();
+            delay += 1;
+        }
+    }
+
+    assert_eq!(probe.normalizer_runs.get(), USER_UPDATE_ROUNDS);
+    assert_eq!(probe.autosave_runs.get(), USER_UPDATE_ROUNDS);
+}
+
+#[test]
+fn debounced_field_listener_reschedule_bound_counts_runs_rather_than_schedules() {
+    let probe = Rc::new(DebouncedListenerChainProbe::default());
+    let mut dom = VirtualDom::new_with_props(debounced_listener_fan_out_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let mut delay = 0;
+
+    handle.set_user_field(nested_customer_name_path(), "Ada".to_owned());
+
+    while delay < probe.delays.len() {
+        probe.delays.complete(delay);
+        dom.render_immediate_to_vec();
+        delay += 1;
+    }
+
+    assert_eq!(probe.normalizer_runs.get(), 1);
+    assert_eq!(probe.autosave_runs.get(), 1);
+    assert_eq!(delay, FAN_OUT_WRITES + 2);
 }
 
 #[test]
@@ -5971,16 +6811,8 @@ struct NestedCollectionItemSelectorProbe {
 impl NestedCollectionItemSelectorProbe {
     fn new() -> Self {
         let form = FormHandle::new(nested_invoice_collection_form());
-        let lines = form.collection(
-            NestedInvoiceCollectionForm::fields()
-                .invoice()
-                .join(NestedInvoice::fields().lines()),
-        );
-        let product_name = lines.items()[0].text(
-            NestedInvoiceLine::fields()
-                .product()
-                .join(NestedProduct::fields().name()),
-        );
+        let lines = form.collection(nested_invoice_lines_path());
+        let product_name = lines.items()[0].text(nested_invoice_product_name_path());
 
         Self {
             form,
@@ -15811,14 +16643,8 @@ fn browser_submit_exposes_post_method_and_action_without_dioxus_event_handling()
 fn browser_submission_control_names_use_field_name_overrides_and_collection_indexes() {
     let handle = FormHandle::new(nested_invoice_collection_form());
     let submit = handle.browser_submit("/invoices");
-    let lines_path = NestedInvoiceCollectionForm::fields()
-        .invoice()
-        .join(NestedInvoice::fields().lines());
-    let product_name_path = NestedInvoiceLine::fields()
-        .product()
-        .join(NestedProduct::fields().name());
-    let lines = handle.collection(lines_path);
-    let product_name = lines.items()[0].text(product_name_path);
+    let lines = handle.collection(nested_invoice_lines_path());
+    let product_name = lines.items()[0].text(nested_invoice_product_name_path());
 
     assert_eq!(submit.method(), "post");
     assert_eq!(submit.action(), "/invoices");

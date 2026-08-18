@@ -6,7 +6,7 @@ The first listener slices support value-replacement listeners, blur listeners, d
 
 ## Field Listeners
 
-Use `use_field_listener(form, path, listener)` when the listener should run for both user-originated and programmatic replacements of one typed field. For direct collection fields, collection insertions, removals, moves, and multi-select changes are value replacements for the collection field.
+Use `use_field_listener(form, path, listener)` when the listener should run for both user-originated and programmatic value replacements reaching one typed field. For direct collection fields, collection insertions, removals, moves, and multi-select changes are value replacements for the collection field.
 
 Use `use_field_listener_for_origin(form, path, FieldUpdateOrigin::User, listener)` when the listener should run only for user-originated field replacements. This is the safer default for dependent-field resets because listener-caused updates are ordinary programmatic replacements and should not usually re-enter the same listener.
 
@@ -25,6 +25,16 @@ use_field_listener_for_origin(
 ```
 
 The listener context exposes the `FormHandle`, the triggering `FieldIdentity`, and the `FieldUpdateOrigin`. It does not pass field values by default. If a side effect needs values, read them explicitly through the form handle with `field_value(...)` or `snapshot()`.
+
+### Listener Reach
+
+A value-replacement listener registered on a Field runs when that Field is written, when a Field it contains is written, and when a Field containing it is written. Siblings never reach it, and the Identity Path Separator anchors that boundary: a write to `counterparty` does not reach a listener on `counterparty_account`.
+
+Both directions are the same fact. Writing a Field is a whole-subtree assignment, so writing `invoice.customer` replaces the value of `invoice.customer.name`, and writing `invoice.customer.name` replaces the value of `invoice.customer`. Reach follows the write, not the registration, so the context reports the identity of the Field that was written, which is not always the one the listener registered on. A listener that wants one Field exactly compares `context.field_identity()` against its own `path.identity()`.
+
+A listener registered on a Collection Field additionally hears value replacements of its own items' fields, so a listener on `invoice.lines` hears both a pushed row and an edited one. Those item events carry a collection item identity: read `collection_path()` and `collection_item_identity()` to identify the row, not `as_str()`, which is item-relative and returns only the child-field segment. That is also why the exact-identity comparison above does not hold for a listener registered on a Collection Field — it never receives its own static identity for an item write.
+
+Reach belongs to the event rather than to the listener, so it is decided per surface. Form-level listeners are unchanged: they already run for every field. Blur listeners and binding lifecycle listeners report that something happened *inside* a Field rather than that a value was replaced, so they do not take this reach and currently still dispatch on exact Field Identity.
 
 ## Form-Level Listeners
 
@@ -93,6 +103,10 @@ For debounced value-replacement listeners, Dioform schedules matching form-level
 
 For submit events, Dioform records the submit attempt and runs submit-triggered validation before dispatching `SubmitAttempted`. It dispatches `SubmissionStarted` only after submission actually starts, then dispatches `SubmissionSucceeded` or `SubmissionRejected` from the successful or structured-error finish transition. Blocked attempts dispatch `SubmitBlocked` after the blocker is recorded.
 
+Several field-scoped listeners can match one write, because Listener Reach admits a Field's containers and the Fields it contains. They run in registration order, which is the order their hooks ran: a listener on a container registered before a listener on one of its leaves observes the write first. Dioform does not order them by depth. Registration order tracks component mount order, so a remounted subtree's listener moves to the end.
+
+Each matching listener runs once per dispatched value replacement. One write dispatches one event, including a collection item field write, which dispatches once with the item's identity.
+
 Listener-caused field replacements are ordinary new Programmatic Updates. They preserve the same metadata, validation, observer, selector, and listener invariants as any other `set_field(...)` call.
 
 Field Listeners do not participate in Submit Availability and Submit Listeners do not replace submit handlers. The submit lifecycle still performs submit-triggered validation before application submit behavior.
@@ -100,3 +114,9 @@ Field Listeners do not participate in Submit Availability and Submit Listeners d
 ## Reentry
 
 Listeners can create cycles if they write fields that trigger the same listener again. Dioform detects same-callback reentry and panics with a listener-specific message rather than exposing an internal borrow failure. Prefer origin-filtered listeners for user-driven side effects, especially when a listener writes back to the same field or to a field with another listener.
+
+Listener Reach widens what counts as a cycle. A listener on a container that resets one of its own fields writes inside its own reach and so re-enters itself, which is the common dependent-field reset written against a container instead of a leaf. Use `use_field_listener_for_origin(..., FieldUpdateOrigin::User, ...)`: listener-caused writes are Programmatic Updates, so the origin filter resolves it. Dioform does not silently drop the second dispatch — a dropped side effect on a surface whose job is autosave or audit is worse than a development-time panic.
+
+A debounced callback runs after its delay resolves, so same-callback reentry cannot catch its cycles. Dioform instead bounds how many times in a row a debounced listener runs on a listener-caused write: past that bound it panics rather than rescheduling forever. The bound catches a debounced listener that writes a Field in its own reach as well as a cycle between two listeners neither of which writes into its own reach.
+
+The count is of runs, not of schedules, so a callback that writes several Fields in one listener's reach is not a cycle — those writes supersede one another and produce one run. Any write made from outside a listener callback, whether the user's or the application's, ends the run and clears the counts, so an ordinary chain — a debounced normalizer whose write wakes a debounced autosave, once per user edit — never reaches the bound.

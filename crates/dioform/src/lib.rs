@@ -143,7 +143,19 @@ pub fn use_form_handle<Model: 'static, Error: 'static>(
     dioxus_core::use_hook_with_cleanup(create, |handle| handle.cleanup())
 }
 
-/// Registers a field-scoped listener for semantic form events during this component's lifetime.
+/// Registers a listener for value replacements reaching one **Field** during this component's
+/// lifetime.
+///
+/// **Listener Reach** for value replacement is the whole of **Field Ancestry**: the listener runs
+/// when `path` is written, when a **Field** it contains is written, and when a **Field** containing
+/// it is written, because writing a **Field** replaces the value of everything inside it and
+/// editing a leaf replaces the value of everything containing it. Siblings never reach it, and a
+/// listener registered on a **Collection Field** additionally hears writes to its own items'
+/// fields. The context therefore reports the identity of the **Field** that was written, which is
+/// not always the one the listener registered on; compare it against `path.identity()` when a side
+/// effect wants that one **Field** alone.
+///
+/// Listeners that match one write run in registration order.
 pub fn use_field_listener<Model, Value, Error, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -160,7 +172,12 @@ pub fn use_field_listener<Model, Value, Error, Listener>(
     );
 }
 
-/// Registers a field-scoped listener for one update origin during this component's lifetime.
+/// Registers a listener for value replacements of one update origin reaching one **Field**.
+///
+/// Reach is [`use_field_listener`]'s. Prefer this hook for a listener that writes a **Field** in
+/// its own reach, such as a dependent-field reset on a container: listener-caused writes are
+/// **Programmatic Updates**, so filtering on [`FieldUpdateOrigin::User`] keeps the listener from
+/// re-entering itself, which is otherwise a panic.
 pub fn use_field_listener_for_origin<Model, Value, Error, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -178,7 +195,12 @@ pub fn use_field_listener_for_origin<Model, Value, Error, Listener>(
     );
 }
 
-/// Registers a debounced field-scoped listener for semantic form events during this component's lifetime.
+/// Registers a debounced listener for value replacements reaching one **Field**.
+///
+/// Reach is [`use_field_listener`]'s; only the timing differs. A callback that writes a **Field**
+/// in its own reach schedules the listener again, and running that way too many times in a row,
+/// with no write from outside a listener in between, panics rather than rescheduling forever — use
+/// [`use_debounced_field_listener_for_origin`] for a callback that writes what it listens to.
 pub fn use_debounced_field_listener<Model, Value, Error, DelayFactory, Delay, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -199,7 +221,12 @@ pub fn use_debounced_field_listener<Model, Value, Error, DelayFactory, Delay, Li
     );
 }
 
-/// Registers a debounced field-scoped listener for one update origin during this component's lifetime.
+/// Registers a debounced listener for value replacements of one update origin reaching one
+/// **Field**.
+///
+/// Reach is [`use_field_listener`]'s and the reschedule bound is
+/// [`use_debounced_field_listener`]'s; filtering on [`FieldUpdateOrigin::User`] keeps a callback
+/// that writes a **Field** in its own reach from rescheduling itself at all.
 pub fn use_debounced_field_listener_for_origin<Model, Value, Error, DelayFactory, Delay, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -2769,11 +2796,68 @@ struct DebouncedFieldListenerEntry<Model, Error> {
     origin: Option<FieldUpdateOrigin>,
     generation: Rc<Cell<u64>>,
     active: Rc<Cell<bool>>,
+    scheduled_from_debounced_callback: Rc<Cell<bool>>,
+    consecutive_listener_caused_runs: Rc<Cell<u32>>,
     schedule: Rc<DebouncedFieldListenerSchedule<Model, Error>>,
 }
 
 struct DebouncedFieldListenerDispatch<Model, Error> {
     schedule: Rc<DebouncedFieldListenerSchedule<Model, Error>>,
+}
+
+/// Counts one debounced run scheduled by a listener rather than from outside one, and reports a
+/// cycle once those runs stop looking like work.
+///
+/// The immediate surface catches a listener cycle by borrowing its callback, but a debounced
+/// callback is borrowed only once its delay resolves, so a debounced listener that writes a
+/// **Field** in its own **Listener Reach** reschedules forever with no diagnostic. A run of such
+/// callbacks is that cycle, and counting them catches a listener that reschedules itself as well as
+/// a cycle between listeners neither of which writes into its own reach, because every loop that
+/// keeps a debounced listener rescheduling runs it, and each run is counted against it. A loop with
+/// no debounced callback in it re-enters an immediate callback instead, and panics there.
+///
+/// The count is of runs rather than of schedules, because one callback that writes several
+/// **Fields** in a listener's reach supersedes its own pending schedule and still produces one run.
+/// Counting schedules would read that fan-out as a loop.
+fn count_listener_caused_run(scheduled_by_listener: &Cell<bool>, consecutive_runs: &Cell<u32>) {
+    if !scheduled_by_listener.get() {
+        consecutive_runs.set(0);
+
+        return;
+    }
+
+    let runs = consecutive_runs.get() + 1;
+    consecutive_runs.set(runs);
+
+    assert!(
+        runs <= MAX_LISTENER_CAUSED_DEBOUNCED_RUNS,
+        "debounced field listener ran {runs} consecutive times from listener-caused updates with \
+         no update from outside a listener in between; use \
+         use_debounced_field_listener_for_origin to avoid listener-caused debounced cycles"
+    );
+}
+
+/// Marks the **Field** writes a debounced listener callback makes while it runs.
+///
+/// A debounced listener has no other way to tell a reschedule it caused from one the user or the
+/// application asked for, because its callback runs long after the write that scheduled it. Only
+/// debounced callbacks are marked: an immediate listener's writes reach a debounced listener from
+/// inside whichever debounced callback started the chain, and a chain with no debounced callback in
+/// it ends in the immediate reentry panic instead.
+struct DebouncedCallbackScope(Rc<Cell<usize>>);
+
+impl DebouncedCallbackScope {
+    fn enter(depth: &Rc<Cell<usize>>) -> Self {
+        depth.set(depth.get() + 1);
+
+        Self(Rc::clone(depth))
+    }
+}
+
+impl Drop for DebouncedCallbackScope {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
+    }
 }
 
 struct FieldBlurListenerEntry<Model, Error> {
@@ -2833,6 +2917,7 @@ struct FormListeners<Model, Error> {
     debounced_form_listeners: Vec<DebouncedFormListenerEntry<Model, Error>>,
     form_blur_listeners: Vec<FormBlurListenerEntry<Model, Error>>,
     submit_listeners: Vec<SubmitListenerEntry<Model, Error>>,
+    debounced_callback_depth: Rc<Cell<usize>>,
 }
 
 impl<Model, Error> Default for FormListeners<Model, Error> {
@@ -2848,8 +2933,34 @@ impl<Model, Error> Default for FormListeners<Model, Error> {
             debounced_form_listeners: Vec::new(),
             form_blur_listeners: Vec::new(),
             submit_listeners: Vec::new(),
+            debounced_callback_depth: Rc::new(Cell::new(0)),
         }
     }
+}
+
+/// How many times a debounced listener may run on a listener-caused write, with no update from
+/// outside a listener in between, before Dioform stops treating the run as work and reports it.
+const MAX_LISTENER_CAUSED_DEBOUNCED_RUNS: u32 = 16;
+
+/// Returns whether a value-replacement listener registered on `listener` hears a write to `written`.
+///
+/// **Listener Reach** for value replacement is the whole of **Field Ancestry**: writing a **Field**
+/// replaces the values of every **Field** it contains, and editing a leaf replaces the value of
+/// every **Field** containing it, so both directions are true of the same event. The one widening
+/// is on the collection component, where the shared predicate is strict in both directions and the
+/// listener rule is ancestor-**or-equal**: a listener on a **Collection Field** also hears writes to
+/// its own items' fields, which it would otherwise miss while hearing structure mutations, leaving
+/// the nearer registration with strictly less than a listener on an enclosing **Field**.
+///
+/// The widening lives in this filter rather than in [`FieldAncestry`], which selectors and
+/// validators depend on staying strict, and rather than in a second identity co-dispatched at each
+/// write site, which would relate every static descendant of the collection path downward to its
+/// items. See ADR-0028.
+fn value_replacement_reaches(listener: &FieldIdentity, written: &FieldIdentity) -> bool {
+    FieldAncestry::relates(listener, written)
+        || written
+            .collection_path()
+            .is_some_and(|collection| listener.static_path() == Some(collection))
 }
 
 fn bump_debounced_generation(generation: &Cell<u64>) -> u64 {
@@ -2905,10 +3016,15 @@ impl<Model, Error> FormListeners<Model, Error> {
             Rc::new(RefCell::new(Box::new(listener)));
         let generation = Rc::new(Cell::new(0));
         let active = Rc::new(Cell::new(true));
+        let scheduled_from_debounced_callback = Rc::new(Cell::new(false));
+        let consecutive_listener_caused_runs = Rc::new(Cell::new(0));
         let schedule_delay = Rc::clone(&delay);
         let schedule_callback = Rc::clone(&callback);
         let schedule_generation = Rc::clone(&generation);
         let schedule_active = Rc::clone(&active);
+        let schedule_scheduled_from_callback = Rc::clone(&scheduled_from_debounced_callback);
+        let schedule_runs = Rc::clone(&consecutive_listener_caused_runs);
+        let schedule_callback_depth = Rc::clone(&self.debounced_callback_depth);
         let schedule_runtime = dioxus_core::Runtime::current();
         let schedule_scope = schedule_runtime.current_scope_id();
         let schedule = Rc::new(
@@ -2920,6 +3036,10 @@ impl<Model, Error> FormListeners<Model, Error> {
                 let listener_generation = Rc::clone(&schedule_generation);
                 let active = Rc::clone(&schedule_active);
                 let listener_callback = Rc::clone(&schedule_callback);
+                let scheduled_from_debounced_callback =
+                    Rc::clone(&schedule_scheduled_from_callback);
+                let runs = Rc::clone(&schedule_runs);
+                let callback_depth = Rc::clone(&schedule_callback_depth);
 
                 schedule_runtime.in_scope(schedule_scope, || {
                     dioxus_core::spawn(async move {
@@ -2941,6 +3061,10 @@ impl<Model, Error> FormListeners<Model, Error> {
                             );
                         };
 
+                        count_listener_caused_run(&scheduled_from_debounced_callback, &runs);
+
+                        let _debounced_callback = DebouncedCallbackScope::enter(&callback_depth);
+
                         (callback.as_mut())(context);
                     });
                 });
@@ -2953,6 +3077,8 @@ impl<Model, Error> FormListeners<Model, Error> {
                 origin,
                 generation,
                 active,
+                scheduled_from_debounced_callback,
+                consecutive_listener_caused_runs,
                 schedule,
             });
 
@@ -3227,7 +3353,7 @@ impl<Model, Error> FormListeners<Model, Error> {
         self.field_listeners
             .iter()
             .filter(|listener| {
-                &listener.field == field
+                value_replacement_reaches(&listener.field, field)
                     && match listener.origin {
                         Some(listener_origin) => listener_origin == origin,
                         None => true,
@@ -3237,24 +3363,54 @@ impl<Model, Error> FormListeners<Model, Error> {
             .collect()
     }
 
-    fn debounced_field_callbacks(
+    /// Selects the debounced listeners a value replacement schedules, recording on each of them
+    /// whether a listener wrote the **Field**.
+    ///
+    /// Each listener reads that back when its delay resolves, which is where the run is counted. A
+    /// write from outside every listener callback ends whatever run preceded it, so the counts
+    /// start over from it rather than accumulating across the independent runs one application
+    /// gesture after another produces.
+    fn debounced_field_dispatch(
         &self,
         field: &FieldIdentity,
         origin: FieldUpdateOrigin,
     ) -> Vec<DebouncedFieldListenerDispatch<Model, Error>> {
+        let scheduled_by_listener = self.is_inside_debounced_callback();
+
+        if !scheduled_by_listener {
+            self.forget_listener_caused_runs();
+        }
+
         self.debounced_field_listeners
             .iter()
             .filter(|listener| {
-                &listener.field == field
+                value_replacement_reaches(&listener.field, field)
                     && match listener.origin {
                         Some(listener_origin) => listener_origin == origin,
                         None => true,
                     }
             })
-            .map(|listener| DebouncedFieldListenerDispatch {
-                schedule: Rc::clone(&listener.schedule),
+            .map(|listener| {
+                listener
+                    .scheduled_from_debounced_callback
+                    .set(scheduled_by_listener);
+
+                DebouncedFieldListenerDispatch {
+                    schedule: Rc::clone(&listener.schedule),
+                }
             })
             .collect()
+    }
+
+    /// Returns whether the value replacement being dispatched was written by a debounced callback.
+    fn is_inside_debounced_callback(&self) -> bool {
+        self.debounced_callback_depth.get() > 0
+    }
+
+    fn forget_listener_caused_runs(&self) {
+        for listener in &self.debounced_field_listeners {
+            listener.consecutive_listener_caused_runs.set(0);
+        }
     }
 
     fn field_blur_callbacks(
@@ -6311,7 +6467,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         let callbacks = self
             .listeners
             .borrow()
-            .debounced_field_callbacks(&field, origin);
+            .debounced_field_dispatch(&field, origin);
 
         for callback in callbacks {
             (callback.schedule)(self.clone(), field.clone(), origin);
