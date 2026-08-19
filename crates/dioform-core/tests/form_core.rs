@@ -922,7 +922,7 @@ fn form_state_snapshot_clears_submit_validation_runtime_state() {
         target
             .intent(ContactSubmitIntent::Publish)
             .begin_submission_after_validation(&stale_validation),
-        SubmitAttempt::Blocked(_)
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
     ));
 
     target.validate_all(ValidationTrigger::Submit);
@@ -953,10 +953,10 @@ fn form_state_snapshot_invalidates_submit_validation_snapshot_when_versions_woul
         .expect("snapshot should restore");
 
     assert_eq!(target.snapshot().name, "Grace");
-    assert!(matches!(
+    assert_eq!(
         target.begin_submission_after_validation(&stale_validation),
-        SubmitAttempt::Blocked(_)
-    ));
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
 }
 
 #[test]
@@ -6767,11 +6767,11 @@ fn begin_submission_after_validation_rejects_reset_and_reinitialize_lifecycles()
 
     assert_eq!(
         reset_form.begin_submission_after_validation(&reset_validation),
-        SubmitAttempt::Blocked(SubmitBlocker::PendingValidation)
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
     );
     assert_eq!(
         reset_form.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
 
     let mut reinitialized_form: FormCore<ContactForm, &'static str> =
@@ -6792,12 +6792,135 @@ fn begin_submission_after_validation_rejects_reset_and_reinitialize_lifecycles()
 
     assert_eq!(
         reinitialized_form.begin_submission_after_validation(&reinitialize_validation),
-        SubmitAttempt::Blocked(SubmitBlocker::PendingValidation)
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
     );
     assert_eq!(
         reinitialized_form.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
+}
+
+#[test]
+fn retired_submit_validation_token_is_an_outcome_only_blocker_without_validators() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    let validation = form
+        .intent(ContactSubmitIntent::Publish)
+        .validation_snapshot();
+
+    form.set_user_field(name_path(), "Grace".to_owned());
+
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+    assert_eq!(
+        form.last_submit_status(),
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
+    );
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish).last_status(),
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
+    );
+    assert!(form.validation_errors().is_empty());
+    assert!(form.submit_availability().is_available());
+    assert!(
+        form.intent(ContactSubmitIntent::Publish)
+            .availability()
+            .is_available()
+    );
+    assert!(
+        !form
+            .submit_availability()
+            .contains(SubmitBlocker::StaleSubmitValidation)
+    );
+    assert!(
+        !form
+            .intent(ContactSubmitIntent::Publish)
+            .availability()
+            .contains(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn submit_validation_errors_outrank_a_retired_submit_validation_token() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTrigger::Submit,
+        |value, _context| value.is_empty().then_some("required").into_iter().collect(),
+    );
+    let validation = form.submit_validation_snapshot();
+
+    form.set_user_field(name_path(), String::new());
+    assert!(!form.validate_for_submit());
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::ValidationErrors)
+    );
+}
+
+#[test]
+fn submit_skipped_async_validator_is_settled_for_its_sync_chain() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTrigger::Submit,
+        |value, _context| value.is_empty().then_some("required").into_iter().collect(),
+    );
+    let availability = form.register_async_field_validator_for_triggers(
+        name_path(),
+        "availability",
+        ValidationTrigger::Submit,
+    );
+
+    assert_eq!(
+        form.begin_submission(),
+        SubmitAttempt::Blocked(SubmitBlocker::ValidationErrors)
+    );
+    assert_eq!(
+        form.field_validation_status(name_path(), availability),
+        Some(ValidationStatus::Skipped)
+    );
+
+    let skipped_validation = form.submit_validation_snapshot();
+    assert!(!form.validate_for_submit());
+    assert_eq!(
+        form.begin_submission_after_validation(&skipped_validation),
+        SubmitAttempt::Blocked(SubmitBlocker::ValidationErrors)
+    );
+
+    form.set_user_field(name_path(), "Ada".to_owned());
+    let passing_validation = form.submit_validation_snapshot();
+    assert!(!form.validate_for_submit());
+    assert_eq!(
+        form.field_validation_status(name_path(), availability),
+        Some(ValidationStatus::Pending)
+    );
+    let run = form
+        .begin_async_field_validation(name_path(), availability, ValidationTrigger::Submit)
+        .expect("async validator should run after the synchronous error clears");
+    assert_eq!(
+        form.complete_async_field_validation(name_path(), availability, &run, Vec::<&str>::new()),
+        Some(ValidationStatus::Valid)
+    );
+
+    assert!(matches!(
+        form.begin_submission_after_validation(&passing_validation),
+        SubmitAttempt::Started(_)
+    ));
 }
 
 #[test]

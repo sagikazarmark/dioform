@@ -1001,7 +1001,7 @@ use validation_chain::{
     collection_item_template_key_for_field,
 };
 
-/// A known reason submission is currently unavailable.
+/// A known reason a submission is unavailable or one submission attempt was refused.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1014,6 +1014,12 @@ pub enum SubmitBlocker {
     PendingValidation,
     /// A submission has started and has not completed yet.
     InFlightSubmission,
+    /// The Submit Validation Token presented by an attempt no longer applies to current form state.
+    ///
+    /// This is an attempt outcome rather than a standing form condition, so
+    /// [`SubmitAvailability`] never contains it. Submit the current draft again to validate it and
+    /// obtain a current authorization.
+    StaleSubmitValidation,
 }
 
 /// UI-oriented submit availability based on current known blockers.
@@ -3226,13 +3232,26 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             return SubmitAttempt::Blocked(SubmitBlocker::InFlightSubmission);
         }
 
-        if self.form_version != validation.form_version
-            || self.field_store.versions() != &validation.field_versions
-            || self.has_submit_blocking_errors(&validation.intent)
-            || self.has_pending_validation_for_submit_intent(&validation.intent)
-            || self.has_unresolved_async_validation_for_submit_intent(&validation.intent)
+        let has_validation_errors = self.has_submit_blocking_errors(&validation.intent);
+        let validation_token_is_retired = self.form_version != validation.form_version
+            || self.field_store.versions() != &validation.field_versions;
+        let has_pending_validation =
+            self.has_pending_validation_for_submit_intent(&validation.intent);
+        let has_unresolved_validation =
+            self.has_unresolved_async_validation_for_submit_intent(&validation.intent);
+
+        if has_validation_errors
+            || validation_token_is_retired
+            || has_pending_validation
+            || has_unresolved_validation
         {
-            let blocker = self.submit_validation_blocker_for_intent(&validation.intent);
+            let blocker = if has_validation_errors {
+                SubmitBlocker::ValidationErrors
+            } else if validation_token_is_retired {
+                SubmitBlocker::StaleSubmitValidation
+            } else {
+                self.submit_validation_blocker_for_intent(&validation.intent)
+            };
             self.record_submit_status(SubmitStatus::Blocked(blocker), validation.intent.clone());
             return SubmitAttempt::Blocked(blocker);
         }
@@ -7777,6 +7796,8 @@ impl<Model, Error> FormCore<Model, Error> {
         {
             SubmitBlocker::PendingValidation
         } else {
+            // Callers guard on errors, pending validation, or unresolved async validation. Keep a
+            // defensive result if a future caller reaches this helper without one of those states.
             SubmitBlocker::ValidationErrors
         }
     }

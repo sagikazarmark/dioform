@@ -153,7 +153,16 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 );
                 SubmitResult::Blocked(blocker)
             }
+            SubmitAttempt::Blocked(blocker @ SubmitBlocker::StaleSubmitValidation) => {
+                self.handle.notify_submit_changed();
+                self.handle.dispatch_submit_listeners(
+                    SubmitListenerEvent::SubmitBlocked(blocker),
+                    validation.intent().clone(),
+                );
+                SubmitResult::Blocked(blocker)
+            }
             SubmitAttempt::Blocked(blocker) => {
+                self.handle.notify_changed();
                 self.handle.dispatch_submit_listeners(
                     SubmitListenerEvent::SubmitBlocked(blocker),
                     validation.intent().clone(),
@@ -305,7 +314,9 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                     );
                 }
                 SubmitAttempt::Blocked(
-                    blocker @ (SubmitBlocker::InFlightSubmission | SubmitBlocker::ParseErrors),
+                    blocker @ (SubmitBlocker::StaleSubmitValidation
+                    | SubmitBlocker::InFlightSubmission
+                    | SubmitBlocker::ParseErrors),
                 ) => {
                     handle.adapter.finish_managed_async_submission();
                     handle.notify_submit_changed();
@@ -514,6 +525,55 @@ mod tests {
         handle: RefCell<Option<FormHandle<AccountForm, &'static str>>>,
         save_result: RefCell<Option<SubmitResult>>,
         submitted_intent: RefCell<Option<ManagedSubmitIntent>>,
+    }
+
+    struct ParseSelectorProbe {
+        handle: FormHandle<AccountForm, &'static str>,
+        renders: Cell<u32>,
+    }
+
+    #[derive(Default)]
+    struct SynchronousRetiredSubmitValidationTokenProbe {
+        handle: RefCell<Option<FormHandle<AccountForm, &'static str>>>,
+        events: RefCell<Vec<SubmitListenerEvent>>,
+    }
+
+    fn parse_selector_probe(probe: Rc<ParseSelectorProbe>) -> Element {
+        probe.handle.parse_errors();
+        probe.renders.set(probe.renders.get() + 1);
+        VNode::empty()
+    }
+
+    fn mounted_parse_selector_probe(
+        handle: FormHandle<AccountForm, &'static str>,
+    ) -> (Rc<ParseSelectorProbe>, VirtualDom) {
+        let probe = Rc::new(ParseSelectorProbe {
+            handle,
+            renders: Cell::new(0),
+        });
+        let mut dom = VirtualDom::new_with_props(parse_selector_probe, Rc::clone(&probe));
+        dom.rebuild_in_place();
+        (probe, dom)
+    }
+
+    fn synchronous_retired_submit_validation_token_probe(
+        probe: Rc<SynchronousRetiredSubmitValidationTokenProbe>,
+    ) -> Element {
+        let form =
+            crate::use_form_handle(|| FormHandle::new_with_error_type(AccountForm { age: 42 }));
+        let listener_probe = Rc::clone(&probe);
+
+        crate::use_submit_listener(form.clone(), move |context| {
+            listener_probe.events.borrow_mut().push(context.event());
+            if context.event() == SubmitListenerEvent::SubmitAttempted {
+                context
+                    .form()
+                    .set_user_field(AccountForm::fields().age(), 43);
+            }
+        });
+
+        probe.handle.borrow_mut().replace(form);
+        VNode::empty()
     }
 
     fn pending_validation_probe(probe: Rc<PendingValidationProbe>) -> Element {
@@ -865,6 +925,7 @@ mod tests {
             .expect("probe should expose its form handle")
             .clone();
         let age = AccountForm::fields().age();
+        let (parse_probe, mut parse_dom) = mounted_parse_selector_probe(handle.clone());
 
         assert_eq!(probe.validation_snapshot.borrow().as_ref(), Some(&(42, 42)));
         assert!(handle.is_submitting());
@@ -880,15 +941,17 @@ mod tests {
         assert!(!handle.is_submitting());
         assert_eq!(
             handle.last_submit_status(),
-            Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+            Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
         );
         assert_eq!(
             probe.events.borrow().as_slice(),
             [
                 SubmitListenerEvent::SubmitAttempted,
-                SubmitListenerEvent::SubmitBlocked(SubmitBlocker::PendingValidation),
+                SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
             ]
         );
+        parse_dom.render_immediate_to_vec();
+        assert_eq!(parse_probe.renders.get(), 1);
         assert_eq!(handle.field_value(age.clone()), 43);
 
         probe.validation.complete(Vec::new());
@@ -898,6 +961,46 @@ mod tests {
         assert!(!handle.is_submitting());
         assert!(handle.validation_errors().is_empty());
         assert_eq!(handle.field_value(age), 43);
+    }
+
+    #[test]
+    fn synchronous_retired_submit_validation_token_refusal_notifies_only_submit_selectors() {
+        let probe = Rc::new(SynchronousRetiredSubmitValidationTokenProbe::default());
+        let mut dom = VirtualDom::new_with_props(
+            synchronous_retired_submit_validation_token_probe,
+            Rc::clone(&probe),
+        );
+        dom.rebuild_in_place();
+        let handle = probe
+            .handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose its form handle")
+            .clone();
+        let (parse_probe, mut parse_dom) = mounted_parse_selector_probe(handle.clone());
+        let submit_calls = Rc::new(Cell::new(0));
+        let handler_calls = Rc::clone(&submit_calls);
+
+        let result = ManagedSubmission::new(handle.clone()).submit_async((), move |_submitted| {
+            handler_calls.set(handler_calls.get() + 1);
+            async {}
+        });
+
+        assert_eq!(
+            result,
+            SubmitResult::Blocked(SubmitBlocker::StaleSubmitValidation)
+        );
+        assert_eq!(submit_calls.get(), 0);
+        assert_eq!(handle.field_value(AccountForm::fields().age()), 43);
+        assert_eq!(
+            probe.events.borrow().as_slice(),
+            [
+                SubmitListenerEvent::SubmitAttempted,
+                SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
+            ]
+        );
+        parse_dom.render_immediate_to_vec();
+        assert_eq!(parse_probe.renders.get(), 1);
     }
 
     #[test]

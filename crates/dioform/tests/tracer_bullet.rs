@@ -13215,7 +13215,7 @@ fn dioxus_managed_async_submit_does_not_submit_stale_files_after_selection_chang
     assert!(!handle.is_submitting());
     assert_eq!(
         handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
 
     probe.validation.complete(Vec::new());
@@ -14639,7 +14639,7 @@ fn dioxus_managed_async_submit_does_not_submit_stale_flushed_validation_after_dr
     assert!(!handle.is_submitting());
     assert_eq!(
         handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
     assert_eq!(handle.field_value(email), "lin@example.com");
 
@@ -14681,7 +14681,7 @@ fn submit_listener_reports_terminal_block_when_managed_validation_becomes_stale(
         probe.events.borrow().as_slice(),
         [
             SubmitListenerEvent::SubmitAttempted,
-            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::PendingValidation),
+            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
         ]
     );
 }
@@ -14719,7 +14719,7 @@ fn dioxus_managed_async_submit_does_not_submit_after_reset_while_validation_is_p
     assert!(!handle.is_submitting());
     assert_eq!(
         handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
 
     probe.validation.complete(Vec::new());
@@ -14757,7 +14757,7 @@ fn submit_listener_reports_terminal_block_when_managed_validation_is_cancelled()
         probe.events.borrow().as_slice(),
         [
             SubmitListenerEvent::SubmitAttempted,
-            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::PendingValidation),
+            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
         ]
     );
 }
@@ -14801,7 +14801,7 @@ fn dioxus_managed_async_submit_does_not_submit_after_reinitialize_while_validati
     );
     assert_eq!(
         handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::PendingValidation))
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
     );
 
     probe.validation.complete(Vec::new());

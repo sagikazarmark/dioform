@@ -248,7 +248,7 @@ impl<Error> SourceState<Error> {
     {
         self.is_async()
             && self.should_run(ValidationTrigger::Submit)
-            && !self.async_status_resolved_for_submit_intent(intent)
+            && self.async_status_needs_run_for_submit_intent(intent)
     }
 
     pub(super) fn should_skip_async_after_sync_failure(&self, trigger: ValidationTrigger) -> bool {
@@ -363,16 +363,6 @@ impl<Error> SourceState<Error> {
                     || !self.submit_status_matches_intent(intent)
             }
         }
-    }
-
-    pub(super) fn async_status_resolved_for_submit_intent<Intent>(&self, intent: &Intent) -> bool
-    where
-        Intent: PartialEq + 'static,
-    {
-        matches!(
-            self.status,
-            ValidationStatus::Valid | ValidationStatus::Invalid
-        ) && self.submit_status_matches_intent(intent)
     }
 
     pub(super) fn replace_errors(
@@ -771,10 +761,20 @@ mod tests {
             Vec::<&'static str>::new(),
         );
 
-        assert!(state.async_status_resolved_for_submit_intent(&Intent::Publish));
-        assert!(!state.async_status_resolved_for_submit_intent(&Intent::SaveDraft));
         assert!(!state.async_status_needs_run_for_submit_intent(&Intent::Publish));
         assert!(state.async_status_needs_run_for_submit_intent(&Intent::SaveDraft));
+
+        state.skip_async(
+            ValidationTrigger::Submit,
+            Some(SubmitIntentSnapshot::new(Intent::Publish)),
+        );
+
+        assert!(!state.async_status_needs_run_for_submit_intent(&Intent::Publish));
+        assert!(state.async_status_needs_run_for_submit_intent(&Intent::SaveDraft));
+
+        state.skip_async(ValidationTrigger::Manual, None);
+
+        assert!(state.async_status_needs_run_for_submit_intent(&Intent::Publish));
     }
 
     #[test]
