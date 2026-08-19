@@ -2,7 +2,9 @@ use std::{collections::HashSet, hash::Hash};
 
 use dioform_core::__private::FieldAncestry;
 
-use super::{FieldIdentity, FieldReactivity, FormReactivity, ReactiveSubscribers};
+use super::{
+    FieldIdentity, FieldReactivity, FieldUpdateOrigin, FormReactivity, ReactiveSubscribers,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum SelectorTransition {
@@ -12,6 +14,11 @@ pub(super) enum SelectorTransition {
     FieldValidationChanged(FieldIdentity),
     CollectionStructureChanged(FieldIdentity),
     CollectionStructureUserChanged(FieldIdentity),
+    CollectionItemsRemoved {
+        collection: FieldIdentity,
+        items: Vec<FieldIdentity>,
+        origin: FieldUpdateOrigin,
+    },
     CollectionItemFieldValueChanged {
         collection: FieldIdentity,
         field: FieldIdentity,
@@ -51,6 +58,7 @@ impl SelectorTransition {
             Self::UnknownMutation
                 | Self::CollectionStructureChanged(_)
                 | Self::CollectionStructureUserChanged(_)
+                | Self::CollectionItemsRemoved { .. }
                 | Self::CollectionItemFieldValueChanged { .. }
                 | Self::CollectionItemFieldUserValueChanged { .. }
                 | Self::ValidationChanged
@@ -125,6 +133,16 @@ impl SelectorTransition {
                 tracked_fields,
                 std::slice::from_ref(&collection),
             ),
+            Self::CollectionItemsRemoved {
+                collection,
+                items,
+                origin,
+            } => Self::collection_items_removed_notifications(
+                collection,
+                items,
+                origin,
+                tracked_fields,
+            ),
             Self::CollectionItemFieldValueChanged { collection, field } => {
                 let written = [collection, field];
 
@@ -190,6 +208,34 @@ impl SelectorTransition {
                 SelectorNotification::FieldParseErrors(field),
             ],
         }
+    }
+
+    fn collection_items_removed_notifications(
+        collection: FieldIdentity,
+        items: Vec<FieldIdentity>,
+        origin: FieldUpdateOrigin,
+        tracked_fields: impl IntoIterator<Item = FieldIdentity>,
+    ) -> Vec<SelectorNotification> {
+        let tracked_fields: Vec<_> = tracked_fields.into_iter().collect();
+        let mut legs = vec![Self::FieldValueChanged(collection.clone()).selector_notifications([])];
+
+        if origin == FieldUpdateOrigin::User {
+            legs.push(Self::FieldMetadataChanged(collection.clone()).selector_notifications([]));
+        }
+
+        for item in &items {
+            legs.push(Self::FieldValueChanged(item.clone()).selector_notifications([]));
+        }
+
+        for field in &tracked_fields {
+            if items.iter().any(|item| FieldAncestry::relates(item, field)) {
+                legs.push(Self::FieldMetadataChanged(field.clone()).selector_notifications([]));
+            }
+        }
+
+        let written: Vec<_> = std::iter::once(collection).chain(items).collect();
+
+        Self::composite_notifications(legs, tracked_fields, &written)
     }
 
     /// Assembles a transition that is composed of several simpler ones over the same write.

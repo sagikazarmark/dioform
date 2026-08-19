@@ -7828,7 +7828,11 @@ impl<Model, Error> FormHandle<Model, Error> {
         let removed = self.write_core(|core| core.remove_collection_item(path, item));
         if removed.is_some() {
             self.unregister_collection_item_parse_bindings(collection.clone(), item);
-            self.notify_collection_changed(collection.clone());
+            self.notify_collection_items_removed(
+                collection.clone(),
+                [item],
+                FieldUpdateOrigin::Programmatic,
+            );
             self.dispatch_value_replacement_listeners(
                 collection,
                 field_name,
@@ -7848,7 +7852,11 @@ impl<Model, Error> FormHandle<Model, Error> {
         let removed = self.write_core(|core| core.remove_user_collection_item(path, item));
         if removed.is_some() {
             self.unregister_collection_item_parse_bindings(collection.clone(), item);
-            self.notify_collection_user_changed(collection.clone());
+            self.notify_collection_items_removed(
+                collection.clone(),
+                [item],
+                FieldUpdateOrigin::User,
+            );
             self.dispatch_value_replacement_listeners(
                 collection,
                 field_name,
@@ -7986,10 +7994,14 @@ impl<Model, Error> FormHandle<Model, Error> {
         if cleared.is_empty() {
             return false;
         }
-        for item in cleared {
-            self.unregister_collection_item_parse_bindings(collection.clone(), item);
+        for item in &cleared {
+            self.unregister_collection_item_parse_bindings(collection.clone(), *item);
         }
-        self.notify_collection_changed(collection.clone());
+        self.notify_collection_items_removed(
+            collection.clone(),
+            cleared,
+            FieldUpdateOrigin::Programmatic,
+        );
         self.dispatch_value_replacement_listeners(
             collection,
             field_name,
@@ -8005,10 +8017,10 @@ impl<Model, Error> FormHandle<Model, Error> {
         if cleared.is_empty() {
             return false;
         }
-        for item in cleared {
-            self.unregister_collection_item_parse_bindings(collection.clone(), item);
+        for item in &cleared {
+            self.unregister_collection_item_parse_bindings(collection.clone(), *item);
         }
-        self.notify_collection_user_changed(collection.clone());
+        self.notify_collection_items_removed(collection.clone(), cleared, FieldUpdateOrigin::User);
         self.dispatch_value_replacement_listeners(collection, field_name, FieldUpdateOrigin::User);
         true
     }
@@ -8190,6 +8202,28 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.notify_selectors(SelectorTransition::CollectionStructureUserChanged(
             collection,
         ));
+    }
+
+    fn notify_collection_items_removed(
+        &self,
+        collection: FieldIdentity,
+        items: impl IntoIterator<Item = CollectionItemIdentity>,
+        origin: FieldUpdateOrigin,
+    ) {
+        let collection_path = collection
+            .static_path()
+            .expect("collection fields in the first slice must have static identities")
+            .to_owned();
+        let items = items
+            .into_iter()
+            .map(|item| FieldIdentity::collection_item_value(collection_path.clone(), item))
+            .collect();
+
+        self.notify_selectors(SelectorTransition::CollectionItemsRemoved {
+            collection,
+            items,
+            origin,
+        });
     }
 
     fn notify_collection_item_field_changed(

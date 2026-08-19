@@ -33,7 +33,9 @@ use dioform::{
     use_number_with, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
     use_select_with, use_submit_listener,
 };
-use dioxus::prelude::{Props, Signal, WritableExt, component, dioxus_signals, rsx, use_signal};
+use dioxus::prelude::{
+    Props, Signal, WritableExt, component, dioxus_signals, rsx, use_memo, use_signal,
+};
 use dioxus_core::{Element, Event, VNode, VirtualDom, use_hook};
 
 /// How many debounced delays a reschedule-loop test completes before it gives up on the guard.
@@ -8361,6 +8363,8 @@ struct CollectionSelectorProbe {
     line_counts: RefCell<Vec<usize>>,
     first_description_values: RefCell<Vec<String>>,
     second_description_values: RefCell<Vec<String>>,
+    first_description_touched: RefCell<Vec<bool>>,
+    second_description_touched: RefCell<Vec<bool>>,
 }
 
 impl CollectionSelectorProbe {
@@ -8377,6 +8381,8 @@ impl CollectionSelectorProbe {
             line_counts: RefCell::new(Vec::new()),
             first_description_values: RefCell::new(Vec::new()),
             second_description_values: RefCell::new(Vec::new()),
+            first_description_touched: RefCell::new(Vec::new()),
+            second_description_touched: RefCell::new(Vec::new()),
         }
     }
 }
@@ -8405,6 +8411,36 @@ fn second_collection_item_value_selector_probe(probe: Rc<CollectionSelectorProbe
     let value = probe.second_description.value();
 
     probe.second_description_values.borrow_mut().push(value);
+
+    VNode::empty()
+}
+
+fn use_collection_item_touched_memo(
+    description: CollectionTextBinding<InvoiceCollectionForm, InvoiceCollectionLine>,
+) -> bool {
+    let is_touched = use_memo(move || description.is_touched());
+
+    is_touched()
+}
+
+fn first_collection_item_metadata_memo_probe(probe: Rc<CollectionSelectorProbe>) -> Element {
+    let is_touched = use_collection_item_touched_memo(probe.first_description.clone());
+
+    probe
+        .first_description_touched
+        .borrow_mut()
+        .push(is_touched);
+
+    VNode::empty()
+}
+
+fn second_collection_item_metadata_memo_probe(probe: Rc<CollectionSelectorProbe>) -> Element {
+    let is_touched = use_collection_item_touched_memo(probe.second_description.clone());
+
+    probe
+        .second_description_touched
+        .borrow_mut()
+        .push(is_touched);
 
     VNode::empty()
 }
@@ -8481,6 +8517,161 @@ fn collection_structure_selectors_rerender_without_rerendering_item_value_reader
         probe.first_description_values.borrow().as_slice(),
         ["Design"]
     );
+}
+
+#[test]
+fn removing_a_collection_item_does_not_wake_surviving_item_value_or_metadata_readers() {
+    let probe = Rc::new(CollectionSelectorProbe::new());
+    let mut count_dom =
+        VirtualDom::new_with_props(collection_count_selector_probe, Rc::clone(&probe));
+    let mut first_dom = VirtualDom::new_with_props(
+        first_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+    let mut first_metadata_dom =
+        VirtualDom::new_with_props(first_collection_item_metadata_memo_probe, Rc::clone(&probe));
+
+    count_dom.rebuild_in_place();
+    first_dom.rebuild_in_place();
+    first_metadata_dom.rebuild_in_place();
+
+    probe.first_description.on_input("Design v2");
+    first_dom.render_immediate_to_vec();
+    first_metadata_dom.render_immediate_to_vec();
+
+    let lines = probe
+        .form
+        .collection(InvoiceCollectionForm::fields().lines());
+    let removed = lines.items()[1].identity();
+
+    assert!(lines.remove(removed).is_some());
+    count_dom.render_immediate_to_vec();
+    first_dom.render_immediate_to_vec();
+    first_metadata_dom.render_immediate_to_vec();
+
+    assert_eq!(probe.line_counts.borrow().as_slice(), [2, 1]);
+    assert_eq!(
+        probe.first_description_values.borrow().as_slice(),
+        ["Design", "Design v2"]
+    );
+    assert_eq!(
+        probe.first_description_touched.borrow().as_slice(),
+        [false, true]
+    );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CollectionRemoval {
+    Remove,
+    RemoveProgrammatic,
+    Clear,
+    ClearProgrammatic,
+}
+
+fn assert_collection_removal_wakes_retained_readers(removal: CollectionRemoval) {
+    let probe = Rc::new(CollectionSelectorProbe::new());
+    let mut first_value_dom = VirtualDom::new_with_props(
+        first_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+    let mut value_dom = VirtualDom::new_with_props(
+        second_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+    let mut first_metadata_dom =
+        VirtualDom::new_with_props(first_collection_item_metadata_memo_probe, Rc::clone(&probe));
+    let mut metadata_dom = VirtualDom::new_with_props(
+        second_collection_item_metadata_memo_probe,
+        Rc::clone(&probe),
+    );
+
+    first_value_dom.rebuild_in_place();
+    value_dom.rebuild_in_place();
+    first_metadata_dom.rebuild_in_place();
+    metadata_dom.rebuild_in_place();
+
+    probe.first_description.on_input("Design v2");
+    first_value_dom.render_immediate_to_vec();
+    first_metadata_dom.render_immediate_to_vec();
+    probe.second_description.on_input("Build v2");
+    value_dom.render_immediate_to_vec();
+    metadata_dom.render_immediate_to_vec();
+
+    let removed = probe
+        .form
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()[1]
+        .identity();
+    let lines = probe
+        .form
+        .collection(InvoiceCollectionForm::fields().lines());
+
+    let removes_all = match removal {
+        CollectionRemoval::Remove => {
+            assert!(lines.remove(removed).is_some());
+            false
+        }
+        CollectionRemoval::RemoveProgrammatic => {
+            assert!(lines.remove_programmatic(removed).is_some());
+            false
+        }
+        CollectionRemoval::Clear => {
+            assert!(lines.clear());
+            true
+        }
+        CollectionRemoval::ClearProgrammatic => {
+            assert!(lines.clear_programmatic());
+            true
+        }
+    };
+
+    first_value_dom.render_immediate_to_vec();
+    value_dom.render_immediate_to_vec();
+    first_metadata_dom.render_immediate_to_vec();
+    metadata_dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.second_description_values.borrow().as_slice(),
+        ["Build", "Build v2", ""]
+    );
+    assert_eq!(
+        probe.second_description_touched.borrow().as_slice(),
+        [false, true, false]
+    );
+    assert!(!probe.second_description.is_resolved());
+
+    if removes_all {
+        assert_eq!(
+            probe.first_description_values.borrow().as_slice(),
+            ["Design", "Design v2", ""]
+        );
+        assert_eq!(
+            probe.first_description_touched.borrow().as_slice(),
+            [false, true, false]
+        );
+        assert!(!probe.first_description.is_resolved());
+    } else {
+        assert_eq!(
+            probe.first_description_values.borrow().as_slice(),
+            ["Design", "Design v2"]
+        );
+        assert_eq!(
+            probe.first_description_touched.borrow().as_slice(),
+            [false, true]
+        );
+    }
+}
+
+#[test]
+fn collection_removal_paths_wake_retained_item_value_and_metadata_readers() {
+    for removal in [
+        CollectionRemoval::Remove,
+        CollectionRemoval::RemoveProgrammatic,
+        CollectionRemoval::Clear,
+        CollectionRemoval::ClearProgrammatic,
+    ] {
+        assert_collection_removal_wakes_retained_readers(removal);
+    }
 }
 
 struct CollectionItemLookupProbe {
