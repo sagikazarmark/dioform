@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use super::{
-    CollectionItemFieldAddress, CollectionItemIdentity, CollectionState, FieldAncestry,
-    FieldIdentity, FormValidationError, FormValidatorContext, ValidationErrorView,
-    ValidationStatus, ValidationStatusView, ValidationTarget, ValidationTrigger,
-    ValidationTriggers, ValidatorContext, ValidatorId, ValidatorSource, validation_lifecycle,
+    CollectionItemIdentity, CollectionState, FieldAncestry, FieldIdentity, FormValidationError,
+    FormValidatorContext, ValidationErrorView, ValidationStatus, ValidationStatusView,
+    ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId,
+    ValidatorSource, validation_lifecycle,
 };
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -399,43 +399,38 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         }
     }
 
-    /// Clears the results and pending state of every field validator attached to one field.
+    /// Clears the results and pending state of every field validator selected by `matches`.
     ///
-    /// Only field-scoped validators for `field` are cleared; form validators (even those that
-    /// emit field-targeted errors) and other fields' validators are untouched.
-    pub(super) fn clear_field_results(&mut self, field: &FieldIdentity) {
+    /// Both directly registered field validators and instantiated collection-item validators are
+    /// selected. Form validators, including those that emit field-targeted errors, are untouched.
+    pub(super) fn clear_field_results_matching(
+        &mut self,
+        mut matches: impl FnMut(&FieldIdentity) -> bool,
+    ) {
         for (key, validator) in self.field_validators.iter_mut() {
-            if &key.field == field {
-                validator.lifecycle.clear();
-            }
-        }
-    }
-
-    pub(super) fn clear_collection_item_field_results(&mut self, collection: &FieldIdentity) {
-        for (key, validator) in self.field_validators.iter_mut() {
-            if CollectionItemFieldAddress::matches_collection(&key.field, collection) {
+            if matches(&key.field) {
                 validator.lifecycle.clear();
             }
         }
 
         for (key, validator) in self.collection_item_field_validator_states.iter_mut() {
-            if CollectionItemFieldAddress::matches_collection(&key.field, collection) {
+            if matches(&key.field) {
                 validator.clear();
             }
         }
     }
 
-    pub(super) fn field_has_validation_state(&self, field: &FieldIdentity) -> bool {
+    pub(super) fn has_field_validation_state_matching(
+        &self,
+        mut matches: impl FnMut(&FieldIdentity) -> bool,
+    ) -> bool {
         self.field_validators.iter().any(|(key, validator)| {
-            (&key.field == field
-                || CollectionItemFieldAddress::matches_collection(&key.field, field))
-                && validator.lifecycle.status() != ValidationStatus::Unknown
+            matches(&key.field) && validator.lifecycle.status() != ValidationStatus::Unknown
         }) || self
             .collection_item_field_validator_states
             .iter()
             .any(|(key, validator)| {
-                CollectionItemFieldAddress::matches_collection(&key.field, field)
-                    && validator.status() != ValidationStatus::Unknown
+                matches(&key.field) && validator.status() != ValidationStatus::Unknown
             })
     }
 

@@ -8047,6 +8047,111 @@ fn reset_field_clears_validation_state_without_materializing_an_optional_parent(
 }
 
 #[test]
+fn resetting_a_clean_container_clears_descendant_validator_results_without_rerunning_them() {
+    let runs = Rc::new(Cell::new(0));
+    let validator_runs = Rc::clone(&runs);
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    let required = form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "required",
+        ValidationTrigger::Manual,
+        move |_value, _context| {
+            validator_runs.set(validator_runs.get() + 1);
+            vec!["name required"]
+        },
+    );
+    form.validate_field(nested_customer_name_path(), ValidationTrigger::Manual);
+    form.mark_field_touched(nested_customer_name_path());
+    form.mark_field_blurred(nested_customer_name_path());
+
+    form.reset_field(nested_customer_path());
+
+    assert!(
+        form.field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_name_path(), required),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(runs.get(), 1);
+    assert!(form.is_field_touched(nested_customer_name_path()));
+    assert!(form.is_field_blurred(nested_customer_name_path()));
+}
+
+#[test]
+fn resetting_a_clean_leaf_clears_its_containers_validator_results() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    let customer_rule = form.register_sync_field_validator_for_triggers(
+        nested_customer_path(),
+        "customer rule",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["customer rejected"],
+    );
+    form.validate_field(nested_customer_path(), ValidationTrigger::Manual);
+
+    form.reset_field(nested_customer_name_path());
+
+    assert!(
+        form.field_validation_errors(nested_customer_path())
+            .is_empty()
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_path(), customer_rule),
+        Some(ValidationStatus::Unknown)
+    );
+}
+
+#[test]
+fn resetting_a_sibling_preserves_unrelated_validator_results() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    let required = form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "required",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["name required"],
+    );
+    form.validate_field(nested_customer_name_path(), ValidationTrigger::Manual);
+    form.set_user_field(nested_customer_account_name_path(), "Acme".to_owned());
+
+    form.reset_field(nested_customer_account_path());
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_name_path())[0].error(),
+        &"name required"
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_name_path(), required),
+        Some(ValidationStatus::Invalid)
+    );
+}
+
+#[test]
+fn clearing_a_related_validator_result_retires_a_submit_validation_token() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "valid name",
+        ValidationTrigger::Manual,
+        |_value, _context| Vec::new(),
+    );
+    form.validate_field(nested_customer_name_path(), ValidationTrigger::Manual);
+    let validation = form.submit_validation_snapshot();
+
+    form.reset_field(nested_customer_path());
+
+    assert!(
+        !form
+            .begin_submission_after_validation(&validation)
+            .is_started()
+    );
+}
+
+#[test]
 fn reset_field_clears_submit_errors_without_materializing_an_optional_parent() {
     let mut form: FormCore<Transaction, &'static str> =
         FormCore::new_with_error_type(Transaction { counterparty: None });

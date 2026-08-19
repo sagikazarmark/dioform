@@ -3414,17 +3414,20 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         });
     }
 
-    /// Restores one field to its current baseline value and clears that field's field-scoped state.
+    /// Restores one field to its current baseline value and clears related field-scoped state.
     ///
     /// The field value is reset to the current **Baseline Value** (so a reinitialized baseline is
     /// honored, not the original configuration value), the field's touched and blurred metadata is
-    /// cleared (dirty is derived and becomes clean once the value matches the baseline), and that
-    /// field's field-scoped validator results and pending validation are cleared. Other fields,
-    /// form-level validators, and submit state for other fields are left untouched.
+    /// cleared (dirty is derived and becomes clean once the value matches the baseline). Validator
+    /// results and pending validation are cleared for the field and every field in **Field
+    /// Ancestry** with it because their values were also replaced. Other fields' metadata, unrelated
+    /// synchronous field-validator results, and submit state for unrelated fields are left
+    /// untouched. When reset enters its state-clearing branch, model-dependent async field
+    /// validation and pending async form validation are invalidated.
     ///
-    /// If the current field value already equals its baseline and has no field-scoped state, this is
-    /// a no-op. Value comparison happens before mutable path access so derived paths cannot
-    /// materialize absent parent values.
+    /// If the current field value already equals its baseline and neither it nor a related field has
+    /// reset-relevant state, this is a no-op. Value comparison happens before mutable path access so
+    /// derived paths cannot materialize absent parent values.
     ///
     /// A `Vec<Item>` path reaches this method like any other, and a tracked collection reached that
     /// way is reset the way [`Self::reset`] resets it: baseline rows keep their **Collection Item
@@ -3448,7 +3451,9 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             && !self.field_store.has_reset_relevant_state(&field_identity)
             && !self
                 .validation_chains
-                .field_has_validation_state(&field_identity)
+                .has_field_validation_state_matching(|validator_field| {
+                    field_reset_reaches_validator_result(&field_identity, validator_field)
+                })
             && !self.submission.has_error_for_field(&field_identity)
         {
             self.clear_submit_errors_for_field(&field_identity);
@@ -3464,15 +3469,25 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();
         self.increment_field_version(&field_identity);
-        self.validation_chains.clear_field_results(&field_identity);
         self.validation_chains
-            .clear_collection_item_field_results(&field_identity);
+            .clear_field_results_matching(|validator_field| {
+                field_reset_reaches_validator_result(&field_identity, validator_field)
+            });
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
         self.clear_submit_errors_for_field(&field_identity);
         self.emit_observer_event(FormObserverEvent::FieldReset { field });
         dropped_collection_items
     }
+}
+
+/// Returns whether resetting `reset` replaces the value described by a validator result on `field`.
+///
+/// Reset uses symmetric **Field Ancestry**, plus collection ancestor-or-equal reach so resetting a
+/// **Collection Field** clears the item-scoped results of baseline rows it keeps. The shared
+/// symmetric predicate deliberately stays strict at that boundary for selectors and validators.
+fn field_reset_reaches_validator_result(reset: &FieldIdentity, field: &FieldIdentity) -> bool {
+    FieldAncestry::relates(reset, field) || FieldAncestry::contains(reset, field)
 }
 
 impl<Model, Error, Intent> FormCoreIntent<'_, Model, Error, Intent> {

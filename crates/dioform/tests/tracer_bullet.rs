@@ -4218,12 +4218,12 @@ fn dioxus_reset_field_emits_a_field_reset_observer_event() {
     )));
 }
 
-struct ResetFieldSubmitErrorProbe {
+struct ResetFieldValidationErrorProbe {
     form: FormHandle<NestedCustomerForm, &'static str>,
     name_error_counts: RefCell<Vec<usize>>,
 }
 
-impl ResetFieldSubmitErrorProbe {
+impl ResetFieldValidationErrorProbe {
     fn new() -> Self {
         Self {
             form: FormHandle::new_with_error_type(NestedCustomerForm::default()),
@@ -4232,7 +4232,7 @@ impl ResetFieldSubmitErrorProbe {
     }
 }
 
-fn reset_field_submit_error_probe(probe: Rc<ResetFieldSubmitErrorProbe>) -> Element {
+fn reset_field_validation_error_probe(probe: Rc<ResetFieldValidationErrorProbe>) -> Element {
     // Subscribes only to the contained leaf's validation-error selector. Resetting the *containing*
     // field wakes the leaf's value selector through **Field Ancestry**, never its validation-error
     // selector, so a re-render here means the reset notified validation subscribers.
@@ -4251,7 +4251,7 @@ fn reset_field_submit_error_probe(probe: Rc<ResetFieldSubmitErrorProbe>) -> Elem
 /// No async validators and no timers are involved: this is the synchronous case.
 #[test]
 fn reset_field_notifies_a_contained_fields_validation_error_reader() {
-    let probe = Rc::new(ResetFieldSubmitErrorProbe::new());
+    let probe = Rc::new(ResetFieldValidationErrorProbe::new());
 
     // Write the leaf so the containing field differs from baseline, then have the server reject the
     // submission with an error targeting that leaf.
@@ -4266,7 +4266,7 @@ fn reset_field_notifies_a_contained_fields_validation_error_reader() {
         SubmitResult::Rejected
     );
 
-    let mut dom = VirtualDom::new_with_props(reset_field_submit_error_probe, Rc::clone(&probe));
+    let mut dom = VirtualDom::new_with_props(reset_field_validation_error_probe, Rc::clone(&probe));
     dom.rebuild_in_place();
 
     assert_eq!(probe.name_error_counts.borrow().as_slice(), [1]);
@@ -4281,6 +4281,37 @@ fn reset_field_notifies_a_contained_fields_validation_error_reader() {
     );
 
     // ... and the mounted reader re-reads it.
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1, 0]);
+}
+
+/// Pins issue #55 at the adapter surface: resetting a containing **Field** clears a contained
+/// field validator's result and wakes a mounted reader of that descendant's **Validation Errors**.
+#[test]
+fn reset_field_notifies_a_descendant_validator_error_reader() {
+    let probe = Rc::new(ResetFieldValidationErrorProbe::new());
+    probe
+        .form
+        .field(nested_customer_name_path())
+        .validator("required")
+        .on(ValidationTrigger::Manual)
+        .check(|_value, _context| vec!["name_required"]);
+    probe.form.validate_all(ValidationTrigger::Manual);
+
+    let mut dom = VirtualDom::new_with_props(reset_field_validation_error_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1]);
+
+    probe.form.reset_field(nested_customer_path());
+    assert!(
+        probe
+            .form
+            .field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.name_error_counts.borrow().as_slice(), [1, 0]);

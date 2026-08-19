@@ -5746,19 +5746,22 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         self.notify_changed();
     }
 
-    /// Restores one field to its current baseline value and clears that field's field-scoped state.
+    /// Restores one field to its current baseline value and clears related field-scoped state.
     ///
     /// The single-field analog of [`Self::reset`]: it restores this field to the current
     /// **Baseline Value** (honoring any [`Self::reinitialize`], not the original config value),
-    /// clears the field's touched, blurred, and dirty metadata and its field-scoped **Validation
-    /// Errors** and pending validation, and clears any mounted **Parse Error** / **Raw Input State**
-    /// for the field. Other fields, form-level validators, and the submit lifecycle are left
-    /// untouched. In-flight async validation for the field is superseded by the field's new version
-    /// and ignored on completion, so no explicit cancellation is needed.
+    /// clears the field's touched, blurred, and dirty metadata, and clears any mounted **Parse
+    /// Error** / **Raw Input State** for the field. Field-scoped **Validation Errors** and pending
+    /// validation are cleared for the field and every field in **Field Ancestry** with it because
+    /// their values were also replaced. Other fields' metadata, unrelated synchronous
+    /// field-validator results, and the submit lifecycle are left untouched. When reset enters its
+    /// state-clearing branch, model-dependent async field validation and pending async form
+    /// validation are invalidated. In-flight async validation for the field is superseded by the
+    /// field's new version and ignored on completion, so no explicit cancellation is needed.
     ///
-    /// If the current typed value already equals its baseline and has no field-scoped state,
-    /// form-core state is left unchanged; adapter-owned **Parse Error** and **Raw Input State** are
-    /// still cleared.
+    /// If the current typed value already equals its baseline and neither it nor a related field has
+    /// reset-relevant state, form-core state is left unchanged; adapter-owned **Parse Error** and
+    /// **Raw Input State** are still cleared.
     ///
     /// Resetting a **Collection Field** preserves the identities and mounted binding registrations
     /// of baseline rows while clearing their item-scoped validator results, **Parse Errors**, and
@@ -5787,12 +5790,13 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         }
 
         // A reset changes validation state well beyond the field it names: it invalidates async
-        // field validators model-wide, stales async form validators, and clears **Submit Errors**
-        // across the field's **Field Ancestry**. Only this transition wakes the form-level
-        // validation-error selectors and the ones of other tracked fields, so it is what lets a
-        // mounted reader see state **Form Core** has already cleared — the same rule, and the same
-        // unconditional coarseness, `apply_field_mutation` applies to every other mutating field
-        // method. A reset that changed nothing therefore still costs one render. See issue #39.
+        // field validators model-wide, stales async form validators, and clears field-validator
+        // results and **Submit Errors** across the field's **Field Ancestry**. Only this transition
+        // wakes the form-level validation-error selectors and the ones of other tracked fields, so
+        // it is what lets a mounted reader see state **Form Core** has already cleared — the same
+        // rule, and the same unconditional coarseness, `apply_field_mutation` applies to every other
+        // mutating field method. A reset that changed nothing therefore still costs one render. See
+        // issue #39.
         //
         // It goes last because it is the only one of the four that wakes validation waiters:
         // emitting it earlier would let a woken waiter read selectors only some of which have been
