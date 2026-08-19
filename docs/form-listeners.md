@@ -34,7 +34,7 @@ Both directions are the same fact. Writing a Field is a whole-subtree assignment
 
 A listener registered on a Collection Field additionally hears value replacements of its own items' fields, so a listener on `invoice.lines` hears both a pushed row and an edited one. Those item events carry a collection item identity: read `collection_path()` and `collection_item_identity()` to identify the row, not `as_str()`, which is item-relative and returns only the child-field segment. That is also why the exact-identity comparison above does not hold for a listener registered on a Collection Field — it never receives its own static identity for an item write.
 
-Reach belongs to the event rather than to the listener, so it is decided per surface. Form-level listeners are unchanged: they already run for every field. Blur listeners and binding lifecycle listeners report that something happened *inside* a Field rather than that a value was replaced. Blur listeners therefore reach outward only, while binding lifecycle listeners currently still dispatch on exact Field Identity.
+Reach belongs to the event rather than to the listener, so it is decided per surface. Form-level listeners are unchanged: they already run for every field. Blur listeners and binding lifecycle listeners report that something happened *inside* a Field rather than that a value was replaced, so both reach outward only.
 
 ## Form-Level Listeners
 
@@ -54,11 +54,11 @@ Use `use_form_blur_listener(form, listener)` when one listener should observe bl
 
 ## Binding Lifecycle Listeners
 
-Use `use_field_binding_listener(form, path, listener)` when a side effect should observe hook-owned binding mount and unmount events for one Field. The current lifecycle slice reports `FieldBindingLifecycle::Mounted` and `FieldBindingLifecycle::Unmounted` for direct field hooks such as `use_parsed_text(...)`, `use_parsed_text_with(...)`, `use_number(...)`, `use_number_with(...)`, `use_date(...)`, `use_date_with(...)`, `use_select(...)`, `use_select_with(...)`, `use_radio_group(...)`, and `use_multi_select(...)`. Binding lifecycle context exposes the `FormHandle`, triggering `FieldIdentity`, and lifecycle state, but no field values.
+Use `use_field_binding_listener(form, path, listener)` when a side effect should observe hook-owned binding mount and unmount events for a Field or any Field it contains. Reach is outward only: a listener on `invoice.customer` hears a binding on `invoice.customer.name`, while a listener on `invoice.customer.name` does not hear a binding on `invoice.customer`. The current lifecycle slice reports `FieldBindingLifecycle::Mounted` and `FieldBindingLifecycle::Unmounted` for direct field hooks such as `use_parsed_text(...)`, `use_parsed_text_with(...)`, `use_number(...)`, `use_number_with(...)`, `use_date(...)`, `use_date_with(...)`, `use_select(...)`, `use_select_with(...)`, `use_radio_group(...)`, and `use_multi_select(...)`. Binding lifecycle context exposes the `FormHandle`, the bound Field's `FieldIdentity`, and lifecycle state, but no field values.
 
-Binding lifecycle listeners are independent of hook order within a component. If a binding hook runs before its listener hook, the listener receives `Mounted` for currently active bindings when it registers. If listener cleanup runs before binding cleanup, the listener receives matching `Unmounted` events before it unregisters.
+Binding lifecycle listeners are independent of hook order within a component. If one or more binding hooks in the listener's reach run before its listener hook, the listener receives one `Mounted` event for each currently active binding when it registers. If listener cleanup runs before binding cleanup, the listener receives matching `Unmounted` events before it unregisters. Live and replayed events always report the bound Field's identity rather than the listener's registered identity.
 
-Collection item child binding lifecycle listeners are not part of this slice because the current listener registration API is scoped to typed `FieldPath<Model, Value>` paths on the root form model.
+Collection item child binding lifecycle events are not part of this slice. Collection item binding hooks currently do not dispatch lifecycle events, while the listener registration API is scoped to typed `FieldPath<Model, Value>` paths on the root form model.
 
 ## Debounced Listeners
 
@@ -103,7 +103,7 @@ For direct field and direct collection item field blur events, Dioform applies l
 4. Dispatch matching form-level blur listeners.
 5. Dispatch matching field-scoped blur listeners.
 
-For direct hook-owned field binding lifecycle events, Dioform records active binding counts per `FieldIdentity`, dispatches mount listeners after the binding is created, and dispatches unmount listeners during hook cleanup before the binding is dropped. Newly registered listeners receive `Mounted` for active bindings of the same field so mount/unmount events remain balanced regardless of listener hook order.
+For direct hook-owned field binding lifecycle events, Dioform records active binding counts per `FieldIdentity`, dispatches mount listeners after the binding is created, and dispatches unmount listeners during hook cleanup before the binding is dropped. Newly registered listeners receive `Mounted` for each active binding at or below their registered Field so mount/unmount events remain balanced regardless of listener hook order.
 
 For debounced value-replacement listeners, Dioform schedules matching form-level debounced listeners before matching field-scoped debounced listeners, mirroring immediate listener scope ordering. Callback execution happens later when the listener's own delay future completes; stale scheduled callbacks are ignored.
 

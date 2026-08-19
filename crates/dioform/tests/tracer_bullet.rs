@@ -33,7 +33,7 @@ use dioform::{
     use_number_with, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
     use_select_with, use_submit_listener,
 };
-use dioxus::prelude::{Props, dioxus_signals, rsx};
+use dioxus::prelude::{Props, Signal, WritableExt, component, dioxus_signals, rsx, use_signal};
 use dioxus_core::{Element, Event, VNode, VirtualDom, use_hook};
 
 /// How many debounced delays a reschedule-loop test completes before it gives up on the guard.
@@ -591,6 +591,7 @@ struct CollectionFieldBlurReachProbe {
 #[derive(Default)]
 struct BindingListenerProbe {
     events: RefCell<Vec<(String, FieldBindingLifecycle)>>,
+    show_binding: RefCell<Option<Signal<bool>>>,
 }
 
 #[derive(Default)]
@@ -1457,6 +1458,150 @@ fn field_binding_listener_after_binding_probe(probe: Rc<BindingListenerProbe>) -
     });
 
     VNode::empty()
+}
+
+fn container_binding_listener_after_descendant_binding_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    let _binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    use_field_binding_listener(form, nested_customer_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+
+    VNode::empty()
+}
+
+fn container_binding_listener_before_descendant_binding_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_binding_listener(form.clone(), nested_customer_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+    let _binding = use_parsed_text(form, nested_customer_name_path());
+
+    VNode::empty()
+}
+
+fn container_binding_listener_after_two_descendant_bindings_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    let _first_binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    let _second_binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    use_field_binding_listener(form, nested_customer_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+
+    VNode::empty()
+}
+
+fn descendant_binding_listener_after_container_binding_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    let _binding = use_parsed_text_with(
+        form.clone(),
+        nested_customer_path(),
+        |value: &str| Ok::<_, String>(nested_customer(value)),
+        |value| value.name.clone(),
+    );
+    use_field_binding_listener(form, nested_customer_name_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+
+    VNode::empty()
+}
+
+fn descendant_binding_listener_before_container_binding_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_binding_listener(form.clone(), nested_customer_name_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+    let _binding = use_parsed_text_with(
+        form,
+        nested_customer_path(),
+        |value: &str| Ok::<_, String>(nested_customer(value)),
+        |value| value.name.clone(),
+    );
+
+    VNode::empty()
+}
+
+fn container_binding_listener_after_distinct_descendant_bindings_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let listener_probe = Rc::clone(&probe);
+
+    let _tax_id_binding = use_parsed_text(form.clone(), nested_customer_tax_id_path());
+    let _name_binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    use_field_binding_listener(form, nested_customer_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+
+    VNode::empty()
+}
+
+#[component]
+fn DescendantBinding(form: FormHandle<NestedCustomerForm>) -> Element {
+    let _binding = use_parsed_text(form, nested_customer_name_path());
+
+    VNode::empty()
+}
+
+fn container_binding_listener_with_descendant_component_probe(
+    probe: Rc<BindingListenerProbe>,
+) -> Element {
+    let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
+    let show_binding = use_signal(|| true);
+    let listener_probe = Rc::clone(&probe);
+
+    use_field_binding_listener(form.clone(), nested_customer_path(), move |context| {
+        listener_probe.events.borrow_mut().push((
+            context.field_identity().as_str().to_owned(),
+            context.lifecycle(),
+        ));
+    });
+
+    probe.show_binding.borrow_mut().replace(show_binding);
+
+    rsx! {
+        if show_binding() {
+            DescendantBinding { form }
+        }
+    }
 }
 
 fn number_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
@@ -2997,6 +3142,241 @@ fn field_binding_listener_registered_after_binding_hook_reports_unmount_on_drop(
             ("email".to_owned(), FieldBindingLifecycle::Unmounted),
         ]
     );
+}
+
+#[test]
+fn container_binding_listener_replays_descendant_mount_and_unmount_with_descendant_identity() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        container_binding_listener_after_descendant_binding_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [(
+            "invoice.customer.name".to_owned(),
+            FieldBindingLifecycle::Mounted,
+        )]
+    );
+
+    drop(dom);
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn container_binding_listener_reports_balanced_live_descendant_lifecycle_events() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        container_binding_listener_before_descendant_binding_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [(
+            "invoice.customer.name".to_owned(),
+            FieldBindingLifecycle::Mounted,
+        )]
+    );
+
+    drop(dom);
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn container_binding_listener_replays_each_descendant_binding_mount_and_unmount() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        container_binding_listener_after_two_descendant_bindings_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+        ]
+    );
+
+    drop(dom);
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn descendant_binding_listener_does_not_replay_container_binding_lifecycle_events() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        descendant_binding_listener_after_container_binding_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+    assert!(probe.events.borrow().is_empty());
+
+    drop(dom);
+    assert!(probe.events.borrow().is_empty());
+}
+
+#[test]
+fn descendant_binding_listener_does_not_hear_live_container_binding_lifecycle_events() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        descendant_binding_listener_before_container_binding_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+    assert!(probe.events.borrow().is_empty());
+
+    drop(dom);
+    assert!(probe.events.borrow().is_empty());
+}
+
+#[test]
+fn container_binding_listener_replays_distinct_descendants_in_identity_order() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        container_binding_listener_after_distinct_descendant_bindings_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.tax_id".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+        ]
+    );
+
+    drop(dom);
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.tax_id".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+            (
+                "invoice.customer.tax_id".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn descendant_binding_unmounts_without_leaving_an_unmatched_container_listener_event() {
+    let probe = Rc::new(BindingListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        container_binding_listener_with_descendant_component_probe,
+        Rc::clone(&probe),
+    );
+
+    dom.rebuild_in_place();
+    let mut show_binding = probe
+        .show_binding
+        .borrow()
+        .as_ref()
+        .copied()
+        .expect("probe should expose its binding visibility signal");
+    show_binding.set(false);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Mounted,
+            ),
+            (
+                "invoice.customer.name".to_owned(),
+                FieldBindingLifecycle::Unmounted,
+            ),
+        ]
+    );
+
+    drop(dom);
+
+    assert_eq!(probe.events.borrow().len(), 2);
 }
 
 #[test]

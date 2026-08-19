@@ -276,6 +276,12 @@ pub fn use_field_blur_listener<Model, Value, Error, Listener>(
 }
 
 /// Registers a listener for hook-owned field binding mount and unmount events.
+///
+/// The listener runs when a binding on `path` or on any **Field** contained by `path` mounts or
+/// unmounts. It does not run for a binding on a **Field** containing `path`. The listener context
+/// reports the bound **Field** that produced the event, which is not always `path`.
+///
+/// Mount and unmount events stay balanced when the listener and binding hooks run in either order.
 pub fn use_field_binding_listener<Model, Value, Error, Listener>(
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -2940,10 +2946,15 @@ struct FieldBindingListenerEntry<Model, Error> {
     callback: Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>,
 }
 
-struct FieldBindingListenerUnregistration<Model, Error> {
-    field: FieldIdentity,
+struct RegisteredFieldBindingListener<Model, Error> {
+    id: FieldBindingListenerId,
     callback: Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>,
-    mounted_count: usize,
+    mounted_bindings: Vec<(FieldIdentity, usize)>,
+}
+
+struct FieldBindingListenerUnregistration<Model, Error> {
+    callback: Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>,
+    mounted_bindings: Vec<(FieldIdentity, usize)>,
 }
 
 struct FormListenerEntry<Model, Error> {
@@ -3190,21 +3201,13 @@ impl<Model, Error> FormListeners<Model, Error> {
         &mut self,
         field: FieldIdentity,
         listener: Listener,
-    ) -> (
-        FieldBindingListenerId,
-        Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>,
-        usize,
-    )
+    ) -> RegisteredFieldBindingListener<Model, Error>
     where
         Listener: FnMut(FieldBindingListenerContext<Model, Error>) + 'static,
     {
         let id = self.next_id;
         self.next_id += 1;
-        let mounted_count = self
-            .mounted_field_bindings
-            .get(&field)
-            .copied()
-            .unwrap_or_default();
+        let mounted_bindings = self.mounted_bindings_contained_by(&field);
         let callback = Rc::new(RefCell::new(
             Box::new(listener) as FieldBindingListenerCallback<Model, Error>
         ));
@@ -3215,7 +3218,11 @@ impl<Model, Error> FormListeners<Model, Error> {
                 callback: Rc::clone(&callback),
             });
 
-        (id, callback, mounted_count)
+        RegisteredFieldBindingListener {
+            id,
+            callback,
+            mounted_bindings,
+        }
     }
 
     fn unregister_field_binding_listener(
@@ -3227,17 +3234,20 @@ impl<Model, Error> FormListeners<Model, Error> {
             .iter()
             .position(|listener| listener.id == id)?;
         let listener = self.field_binding_listeners.remove(index);
-        let mounted_count = self
-            .mounted_field_bindings
-            .get(&listener.field)
-            .copied()
-            .unwrap_or_default();
+        let mounted_bindings = self.mounted_bindings_contained_by(&listener.field);
 
         Some(FieldBindingListenerUnregistration {
-            field: listener.field,
             callback: listener.callback,
-            mounted_count,
+            mounted_bindings,
         })
+    }
+
+    fn mounted_bindings_contained_by(&self, field: &FieldIdentity) -> Vec<(FieldIdentity, usize)> {
+        self.mounted_field_bindings
+            .iter()
+            .filter(|(mounted_field, _)| FieldAncestry::contains(field, mounted_field))
+            .map(|(mounted_field, count)| (mounted_field.clone(), *count))
+            .collect()
     }
 
     fn record_field_binding_lifecycle(
@@ -3498,7 +3508,7 @@ impl<Model, Error> FormListeners<Model, Error> {
     ) -> Vec<Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>> {
         self.field_binding_listeners
             .iter()
-            .filter(|listener| &listener.field == field)
+            .filter(|listener| FieldAncestry::contains(&listener.field, field))
             .map(|listener| Rc::clone(&listener.callback))
             .collect()
     }
@@ -3663,13 +3673,11 @@ impl<Model, Error> Drop for FieldBindingListenerRegistrationInner<Model, Error> 
             return;
         };
 
-        for _ in 0..unregistration.mounted_count {
-            self.handle.dispatch_field_binding_callback(
-                Rc::clone(&unregistration.callback),
-                unregistration.field.clone(),
-                FieldBindingLifecycle::Unmounted,
-            );
-        }
+        self.handle.dispatch_field_binding_replay(
+            unregistration.callback,
+            unregistration.mounted_bindings,
+            FieldBindingLifecycle::Unmounted,
+        );
     }
 }
 
@@ -6400,20 +6408,18 @@ impl<Model, Error> FormHandle<Model, Error> {
         Listener: FnMut(FieldBindingListenerContext<Model, Error>) + 'static,
     {
         let field = path.identity();
-        let (id, callback, mounted_count) = self
+        let registration = self
             .listeners
             .borrow_mut()
-            .register_field_binding_listener(field.clone(), listener);
+            .register_field_binding_listener(field, listener);
 
-        for _ in 0..mounted_count {
-            self.dispatch_field_binding_callback(
-                Rc::clone(&callback),
-                field.clone(),
-                FieldBindingLifecycle::Mounted,
-            );
-        }
+        self.dispatch_field_binding_replay(
+            Rc::clone(&registration.callback),
+            registration.mounted_bindings,
+            FieldBindingLifecycle::Mounted,
+        );
 
-        FieldBindingListenerRegistration::new(self.clone(), id)
+        FieldBindingListenerRegistration::new(self.clone(), registration.id)
     }
 
     fn register_form_listener<Listener>(
@@ -6657,6 +6663,23 @@ impl<Model, Error> FormHandle<Model, Error> {
         };
 
         (callback.as_mut())(context);
+    }
+
+    fn dispatch_field_binding_replay(
+        &self,
+        callback: Rc<RefCell<FieldBindingListenerCallback<Model, Error>>>,
+        mounted_bindings: Vec<(FieldIdentity, usize)>,
+        lifecycle: FieldBindingLifecycle,
+    ) {
+        for (field, count) in mounted_bindings {
+            for _ in 0..count {
+                self.dispatch_field_binding_callback(
+                    Rc::clone(&callback),
+                    field.clone(),
+                    lifecycle,
+                );
+            }
+        }
     }
 
     fn remember_active_submit_intent<Intent>(&self, intent: Intent)
