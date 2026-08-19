@@ -121,9 +121,11 @@ pub fn Signup() -> Element {
                         }
                     }
                     div { class: "flex gap-2 border-t border-base-300 pt-4",
+                        // Keep this visual-only: the submit attempt reveals errors still withheld
+                        // by the Error Visibility policy, so the button must remain actionable.
                         button {
                             class: "btn btn-primary",
-                            class: if !can_submit { "btn-disabled" },
+                            class: if !can_submit { "opacity-50" },
                             r#type: "submit",
                             "Create account"
                         }

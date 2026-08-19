@@ -27,6 +27,7 @@ pub fn ServerValidationExample() -> Element {
     let mut message = use_signal(String::new);
 
     let email_errors = form.visible_field_validation_errors(fields.email());
+    let form_errors = form.visible_form_validation_errors();
     let is_submitting = form.is_submitting();
 
     rsx! {
@@ -64,6 +65,9 @@ pub fn ServerValidationExample() -> Element {
                 for error in email_errors {
                     p { class: "mt-1 text-sm text-error", "{error.error()}" }
                 }
+            }
+            for error in form_errors {
+                p { class: "text-sm text-error", "{error.error()}" }
             }
             button {
                 class: "btn btn-primary btn-sm",

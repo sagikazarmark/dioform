@@ -45,6 +45,13 @@ Progressive preflight checks mounted **Parse Blockers**, runs synchronous submit
 
 **Submit Availability** is only a prediction for browser-owned submit modes. Avoid disabling native fallback submit buttons solely from JS-only availability state unless intentionally requiring JavaScript; otherwise a no-JS user may lose the browser POST fallback even though the server remains the final authority.
 
+For **Dioxus-Managed Submission**, a hard-disabled submit button causes a different dead end: it
+suppresses the submit attempt that would reveal stored errors still withheld by the **Error
+Visibility** policy. Keep the control actionable, use styling to communicate predicted availability
+when useful, and render `submit_availability().blockers()` with details from the unfiltered
+`validation_errors()`, `parse_errors()`, and `validation_statuses()` accessors when users need to know
+why **Submit Availability** is currently false.
+
 Intentful progressive forms still pass **Submit Intent** explicitly for client preflight. Do not infer typed intent from submit button `name` or `value`; those remain ordinary HTML data for the server.
 
 ```rust

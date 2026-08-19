@@ -21,6 +21,19 @@ visibility (for example, a summary shown only after a submit attempt that should
 everything), and `visible_validation_errors()` when the summary should track exactly what the inline
 field messages show.
 
+The unfiltered aggregate also explains why **Submit Availability** reports unavailable before the
+visibility policy exposes an inline message. Pair `submit_availability().blockers()` with the
+corresponding detail accessor: `validation_errors()` for validation errors, `parse_errors()` for parse
+blockers, and `validation_statuses()` for pending validation. A managed submit control should remain
+actionable even when availability is false, because the submit attempt is what reveals errors
+currently withheld by the visibility policy.
+
+After a submit attempt, every **Error Visibility** policy short-circuits to visible. The
+`visible_*_for_intent` accessors are therefore already unfiltered by visibility while still filtering
+submit-scoped errors for the relevant **Submit Intent**. This is why there is no separate
+`validation_errors_for_intent()` accessor: despite the `visible_` prefix, those accessors do not
+under-report errors after an attempt.
+
 Both are pure derived reads over existing source-aware storage; they add no new state and change no
 semantics. Scoped accessors remain available when you do not need the whole form:
 `field_validation_errors(path)`, `form_validation_errors()`, and the `visible_*` variants.

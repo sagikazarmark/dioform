@@ -71,6 +71,7 @@ pub fn ErrorSummaryExample() -> Element {
     let email_oninput = email.clone();
     let phone_oninput = phone.clone();
     let age_oninput = age.clone();
+    let submit = form.managed_submit();
 
     let summary = form.visible_validation_errors();
 
@@ -78,7 +79,13 @@ pub fn ErrorSummaryExample() -> Element {
         DemoSurface {
             primary: rsx! {
                 DemoPane { label: "Contact fields",
-                    div { class: "space-y-3",
+                    form {
+                        class: "space-y-3",
+                        onsubmit: move |event| {
+                            let _ = submit.on_submit(event, |_submission| {
+                                SubmitErrors::<ContactForm, String>::none()
+                            });
+                        },
                         input {
                             class: "input input-bordered input-sm w-full",
                             placeholder: "Email",
@@ -103,6 +110,11 @@ pub fn ErrorSummaryExample() -> Element {
                             value: age.value(),
                             oninput: move |e| age_oninput.on_input(e.value()),
                             onblur: move |_| age.on_blur(),
+                        }
+                        button {
+                            class: "btn btn-primary btn-sm",
+                            r#type: "submit",
+                            "Check form"
                         }
                     }
                 }
