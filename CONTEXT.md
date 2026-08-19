@@ -122,6 +122,14 @@ _Avoid_: Validation error, parser error
 A path emitted by an external validation library as part of an **External Validation Diagnostic**, separate from a typed **Field Path** or rendered **Field Name** until a **Validation Adapter** explicitly maps it.
 _Avoid_: Field path, field name
 
+**Explicit Path Mapping**:
+The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs; an unregistered path is never matched by **Field Name**, serde name, or Rust field name, and resolves to the form.
+_Avoid_: Field name matching, string path map, implicit binding, path inference
+
+**Unmapped Diagnostic**:
+An **External Validation Diagnostic** whose **External Diagnostic Path** matched no **Explicit Path Mapping** entry, so it resolved to a form-scoped **Validation Target** rather than a typed **Field**.
+_Avoid_: Unknown diagnostic, dropped diagnostic, unmatched path, unrouted error
+
 **Validation Trigger**:
 A semantic form event that determines when validation runs, such as a value change, field blur, submit request, or form initialization.
 _Avoid_: DOM event, Dioxus event
