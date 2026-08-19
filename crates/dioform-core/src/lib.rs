@@ -3451,6 +3451,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
                 .field_has_validation_state(&field_identity)
             && !self.submission.has_error_for_field(&field_identity)
         {
+            self.clear_submit_errors_for_field(&field_identity);
             return Vec::new();
         }
 

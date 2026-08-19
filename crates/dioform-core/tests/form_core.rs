@@ -8065,6 +8065,104 @@ fn reset_field_clears_submit_errors_without_materializing_an_optional_parent() {
 }
 
 #[test]
+fn resetting_a_clean_container_clears_submit_errors_for_fields_it_contains() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    assert_eq!(
+        form.submit(|_| SubmitError::field(nested_customer_name_path(), "name rejected")),
+        SubmitResult::Rejected
+    );
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&observed);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+
+    form.reset_field(nested_customer_path());
+
+    assert!(
+        form.field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+    assert!(observed.borrow().is_empty());
+}
+
+#[test]
+fn resetting_a_clean_nested_field_clears_submit_errors_for_its_container() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    assert_eq!(
+        form.submit(|_| SubmitError::field(nested_customer_path(), "customer rejected")),
+        SubmitResult::Rejected
+    );
+
+    form.reset_field(nested_customer_name_path());
+
+    assert!(
+        form.field_validation_errors(nested_customer_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn clearing_related_submit_errors_does_not_retire_another_intents_validation_snapshot() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .submit(|_| SubmitError::field(nested_customer_name_path(), "name rejected")),
+        SubmitResult::Rejected
+    );
+    let validation = form
+        .intent(ContactSubmitIntent::SaveDraft)
+        .validation_snapshot();
+
+    form.reset_field(nested_customer_path());
+
+    assert!(
+        form.intent(ContactSubmitIntent::SaveDraft)
+            .begin_submission_after_validation(&validation)
+            .is_started()
+    );
+}
+
+#[test]
+fn resetting_a_clean_field_without_submit_errors_is_a_complete_no_op() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Grace".to_owned(),
+        });
+    let validator =
+        form.register_async_form_validator_for_triggers("account", ValidationTrigger::Manual);
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("manual async validation should start");
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&observed);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+    let state = form.state_snapshot();
+    let validation = form.submit_validation_snapshot();
+    let field_versions = form.submit_validation_field_versions();
+
+    form.reset_field(name_path());
+
+    assert_eq!(form.state_snapshot(), state);
+    assert_eq!(form.submit_validation_snapshot(), validation);
+    assert_eq!(form.submit_validation_field_versions(), field_versions);
+    assert!(observed.borrow().is_empty());
+    assert_eq!(
+        form.form_validation_status_by_id(validator),
+        Some(ValidationStatus::Pending)
+    );
+    assert_eq!(
+        form.complete_async_form_validation(
+            validator,
+            &run,
+            Vec::<FormValidationError<&str>>::new(),
+        ),
+        Some(ValidationStatus::Valid)
+    );
+}
+
+#[test]
 fn reinitialize_explicitly_replaces_baseline_and_current_values() {
     let mut form = FormCore::new(ContactForm {
         name: "Grace".to_owned(),
