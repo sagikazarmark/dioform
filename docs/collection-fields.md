@@ -299,6 +299,12 @@ values can be inspected through `selected_values()` or `items()`. Each `MultiSel
 opaque `CollectionItemIdentity`, item-level metadata, dirty state, accessibility helper, and
 validation errors.
 
+The blur entry point determines which **Fields** are marked. `MultiSelectOptionBinding::on_blur`
+marks the **Collection Field** and that option's selected value; an unselected option marks only the
+collection. `MultiSelectBinding::on_blur` marks the collection alone, while
+`MultiSelectItem::on_blur` marks that selected value alone. Per-value blur validation therefore runs
+only for the selected value whose control the user left.
+
 A multi-select is keyed by **value** rather than by identity: `is_selected(value)`,
 `selected_item(value)` and `selected_identity(value)` are the lookups, and `select` / `deselect` /
 `toggle` take a value too. It therefore has no `item(identity)` counterpart — a caller holding one of

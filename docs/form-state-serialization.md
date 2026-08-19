@@ -6,6 +6,11 @@ Opt-in **Form State Serialization** is different. Applications that intentionall
 
 The current snapshot format is versioned with `FORM_STATE_SERIALIZATION_VERSION`. The embedded collection identity format is versioned separately with `COLLECTION_IDENTITY_SERIALIZATION_VERSION` so future collection identity changes can reject incompatible snapshots clearly. Treat snapshots as same-deployment transfer, not durable long-term persistence: restoring assumes a compatible crate version, compatible serialized model and error shapes, and the same normal validator and submit configuration.
 
+Snapshot version 4 narrows the meaning of multi-select item `blurred` flags. They now mean that the
+specific selected value's control was left, rather than that the multi-select group was blurred. The
+wire shape is unchanged, but older snapshots are rejected because their per-item metadata has the
+older meaning.
+
 Included in the current core snapshot:
 
 - **Form Draft** baseline and current values.

@@ -659,6 +659,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
     );
 
     let snapshot = source.state_snapshot();
+    assert_eq!(snapshot.version(), 4);
     let identity_state = snapshot.collection_identity_state();
     let lines_state = identity_state
         .collections()

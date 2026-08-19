@@ -652,6 +652,13 @@ struct MultiSelectListenerProbe {
 }
 
 #[derive(Default)]
+struct MultiSelectBlurProbe {
+    topics: RefCell<Option<dioform::MultiSelectBinding<MultiSelectForm, Topic>>>,
+    events: RefCell<Vec<(FieldIdentity, String)>>,
+    select_on_collection_blur: Cell<Option<Topic>>,
+}
+
+#[derive(Default)]
 struct ManagedSubmitListenerProbe {
     submit: AsyncGate<()>,
     handle: RefCell<Option<FormHandle<ProfileForm>>>,
@@ -1869,6 +1876,38 @@ fn multi_select_listener_probe(probe: Rc<MultiSelectListenerProbe>) -> Element {
     VNode::empty()
 }
 
+fn multi_select_blur_probe(probe: Rc<MultiSelectBlurProbe>) -> Element {
+    let form = use_form_handle(|| {
+        FormHandle::new(MultiSelectForm {
+            topics: vec![Topic::Rust, Topic::Dioxus, Topic::Accessibility],
+        })
+    });
+    let listener_probe = Rc::clone(&probe);
+    let listener_form = form.clone();
+
+    use_form_blur_listener(form.clone(), move |context| {
+        listener_probe
+            .events
+            .borrow_mut()
+            .push((context.field_identity(), context.field_name().to_owned()));
+
+        if context.field_identity() == MultiSelectForm::fields().topics().identity()
+            && let Some(value) = listener_probe.select_on_collection_blur.take()
+        {
+            listener_form
+                .multi_select(MultiSelectForm::fields().topics())
+                .select(value);
+        }
+    });
+
+    probe
+        .topics
+        .borrow_mut()
+        .replace(use_multi_select(form, MultiSelectForm::fields().topics()));
+
+    VNode::empty()
+}
+
 fn submit_listener_probe(probe: Rc<SubmitListenerProbe>) -> Element {
     let form = use_form_handle(|| {
         FormHandle::new(ProfileForm {
@@ -2772,6 +2811,112 @@ fn multi_select_user_mutations_dispatch_value_replacement_listeners() {
             FieldUpdateOrigin::User,
         )]
     );
+}
+
+#[test]
+fn multi_select_option_blur_dispatches_for_the_collection_and_that_option_only() {
+    let probe = Rc::new(MultiSelectBlurProbe::default());
+    let mut dom = VirtualDom::new_with_props(multi_select_blur_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let topics = probe
+        .topics
+        .borrow()
+        .as_ref()
+        .expect("probe should expose multi-select binding")
+        .clone();
+    let rust = topics
+        .selected_item(&Topic::Rust)
+        .expect("Rust should be selected");
+    let dioxus = topics
+        .selected_item(&Topic::Dioxus)
+        .expect("Dioxus should be selected");
+    let accessibility = topics
+        .selected_item(&Topic::Accessibility)
+        .expect("Accessibility should be selected");
+
+    topics.option(Topic::Dioxus).on_blur();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            (
+                MultiSelectForm::fields().topics().identity(),
+                "topics".to_owned(),
+            ),
+            (dioxus.field_identity(), "topics[1]".to_owned()),
+        ]
+    );
+    assert!(topics.is_blurred());
+    assert!(!rust.is_blurred());
+    assert!(dioxus.is_blurred());
+    assert!(!accessibility.is_blurred());
+}
+
+#[test]
+fn multi_select_item_blur_dispatches_for_that_value_only() {
+    let probe = Rc::new(MultiSelectBlurProbe::default());
+    let mut dom = VirtualDom::new_with_props(multi_select_blur_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let topics = probe
+        .topics
+        .borrow()
+        .as_ref()
+        .expect("probe should expose multi-select binding")
+        .clone();
+    let rust = topics
+        .selected_item(&Topic::Rust)
+        .expect("Rust should be selected");
+    let dioxus = topics
+        .selected_item(&Topic::Dioxus)
+        .expect("Dioxus should be selected");
+
+    dioxus.on_blur();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [(dioxus.field_identity(), "topics[1]".to_owned())]
+    );
+    assert!(!topics.is_blurred());
+    assert!(!rust.is_blurred());
+    assert!(dioxus.is_blurred());
+}
+
+#[test]
+fn multi_select_option_blur_uses_the_selection_from_when_blur_started() {
+    let probe = Rc::new(MultiSelectBlurProbe::default());
+    let mut dom = VirtualDom::new_with_props(multi_select_blur_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    let topics = probe
+        .topics
+        .borrow()
+        .as_ref()
+        .expect("probe should expose multi-select binding")
+        .clone();
+    let accessibility = topics.option(Topic::Accessibility);
+    accessibility.on_change(false);
+    probe
+        .select_on_collection_blur
+        .set(Some(Topic::Accessibility));
+
+    accessibility.on_blur();
+
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [(
+            MultiSelectForm::fields().topics().identity(),
+            "topics".to_owned(),
+        )]
+    );
+    let selected_accessibility = accessibility
+        .selected_item()
+        .expect("collection blur listener should select Accessibility");
+    assert!(!selected_accessibility.is_blurred());
 }
 
 #[test]
@@ -8791,6 +8936,53 @@ struct MultiSelectForm {
     topics: Vec<Topic>,
 }
 
+struct MultiSelectValidationNotifyProbe {
+    form: FormHandle<MultiSelectForm>,
+    item: dioform::MultiSelectItem<MultiSelectForm, Topic>,
+    form_error_reads: Cell<usize>,
+}
+
+impl MultiSelectValidationNotifyProbe {
+    fn new() -> Self {
+        let form = FormHandle::new(MultiSelectForm {
+            topics: vec![Topic::Dioxus],
+        })
+        .with_validation_mode(ValidationMode::on_submit());
+        let item = form
+            .multi_select(MultiSelectForm::fields().topics())
+            .selected_item(&Topic::Dioxus)
+            .expect("Dioxus should be selected");
+
+        Self {
+            form,
+            item,
+            form_error_reads: Cell::new(0),
+        }
+    }
+}
+
+fn multi_select_validation_notify_probe(probe: Rc<MultiSelectValidationNotifyProbe>) -> Element {
+    let _ = probe.form.form_validation_errors();
+    probe.form_error_reads.set(probe.form_error_reads.get() + 1);
+
+    VNode::empty()
+}
+
+#[test]
+fn multi_select_item_blur_notifies_validation_selectors_only_when_configured() {
+    let probe = Rc::new(MultiSelectValidationNotifyProbe::new());
+    let mut dom =
+        VirtualDom::new_with_props(multi_select_validation_notify_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    assert_eq!(probe.form_error_reads.get(), 1);
+
+    probe.item.on_blur();
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.form_error_reads.get(), 1);
+}
+
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct CollectionHelperForm {
     rows: Vec<CollectionHelperRow>,
@@ -10420,6 +10612,34 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
 }
 
 #[test]
+fn dioxus_multi_select_binding_blur_marks_only_the_collection() {
+    let handle = FormHandle::new(MultiSelectForm {
+        topics: vec![Topic::Rust, Topic::Dioxus, Topic::Accessibility],
+    });
+    let topics = handle.multi_select(MultiSelectForm::fields().topics());
+    let items = topics.items();
+
+    topics.on_blur();
+
+    assert!(topics.is_blurred());
+    assert!(items.iter().all(|item| !item.is_blurred()));
+}
+
+#[test]
+fn dioxus_unselected_multi_select_option_blur_marks_only_the_collection() {
+    let handle = FormHandle::new(MultiSelectForm {
+        topics: vec![Topic::Rust, Topic::Dioxus],
+    });
+    let topics = handle.multi_select(MultiSelectForm::fields().topics());
+    let items = topics.items();
+
+    topics.option(Topic::Accessibility).on_blur();
+
+    assert!(topics.is_blurred());
+    assert!(items.iter().all(|item| !item.is_blurred()));
+}
+
+#[test]
 fn dioxus_multi_select_item_validation_attaches_to_selected_value_identity() {
     let handle: FormHandle<MultiSelectForm, &'static str> =
         FormHandle::new_with_error_type(MultiSelectForm {
@@ -10456,9 +10676,15 @@ fn dioxus_multi_select_item_validation_attaches_to_selected_value_identity() {
     assert_eq!(dioxus.validation_errors()[0].error(), &"topic_unavailable");
     assert!(dioxus.visible_validation_errors().is_empty());
 
-    topics.on_blur();
+    topics.option(Topic::Dioxus).on_blur();
 
     assert!(dioxus.is_blurred());
+    assert!(
+        !topics
+            .selected_item(&Topic::Rust)
+            .expect("initial value should remain selected")
+            .is_blurred()
+    );
     assert_eq!(
         dioxus.visible_validation_errors()[0].error(),
         &"topic_unavailable"
@@ -10485,6 +10711,74 @@ fn dioxus_multi_select_item_validation_attaches_to_selected_value_identity() {
         SubmitResult::Succeeded
     );
     assert_eq!(submitted_topics.borrow().as_ref(), Some(&vec![Topic::Rust]));
+}
+
+#[test]
+fn dioxus_multi_select_option_blur_reveals_only_that_selected_value_errors() {
+    let handle: FormHandle<MultiSelectForm, &'static str> =
+        FormHandle::new_with_error_type(MultiSelectForm {
+            topics: vec![Topic::Rust],
+        })
+        .with_validation_mode(ValidationMode::on_change());
+    let topics = handle.multi_select(MultiSelectForm::fields().topics());
+
+    topics
+        .item_validator("allowed_topic")
+        .check(|value, _context| {
+            (*value != Topic::Rust)
+                .then_some("topic_unavailable")
+                .into_iter()
+                .collect()
+        });
+    topics.option(Topic::Dioxus).on_change(true);
+    topics.option(Topic::Accessibility).on_change(true);
+
+    let dioxus = topics
+        .selected_item(&Topic::Dioxus)
+        .expect("Dioxus should be selected");
+    let accessibility = topics
+        .selected_item(&Topic::Accessibility)
+        .expect("Accessibility should be selected");
+
+    assert_eq!(dioxus.validation_errors().len(), 1);
+    assert_eq!(accessibility.validation_errors().len(), 1);
+    assert!(dioxus.visible_validation_errors().is_empty());
+    assert!(accessibility.visible_validation_errors().is_empty());
+
+    topics.option(Topic::Accessibility).on_blur();
+
+    assert!(!dioxus.is_blurred());
+    assert!(dioxus.visible_validation_errors().is_empty());
+    assert!(!dioxus.accessibility().aria_invalid());
+    assert!(accessibility.is_blurred());
+    assert_eq!(accessibility.visible_validation_errors().len(), 1);
+    assert!(accessibility.accessibility().aria_invalid());
+}
+
+#[test]
+fn dioxus_multi_select_option_blur_runs_item_validation() {
+    let handle: FormHandle<MultiSelectForm, &'static str> =
+        FormHandle::new_with_error_type(MultiSelectForm {
+            topics: vec![Topic::Dioxus],
+        })
+        .with_validation_mode(ValidationMode::on_blur());
+    let topics = handle.multi_select(MultiSelectForm::fields().topics());
+
+    topics
+        .item_validator("allowed_topic")
+        .check_optional(|value, _context| (*value == Topic::Dioxus).then_some("topic_unavailable"));
+    let dioxus = topics
+        .selected_item(&Topic::Dioxus)
+        .expect("Dioxus should be selected");
+
+    assert!(dioxus.validation_errors().is_empty());
+
+    topics.option(Topic::Dioxus).on_blur();
+
+    assert!(dioxus.is_blurred());
+    assert_eq!(dioxus.validation_errors().len(), 1);
+    assert_eq!(dioxus.visible_validation_errors().len(), 1);
+    assert!(dioxus.accessibility().aria_invalid());
 }
 
 #[test]

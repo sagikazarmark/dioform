@@ -2741,7 +2741,7 @@ impl CollectionState {
 }
 
 /// Current compatibility version for serialized form-state snapshots.
-pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 3;
+pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 4;
 
 /// Current compatibility version for serialized collection identity state.
 pub const COLLECTION_IDENTITY_SERIALIZATION_VERSION: u32 = 1;

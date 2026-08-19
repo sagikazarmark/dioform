@@ -5010,13 +5010,9 @@ impl<Model, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
         }
     }
 
-    /// Marks the multi-select field and current selected values as blurred.
+    /// Marks the multi-select field as blurred.
     pub fn on_blur(&self) {
         self.handle.mark_field_blurred(self.path.clone());
-
-        for item in self.items() {
-            item.on_blur();
-        }
     }
 
     /// Returns validation errors attached to the multi-select field itself.
@@ -5202,8 +5198,11 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
 
     /// Marks this selected value as blurred and touched.
     pub fn on_blur(&self) {
-        self.handle
-            .mark_multi_select_item_blurred(self.path.clone(), self.identity());
+        self.handle.mark_collection_item_field_blurred(
+            self.path.clone(),
+            self.identity(),
+            collection_item_self_path(),
+        );
     }
 
     /// Returns validation errors attached to this selected value.
@@ -5305,9 +5304,17 @@ impl<Model, Value: 'static, Error> MultiSelectOptionBinding<Model, Value, Error>
         self.multi_select.toggle(self.value.clone())
     }
 
-    /// Marks the multi-select field and current selected values as blurred.
-    pub fn on_blur(&self) {
+    /// Marks the multi-select field and this option's selected value as blurred.
+    pub fn on_blur(&self)
+    where
+        Value: PartialEq,
+    {
+        let selected_item = self.selected_item();
         self.multi_select.on_blur();
+
+        if let Some(item) = selected_item {
+            item.on_blur();
+        }
     }
 
     /// Returns a ready-made checkbox change handler that reads `checked` from the event.
@@ -5328,7 +5335,7 @@ impl<Model, Value: 'static, Error> MultiSelectOptionBinding<Model, Value, Error>
     pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
     where
         Model: 'static,
-        Value: Clone + 'static,
+        Value: Clone + PartialEq + 'static,
         Error: 'static,
     {
         let binding = self.clone();
@@ -8169,28 +8176,6 @@ impl<Model, Error> FormHandle<Model, Error> {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity));
         }
         touched
-    }
-
-    fn mark_multi_select_item_blurred<Value: 'static>(
-        &self,
-        collection: FieldPath<Model, Vec<Value>>,
-        item: CollectionItemIdentity,
-    ) -> bool {
-        let field = collection_item_self_path();
-        let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
-        let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
-        let blurred = self
-            .write_core(|core| core.mark_collection_item_field_blurred(collection, item, field));
-        if blurred {
-            self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
-            self.notify_validation_changed();
-            self.dispatch_form_blur_listeners(
-                identity.clone(),
-                field_name.expect("blurred multi-select item should have a rendered field name"),
-            );
-            self.dispatch_field_blur_listeners(identity);
-        }
-        blurred
     }
 
     fn notify_collection_changed(&self, collection: FieldIdentity) {
