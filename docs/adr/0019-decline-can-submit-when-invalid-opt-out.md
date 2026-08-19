@@ -38,12 +38,11 @@ opt-out leaves non-bypassable anyway). The opt-out's appeal is that it lets a un
 declared and then bypassed; modeling the rule at submit+intent scope reaches the same behavior honestly.
 
 **Server-authoritative.** What the client refuses to submit belongs in client validators; what the
-server decides belongs in **Submit Errors** via `dioform-fullstack` rejection mapping
-([#41](https://github.com/sagikazarmark/dioform/issues/41)) and manual **Validation Source**
-injection ([#139](https://github.com/sagikazarmark/dioform/issues/139)). If the client enforces
-nothing for that path, its submit-triggered validators produce no error and there is no blocker to
-bypass; the server's verdict arrives as a submit-scoped error afterward. The issue itself notes this flow
-is already expressible with ordinary application events plus fullstack rejection mapping.
+server decides belongs in **Submit Errors** via `dioform-fullstack` rejection mapping and manual
+**Validation Source** injection. If the client enforces nothing for that path, its submit-triggered
+validators produce no error and there is no blocker to bypass; the server's verdict arrives as a
+submit-scoped error afterward. The issue itself notes this flow is already expressible with ordinary
+application events plus fullstack rejection mapping.
 
 ## When to revisit
 

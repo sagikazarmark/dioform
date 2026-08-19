@@ -334,5 +334,5 @@ third-party adapter:
 - exposes its own thin builder (`source`, `triggers`, `path_map`, `register` /
   `register_string_errors` / `register_with_context`) with the bounds its library requires.
 
-A `#[derive(Form)]`-derived path map (issue #138) plugs into this seam directly, because a derived map
+A `#[derive(Form)]`-derived path map plugs into this seam directly, because a derived map
 is just a `PathMap` passed to the existing `path_map(...)` builder step; it needs no adapter trait.
