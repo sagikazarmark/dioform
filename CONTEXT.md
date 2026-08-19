@@ -870,7 +870,7 @@ Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the 
 
 Developer: Does a **Blurred Field** work the same way — does blurring a leaf blur the object containing it?
 
-Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, because a blur happened inside them, but none of them becomes a **Blurred Field** and none of them starts showing **Validation Errors** the user never had a chance to fix.
+Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, because a blur happened inside them, and their **Validation Errors** may become visible under outward **Error Visibility**, but none of them becomes a **Blurred Field**.
 
 Developer: A multi-select option control renders under the **Collection Field**'s **Field Name** but represents one selected value. Which one did the user leave?
 

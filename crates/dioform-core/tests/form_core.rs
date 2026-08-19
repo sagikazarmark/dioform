@@ -287,10 +287,12 @@ fn nested_customer_name_path() -> FieldPath<NestedPage, String> {
     nested_customer_path().join(customer_name_path())
 }
 
+fn nested_customer_account_path() -> FieldPath<NestedPage, Customer> {
+    nested_invoice_path().join(invoice_customer_account_path())
+}
+
 fn nested_customer_account_name_path() -> FieldPath<NestedPage, String> {
-    nested_invoice_path()
-        .join(invoice_customer_account_path())
-        .join(customer_name_path())
+    nested_customer_account_path().join(customer_name_path())
 }
 
 fn invoice_lines_path() -> FieldPath<NestedInvoice, Vec<NestedLine>> {
@@ -5580,6 +5582,151 @@ fn default_visible_errors_wait_for_blur_or_submit_attempt() {
         submit_form.visible_field_validation_errors(name_path())[0].error(),
         &"required"
     );
+}
+
+#[test]
+fn blurring_a_contained_field_reveals_its_container_error_without_blurring_the_container() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    form.register_sync_field_validator(
+        nested_customer_path(),
+        "customer_invalid",
+        |_customer, _context| vec!["customer_invalid"],
+    );
+
+    form.mark_field_blurred(nested_customer_name_path());
+
+    assert_eq!(
+        form.visible_field_validation_errors(nested_customer_path())[0].error(),
+        &"customer_invalid"
+    );
+    assert!(!form.is_field_blurred(nested_customer_path()));
+}
+
+#[test]
+fn blurring_a_container_does_not_reveal_an_error_on_a_field_it_contains() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    form.register_sync_field_validator(
+        nested_customer_name_path(),
+        "name_invalid",
+        |_name, _context| vec!["name_invalid"],
+    );
+
+    form.mark_field_blurred(nested_customer_path());
+
+    assert_eq!(
+        form.field_validation_errors(nested_customer_name_path())[0].error(),
+        &"name_invalid"
+    );
+    assert!(
+        form.visible_field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+}
+
+#[test]
+fn touched_visibility_reaches_containers_but_not_contained_fields() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default())
+            .with_error_visibility_policy(ErrorVisibilityPolicy::TouchedOrSubmit);
+    form.register_sync_field_validator(
+        nested_customer_path(),
+        "customer_invalid",
+        |_customer, _context| vec!["customer_invalid"],
+    );
+    form.register_sync_field_validator(
+        nested_customer_account_name_path(),
+        "account_name_invalid",
+        |_name, _context| vec!["account_name_invalid"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    form.mark_field_touched(nested_customer_name_path());
+    form.mark_field_touched(nested_customer_account_path());
+
+    assert_eq!(
+        form.visible_field_validation_errors(nested_customer_path())[0].error(),
+        &"customer_invalid"
+    );
+    assert!(
+        form.visible_field_validation_errors(nested_customer_account_name_path())
+            .is_empty()
+    );
+    assert!(!form.is_field_touched(nested_customer_path()));
+}
+
+#[test]
+fn blurring_a_collection_item_field_reveals_the_collection_error_but_not_sibling_item_errors() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let items = form.collection_items(lines_path());
+    let first = items[0].identity();
+    let second = items[1].identity();
+    form.register_sync_collection_item_field_validator(
+        lines_path(),
+        line_description_path(),
+        "description_invalid",
+        |_description, _context| vec!["description_invalid"],
+    );
+    form.register_sync_form_validator_for_triggers(
+        "lines_invalid",
+        ValidationTrigger::Blur,
+        |_context| vec![FormValidationError::field(lines_path(), "lines_invalid")],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert!(form.mark_collection_item_field_blurred(lines_path(), first, line_description_path(),));
+
+    assert_eq!(
+        form.visible_field_validation_errors(lines_path())[0].error(),
+        &"lines_invalid"
+    );
+    assert_eq!(
+        form.visible_field_validation_errors_by_identity(&line_field_identity(
+            first,
+            "description"
+        ))[0]
+            .error(),
+        &"description_invalid"
+    );
+    assert!(
+        form.visible_field_validation_errors_by_identity(&line_field_identity(
+            second,
+            "description"
+        ))
+        .is_empty()
+    );
+}
+
+#[test]
+fn field_interaction_does_not_reveal_form_errors_before_submit() {
+    for policy in [
+        ErrorVisibilityPolicy::BlurOrSubmit,
+        ErrorVisibilityPolicy::TouchedOrSubmit,
+    ] {
+        let mut form: FormCore<ContactForm, &'static str> =
+            FormCore::new_with_error_type(ContactForm {
+                name: String::new(),
+            })
+            .with_error_visibility_policy(policy);
+        form.register_sync_form_validator_for_triggers(
+            "form_invalid",
+            ValidationTrigger::Manual,
+            |_context| vec![FormValidationError::form("form_invalid")],
+        );
+        form.validate_all(ValidationTrigger::Manual);
+
+        match policy {
+            ErrorVisibilityPolicy::BlurOrSubmit => {
+                form.mark_field_blurred_without_validation(name_path());
+            }
+            ErrorVisibilityPolicy::TouchedOrSubmit => form.mark_field_touched(name_path()),
+            _ => unreachable!(),
+        }
+
+        assert!(form.visible_form_validation_errors().is_empty());
+    }
 }
 
 #[test]

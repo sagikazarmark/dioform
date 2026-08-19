@@ -5074,6 +5074,32 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
         .restore_state_snapshot(snapshot)
         .expect("deserialized form state snapshot should restore");
 
+    let reserialized = serde_json::to_string(&restored.state_snapshot())
+        .expect("restored form state snapshot should serialize");
+    let reserialized_value: serde_json::Value =
+        serde_json::from_str(&reserialized).expect("reserialized snapshot should be JSON");
+    assert_eq!(serialized_value["version"], serde_json::json!(4));
+    assert_eq!(reserialized_value["version"], serialized_value["version"]);
+
+    let serialized_metadata = serialized
+        .split_once("\"field_metadata\":")
+        .expect("snapshot should contain field metadata")
+        .1
+        .split_once(",\"collection_identities\"")
+        .expect("collection identities should follow field metadata")
+        .0;
+    let reserialized_metadata = reserialized
+        .split_once("\"field_metadata\":")
+        .expect("restored snapshot should contain field metadata")
+        .1
+        .split_once(",\"collection_identities\"")
+        .expect("collection identities should follow restored field metadata")
+        .0;
+    assert_eq!(
+        reserialized_metadata.as_bytes(),
+        serialized_metadata.as_bytes()
+    );
+
     let restored_lines = restored.collection(lines_path);
     let restored_items = restored_lines.items();
     let restored_description = restored_items[1].text(description_path);

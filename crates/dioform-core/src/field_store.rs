@@ -14,7 +14,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::{CollectionState, FieldIdentity, FieldMetadata};
+use crate::{
+    CollectionItemIdentity, CollectionState, FieldIdentity, FieldMetadata,
+    field_ancestry::FieldAncestry,
+};
 
 /// Owns the field-keyed state of one **Form Core**: version counters, interaction metadata, and
 /// collection identity state.
@@ -61,6 +64,100 @@ impl FieldStore {
     /// Borrows a field's metadata mutably, materializing the field on first write.
     pub(crate) fn metadata_mut(&mut self, field: &FieldIdentity) -> &mut FieldMetadata {
         self.metadata.entry(field.clone()).or_default()
+    }
+
+    /// Returns whether `container` or one of its contained fields has matching metadata.
+    ///
+    /// Identity ordering keeps possible descendants contiguous within the static and collection-item
+    /// identity kinds. The ancestry check inside each range excludes separator-adjacent siblings.
+    pub(crate) fn subtree_metadata_any(
+        &self,
+        container: &FieldIdentity,
+        mut matches: impl FnMut(FieldMetadata) -> bool,
+    ) -> bool {
+        if let Some(path) = container.static_path() {
+            if self
+                .metadata
+                .get(container)
+                .is_some_and(|metadata| matches(*metadata))
+            {
+                return true;
+            }
+
+            if path.is_empty() {
+                return false;
+            }
+
+            let static_lower = FieldIdentity::static_ordering_bound(format!("{path}."));
+            let static_upper = FieldIdentity::static_ordering_bound(format!("{path}/"));
+            if self
+                .metadata
+                .range(static_lower..static_upper)
+                .any(|(field, metadata)| {
+                    FieldAncestry::contains(container, field) && matches(*metadata)
+                })
+            {
+                return true;
+            }
+
+            let exact_item_lower =
+                FieldIdentity::collection_item(path, CollectionItemIdentity(0), "");
+            if self
+                .metadata
+                .range(exact_item_lower..)
+                .take_while(|(field, _)| field.collection_path() == Some(path))
+                .any(|(field, metadata)| {
+                    FieldAncestry::contains(container, field) && matches(*metadata)
+                })
+            {
+                return true;
+            }
+
+            let descendant_item_lower =
+                FieldIdentity::collection_item(format!("{path}."), CollectionItemIdentity(0), "");
+            let descendant_item_upper =
+                FieldIdentity::collection_item(format!("{path}/"), CollectionItemIdentity(0), "");
+
+            return self
+                .metadata
+                .range(descendant_item_lower..descendant_item_upper)
+                .any(|(field, metadata)| {
+                    FieldAncestry::contains(container, field) && matches(*metadata)
+                });
+        }
+
+        let Some((collection, item, field)) = container.collection_item_parts() else {
+            return self
+                .metadata
+                .get(container)
+                .is_some_and(|metadata| matches(*metadata));
+        };
+
+        if field.is_empty() {
+            let Some(next_item) = item.as_u64().checked_add(1) else {
+                return self
+                    .metadata
+                    .range(container.clone()..)
+                    .take_while(|(candidate, _)| candidate.is_collection_item_for(collection, item))
+                    .any(|(_, metadata)| matches(*metadata));
+            };
+            let upper =
+                FieldIdentity::collection_item(collection, CollectionItemIdentity(next_item), "");
+
+            return self
+                .metadata
+                .range(container.clone()..upper)
+                .any(|(candidate, metadata)| {
+                    FieldAncestry::contains(container, candidate) && matches(*metadata)
+                });
+        }
+
+        let upper = FieldIdentity::collection_item(collection, item, format!("{field}/"));
+        self.metadata
+            .range(container.clone()..upper)
+            .any(|(candidate, metadata)| {
+                FieldAncestry::contains(container, candidate) && matches(*metadata)
+            })
     }
 
     /// Returns whether a field has version or interaction state that a field reset must clear.
@@ -167,5 +264,115 @@ impl FieldStore {
     pub(crate) fn clear_fields(&mut self) {
         self.versions.clear();
         self.metadata.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(value: u64) -> CollectionItemIdentity {
+        CollectionItemIdentity(value)
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state
+    }
+
+    #[test]
+    fn subtree_metadata_ranges_agree_with_naive_ancestry_scans() {
+        let mut store = FieldStore::default();
+        let mut identities = vec![
+            FieldIdentity::new("counterparty"),
+            FieldIdentity::new("counterparty.name"),
+            FieldIdentity::new("counterparty_account"),
+            FieldIdentity::new("counterparty_account.name"),
+            FieldIdentity::new("invoice.line"),
+            FieldIdentity::new("invoice.lines"),
+            FieldIdentity::new("invoice-line"),
+            FieldIdentity::new("invoice_lines"),
+            FieldIdentity::new("invoice.lines.description"),
+            FieldIdentity::collection_item("invoice.lines", item(0), ""),
+            FieldIdentity::collection_item("invoice.lines", item(0), "description"),
+            FieldIdentity::collection_item("invoice.lines", item(1), "description"),
+            FieldIdentity::collection_item("invoice-lines", item(0), "description"),
+            FieldIdentity::collection_item("invoice_lines", item(0), "description"),
+            FieldIdentity::collection_item("invoice.notes", item(0), "description"),
+            FieldIdentity::collection_item("invoice.sections.lines", item(0), ""),
+            FieldIdentity::collection_item("invoice.sections.lines", item(0), "product.name"),
+            FieldIdentity::file("counterparty"),
+        ];
+        let segments = ["account", "customer", "line", "lines", "name", "product"];
+        let collections = [
+            "invoice.lines",
+            "invoice.line_items",
+            "invoice.notes",
+            "invoice.sections.lines",
+        ];
+        let mut random = 0x5eed_53_u64;
+
+        for _ in 0..512 {
+            let kind = next_random(&mut random) % 3;
+            let first = segments[(next_random(&mut random) as usize) % segments.len()];
+            let second = segments[(next_random(&mut random) as usize) % segments.len()];
+            let third = segments[(next_random(&mut random) as usize) % segments.len()];
+            let depth = (next_random(&mut random) % 3) + 1;
+            let path = match depth {
+                1 => first.to_owned(),
+                2 => format!("{first}.{second}"),
+                _ => format!("{first}.{second}.{third}"),
+            };
+            let identity = match kind {
+                0 => FieldIdentity::new(path),
+                1 => FieldIdentity::file(path),
+                _ => {
+                    let collection =
+                        collections[(next_random(&mut random) as usize) % collections.len()];
+                    let field = if next_random(&mut random).is_multiple_of(4) {
+                        String::new()
+                    } else {
+                        path
+                    };
+                    FieldIdentity::collection_item(
+                        collection,
+                        item(next_random(&mut random) % 8),
+                        field,
+                    )
+                }
+            };
+            identities.push(identity);
+        }
+
+        for identity in &identities {
+            let value = next_random(&mut random);
+            *store.metadata_mut(identity) = FieldMetadata {
+                touched: value & 1 != 0,
+                blurred: value & 2 != 0,
+            };
+        }
+
+        let mut containers = identities.clone();
+        containers.extend([
+            FieldIdentity::new("invoice"),
+            FieldIdentity::new("invoice.lines"),
+            FieldIdentity::new("invoice.lines.description"),
+            FieldIdentity::new("invoice.sections"),
+            FieldIdentity::collection_item("invoice.lines", item(0), ""),
+            FieldIdentity::collection_item("invoice.lines", item(0), "product"),
+        ]);
+
+        for container in containers {
+            for predicate in [FieldMetadata::is_blurred, FieldMetadata::is_touched] {
+                let expected = store.metadata.iter().any(|(field, metadata)| {
+                    FieldAncestry::contains(&container, field) && predicate(*metadata)
+                });
+                let actual = store.subtree_metadata_any(&container, predicate);
+
+                assert_eq!(actual, expected, "subtree mismatch for {container:?}");
+            }
+        }
     }
 }

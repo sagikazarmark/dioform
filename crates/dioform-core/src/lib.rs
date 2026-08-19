@@ -187,6 +187,15 @@ impl<'de> serde::Deserialize<'de> for FieldIdentity {
 }
 
 impl FieldIdentity {
+    /// Creates an internal ordering-only bound that need not be a well-formed field path.
+    fn static_ordering_bound(path: impl Into<Rc<str>>) -> Self {
+        Self {
+            kind: FieldIdentityKind::Static {
+                path: owned_segment(path),
+            },
+        }
+    }
+
     /// Creates a static field identity.
     ///
     /// The dot is the **Identity Path Separator** and is reserved: it delimits the segments of a
@@ -935,10 +944,12 @@ impl Default for ValidationMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorVisibilityPolicy {
-    /// Show field errors after blur and all errors after a submit attempt.
+    /// Show field errors after that field or one it contains is blurred, and all errors after a
+    /// submit attempt.
     #[default]
     BlurOrSubmit,
-    /// Show field errors after the field is touched and all errors after a submit attempt.
+    /// Show field errors after that field or one it contains is touched, and all errors after a
+    /// submit attempt.
     TouchedOrSubmit,
     /// Show errors only after a submit attempt.
     SubmitOnly,
@@ -6143,7 +6154,11 @@ impl<Model, Error> FormCore<Model, Error> {
         self.validation_errors_matching(ValidationTarget::is_form)
     }
 
-    /// Returns validation errors visible under the default blur-or-submit policy.
+    /// Returns validation errors visible under the configured policy.
+    ///
+    /// Under blur- and touch-scoped policies, an error attached to a field becomes visible when
+    /// that field or one it contains has the corresponding interaction metadata. The metadata
+    /// itself remains exact: revealing a container error does not mark the container interacted.
     pub fn visible_validation_errors(&self) -> Vec<ValidationErrorView<'_, Error>> {
         self.validation_errors_matching(|target| self.should_show_validation_errors(target))
     }
@@ -7717,7 +7732,9 @@ impl<Model, Error> FormCore<Model, Error> {
 
                 match target {
                     ValidationTarget::Form => false,
-                    ValidationTarget::Field(field) => self.field_store.metadata(field).is_blurred(),
+                    ValidationTarget::Field(field) => self
+                        .field_store
+                        .subtree_metadata_any(field, FieldMetadata::is_blurred),
                 }
             }
             ErrorVisibilityPolicy::TouchedOrSubmit => {
@@ -7727,7 +7744,9 @@ impl<Model, Error> FormCore<Model, Error> {
 
                 match target {
                     ValidationTarget::Form => false,
-                    ValidationTarget::Field(field) => self.field_store.metadata(field).is_touched(),
+                    ValidationTarget::Field(field) => self
+                        .field_store
+                        .subtree_metadata_any(field, FieldMetadata::is_touched),
                 }
             }
         }
