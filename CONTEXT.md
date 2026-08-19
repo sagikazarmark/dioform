@@ -75,12 +75,16 @@ A **Field Binding** whose addressed **Field** has no value in the **Form Draft**
 _Avoid_: Stale binding, dangling binding, removed row
 
 **Field Ancestry**:
-The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, selectors, and **Form Listeners** for either respond when the other is written.
+The containment relation between two **Field Identities**, where one addresses a **Field** whose value contains the **Field** addressed by the other, so state, errors, selectors, and **Form Listeners** for either respond when the other is written. The part of it a given surface uses is that surface's reach, chosen per surface to match what the event asserts about the **Field** it names rather than fixed for the whole relation.
 _Avoid_: Path prefix, string match, parent pointer
 
 **Listener Reach**:
 The part of **Field Ancestry** one **Form Listener** surface uses to decide which events reach a listener, chosen per surface to match what the event asserts about the listener's **Field**: value replacement asserts the value at a path was replaced and reaches both directions, while events reporting that something happened *inside* a **Field** reach only outward, from the **Field** the event names to the **Fields** that contain it ([ADR-0028](docs/adr/0028-match-listener-reach-to-what-each-event-asserts.md)).
 _Avoid_: Bubbling, event propagation, subscription filter
+
+**Validator Selection Reach**:
+The part of **Field Ancestry** a **Validation Trigger** uses to decide which validators one **Field**'s event runs: a value change asserts the value at a path was replaced and reaches both directions, while a blur asserts something happened inside a **Field** and reaches only outward, to the **Fields** that contain it ([ADR-0035](docs/adr/0035-select-blur-validators-outward-from-the-field-that-blurred.md)).
+_Avoid_: Validator scope, subtree validation
 
 **Identity Path Separator**:
 The character reserved to delimit static path segments inside a **Field Identity**, so **Field Ancestry** is decidable from an identity alone and never from a rendered **Field Name**.
@@ -117,6 +121,14 @@ _Avoid_: Validation error, parser error
 **External Diagnostic Path**:
 A path emitted by an external validation library as part of an **External Validation Diagnostic**, separate from a typed **Field Path** or rendered **Field Name** until a **Validation Adapter** explicitly maps it.
 _Avoid_: Field path, field name
+
+**Explicit Path Mapping**:
+The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs; an unregistered path is never matched by **Field Name**, serde name, or Rust field name, and resolves to the form.
+_Avoid_: Field name matching, string path map, implicit binding, path inference
+
+**Unmapped Diagnostic**:
+An **External Validation Diagnostic** whose **External Diagnostic Path** matched no **Explicit Path Mapping** entry, so it resolved to a form-scoped **Validation Target** rather than a typed **Field**.
+_Avoid_: Unknown diagnostic, dropped diagnostic, unmatched path, unrouted error
 
 **Validation Trigger**:
 A semantic form event that determines when validation runs, such as a value change, field blur, submit request, or form initialization.
@@ -870,7 +882,11 @@ Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the 
 
 Developer: Does a **Blurred Field** work the same way — does blurring a leaf blur the object containing it?
 
-Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, because a blur happened inside them, and their **Validation Errors** may become visible under outward **Error Visibility**, but none of them becomes a **Blurred Field**.
+Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, run their validators through outward **Validator Selection Reach**, and their **Validation Errors** may become visible under outward **Error Visibility**, all because a blur happened inside them — but none of them becomes a **Blurred Field**.
+
+Developer: And the other way round — does blurring a nested object validate the **Fields** inside it?
+
+Domain expert: No. A blur asserts that focus left one **Field**, which says nothing about the **Fields** it contains, so **Validator Selection Reach** admits only the **Fields** that contain the blurred one. Writing that object still validates them, because a write replaces their values ([ADR-0035](docs/adr/0035-select-blur-validators-outward-from-the-field-that-blurred.md)).
 
 Developer: A multi-select option control renders under the **Collection Field**'s **Field Name** but represents one selected value. Which one did the user leave?
 
@@ -879,6 +895,14 @@ Domain expert: Both. That element is the rendered control for the **Collection F
 Developer: So a **Stale Submit Error** on a nested object clears when the user edits one leaf inside it?
 
 Domain expert: Yes. A **Stale Submit Error** is defined against the field value, and editing a leaf changes the containing value. A verdict that must survive edits to the values it was about belongs at form scope.
+
+Developer: What happens to a **Validation Error** a validator stored before the value it described was replaced?
+
+Domain expert: It is discarded. A write clears the stored results of the validators whose values it replaced, across **Field Ancestry**, whatever **Validation Triggers** those validators are registered for and whatever the **Validation Mode** says about running them. Clearing is not validating ([ADR-0036](docs/adr/0036-clear-sync-validator-results-on-write-across-field-ancestry.md)).
+
+Developer: So a **Field** can show no **Validation Errors** while still being invalid?
+
+Domain expert: Yes, until a **Validation Trigger** runs again. A verdict describes the value it was computed over, not the **Field** forever, and **Submit Availability** is not entitled to block on evidence the user is no longer shown.
 
 Developer: Can an application put a dot inside a **Field Identity** segment to get a nicer name?
 

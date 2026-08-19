@@ -100,7 +100,7 @@ The [`demo/`](../demo) Async validation page demonstrates the ergonomic builder 
 
 ## Submit Behavior
 
-**Submit Availability** is UI-oriented. It reports current known blockers such as stored validation errors, parse blockers, required pending validation, and in-flight submission. It is not a guarantee that a future submit can skip validation. It is intentionally conservative: stored errors from non-submit triggers can make `can_submit()` false even though an actual submit attempt may rerun submit-triggered validation and proceed.
+**Submit Availability** is UI-oriented. It reports current known blockers such as stored validation errors, parse blockers, required pending validation, and in-flight submission. It is not a guarantee that a future submit can skip validation. It is intentionally conservative about pending work and about submit-scoped verdicts: stored errors from non-submit triggers can make `can_submit()` false even though an actual submit attempt may rerun submit-triggered validation and proceed. It is not conservative about verdicts describing values the **Form Draft** has since replaced. A write clears the stored synchronous validator results of the fields whose values it replaced, so a corrected value stops blocking submit availability without waiting for a trigger to run again ([ADR-0036](adr/0036-clear-sync-validator-results-on-write-across-field-ancestry.md)).
 
 Pending async validation blocks submit availability only when that validator is relevant to `ValidationTrigger::Submit`. A value-change-only pending validator does not block submission. A validator registered for both value change and submit can block submission while pending.
 
