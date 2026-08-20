@@ -6017,7 +6017,7 @@ fn submit_intent_filters_visible_validation_errors() {
 }
 
 #[test]
-fn submit_intent_scopes_async_validation_results_and_pending_work() {
+fn second_submit_intent_starts_an_independent_async_validation_run() {
     let mut form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
             name: "Ada".to_owned(),
@@ -6064,6 +6064,130 @@ fn submit_intent_scopes_async_validation_results_and_pending_work() {
             .validator_context()
             .submit_intent::<ContactSubmitIntent>(),
         Some(&ContactSubmitIntent::SaveDraft)
+    );
+}
+
+#[test]
+fn latest_sync_submit_intent_run_replaces_the_previous_intents_verdict() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+    form.register_sync_form_validator_for_triggers(
+        "publish_name_required",
+        ValidationTrigger::Submit,
+        |context| {
+            if context.submit_intent::<ContactSubmitIntent>() == Some(&ContactSubmitIntent::Publish)
+            {
+                vec![FormValidationError::field(
+                    name_path(),
+                    "publish_name_required",
+                )]
+            } else {
+                Vec::new()
+            }
+        },
+    );
+
+    // Issue #59 and ADR-0039 deliberately pin last-run-wins across submit intents.
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .submit(|_submitted| ()),
+        SubmitResult::Blocked(SubmitBlocker::ValidationErrors)
+    );
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .availability()
+            .blockers(),
+        &[SubmitBlocker::ValidationErrors]
+    );
+
+    assert_eq!(
+        form.intent(ContactSubmitIntent::SaveDraft)
+            .submit(|_submitted| ()),
+        SubmitResult::Succeeded
+    );
+    assert!(
+        form.intent(ContactSubmitIntent::SaveDraft)
+            .availability()
+            .is_available()
+    );
+    assert!(
+        form.intent(ContactSubmitIntent::Publish)
+            .availability()
+            .is_available()
+    );
+
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .submit(|_submitted| ()),
+        SubmitResult::Blocked(SubmitBlocker::ValidationErrors)
+    );
+}
+
+#[test]
+fn latest_async_submit_intent_run_replaces_the_previous_intents_verdict() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+    let id =
+        form.register_async_form_validator_for_triggers("publish_async", ValidationTrigger::Submit);
+
+    // Issue #59 and ADR-0039 deliberately pin last-run-wins across submit intents.
+    assert!(
+        !form
+            .intent(ContactSubmitIntent::Publish)
+            .validate_for_submit()
+    );
+    let publish_run = form
+        .begin_async_form_validation_after_sync(id, ValidationTrigger::Submit)
+        .expect("publish submit async validation should start");
+    form.complete_async_form_validation(
+        id,
+        &publish_run,
+        [FormValidationError::field(name_path(), "publish_error")],
+    );
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .availability()
+            .blockers(),
+        &[SubmitBlocker::ValidationErrors]
+    );
+
+    assert!(
+        !form
+            .intent(ContactSubmitIntent::SaveDraft)
+            .validate_for_submit()
+    );
+    let save_run = form
+        .begin_async_form_validation_after_sync(id, ValidationTrigger::Submit)
+        .expect("save draft submit async validation should start");
+    form.complete_async_form_validation(id, &save_run, Vec::<FormValidationError<&str>>::new());
+    assert!(
+        form.intent(ContactSubmitIntent::SaveDraft)
+            .availability()
+            .is_available()
+    );
+    assert!(
+        form.intent(ContactSubmitIntent::Publish)
+            .availability()
+            .is_available()
+    );
+
+    assert!(
+        !form
+            .intent(ContactSubmitIntent::Publish)
+            .validate_for_submit()
+    );
+    let next_publish_run = form
+        .begin_async_form_validation_after_sync(id, ValidationTrigger::Submit)
+        .expect("next publish attempt should start fresh async validation");
+    assert_eq!(
+        next_publish_run
+            .validator_context()
+            .submit_intent::<ContactSubmitIntent>(),
+        Some(&ContactSubmitIntent::Publish)
     );
 }
 
