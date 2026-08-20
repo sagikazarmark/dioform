@@ -1,4 +1,7 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use dioform_core::{
     FieldIdentity, FieldPath, FormCore, FormValidationError, SubmitBlocker, SubmitError,
@@ -80,6 +83,23 @@ impl garde::Validate for RenamedSignupForm {
                 garde::Error::new("email required"),
             );
         }
+    }
+}
+
+#[derive(Clone)]
+struct WholeModelAndFieldForm;
+
+impl garde::Validate for WholeModelAndFieldForm {
+    type Context = ();
+
+    fn validate_into(
+        &self,
+        _ctx: &Self::Context,
+        parent: &mut dyn FnMut() -> garde::Path,
+        report: &mut garde::Report,
+    ) {
+        report.append(parent(), garde::Error::new("whole model invalid"));
+        report.append(parent().join("email"), garde::Error::new("email invalid"));
     }
 }
 
@@ -297,6 +317,54 @@ fn unmapped_garde_report_diagnostics_attach_to_form_level_errors_in_report_order
             ),
         ],
     );
+}
+
+#[test]
+fn garde_reporter_receives_unmapped_paths_from_each_validation_run() {
+    let runs = Rc::new(Cell::new(0));
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
+    let mut form = FormCore::new(SignupForm::new("", "short", Rc::clone(&runs)));
+    form.garde_validation()
+        .path_map(GardePathMap::new().with_field("email", email_path()))
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_string());
+        })
+        .register_string_errors();
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["password"]);
+    assert_eq!(form.validation_errors().len(), 2);
+    assert!(form.visible_validation_errors().is_empty());
+    assert!(!form.submit_availability().is_available());
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["password", "password"]);
+
+    form.set_field(password_path(), "long-enough".to_owned());
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(runs.get(), 3);
+    assert_eq!(reported.borrow().as_slice(), ["password", "password"]);
+}
+
+#[test]
+fn garde_reporter_does_not_report_an_empty_whole_model_path_as_unmapped() {
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
+    let mut form = FormCore::new(WholeModelAndFieldForm);
+    form.garde_validation()
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_string());
+        })
+        .register_string_errors();
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["email"]);
+    assert_eq!(form.form_validation_errors().len(), 2);
 }
 
 #[test]
@@ -1088,8 +1156,10 @@ fn context_provider_derives_garde_context_from_form_draft_for_success_and_failur
 }
 
 #[test]
-fn context_string_error_convenience_maps_garde_messages_to_strings() {
+fn context_string_error_convenience_maps_messages_and_reports_unmapped_paths() {
     let runs = Rc::new(Cell::new(0));
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
     let mut form = FormCore::new(ContextSignupForm::new(
         "ada@example.net",
         "long-enough",
@@ -1099,9 +1169,12 @@ fn context_string_error_convenience_maps_garde_messages_to_strings() {
     let validator_id = form
         .garde_validation()
         .path_map(GardePathMap::new().with_field("email", context_email_path()))
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_string());
+        })
         .register_string_errors_with_context(|context| SignupValidationContext {
             email_suffix: context.form().required_email_suffix.clone(),
-            minimum_password_length: 0,
+            minimum_password_length: 20,
         });
 
     form.validate_form(ValidationTrigger::Manual);
@@ -1117,6 +1190,7 @@ fn context_string_error_convenience_maps_garde_messages_to_strings() {
             .as_str(),
         "email must end with @example.com",
     );
+    assert_eq!(reported.borrow().as_slice(), ["password"]);
 }
 
 #[test]

@@ -13,8 +13,9 @@ pub const DEFAULT_VALIDATOR_SOURCE: &str = "validator";
 /// Explicit exact-path mapping from external `validator` diagnostic paths to typed form fields.
 ///
 /// Paths are keyed by the adapter's canonical flattened external path (for example `account.email`
-/// or `lines[0].quantity`). Unknown paths map to [`ValidationTarget::form`](dioform_core::ValidationTarget::form) so external diagnostics
-/// are preserved as form-level validation errors instead of being dropped.
+/// or `lines[0].quantity`). Unregistered paths map to
+/// [`ValidationTarget::form`](dioform_core::ValidationTarget::form) so **Unmapped Diagnostics** are
+/// preserved as form-level validation errors instead of being dropped.
 pub type ValidatorPathMap<Model> = PathMap<Model>;
 
 /// A borrowed flattened `validator` diagnostic paired with the Dioform target it resolved to.
@@ -24,6 +25,8 @@ pub type ValidatorPathMap<Model> = PathMap<Model>;
 /// `lines[0].quantity`) and its [`error`](DiagnosticView::error) is the original
 /// `validator::ValidationError`.
 pub type ValidatorDiagnostic<'a> = DiagnosticView<'a, str, validator::ValidationError>;
+
+type UnmappedPathReporter = dyn Fn(&str) + 'static;
 
 /// Extension methods for registering `validator` validation on [`FormCore`].
 pub trait ValidatorValidationExt<Model, Error> {
@@ -38,6 +41,7 @@ impl<Model, Error> ValidatorValidationExt<Model, Error> for FormCore<Model, Erro
             source: ValidatorSource::new(DEFAULT_VALIDATOR_SOURCE),
             triggers: ValidationTriggers::all(),
             path_map: ValidatorPathMap::new(),
+            unmapped_path_reporter: None,
         }
     }
 }
@@ -48,6 +52,7 @@ pub struct ValidatorValidationBuilder<'form, Model, Error> {
     source: ValidatorSource,
     triggers: ValidationTriggers,
     path_map: ValidatorPathMap<Model>,
+    unmapped_path_reporter: Option<Box<UnmappedPathReporter>>,
 }
 
 impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
@@ -71,10 +76,23 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
 
     /// Uses an explicit `validator` external-path map for field-level diagnostic attachment.
     ///
-    /// Mapped paths attach to the registered typed field targets. Unmapped paths attach to the
-    /// form, preserving unknown diagnostics without implicit field-name or Rust-field matching.
+    /// Mapped paths attach to the registered typed field targets. **Unmapped Diagnostics** attach to
+    /// the form without implicit field-name or Rust-field matching. The default map is empty.
     pub fn path_map(mut self, path_map: ValidatorPathMap<Model>) -> Self {
         self.path_map = path_map;
+        self
+    }
+
+    /// Reports each **External Diagnostic Path** that the configured path map could not route.
+    ///
+    /// The reporter runs once per **Unmapped Diagnostic**, in flattened diagnostic order, and does
+    /// not change where the diagnostic attaches. Duplicate diagnostics at one path produce duplicate
+    /// reports. The reporter does not need to implement `Send`.
+    pub fn on_unmapped_path<Reporter>(mut self, reporter: Reporter) -> Self
+    where
+        Reporter: Fn(&str) + 'static,
+    {
+        self.unmapped_path_reporter = Some(Box::new(reporter));
         self
     }
 
@@ -93,6 +111,7 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
             source,
             triggers,
             path_map,
+            unmapped_path_reporter,
         } = self;
 
         form.register_sync_form_validator_for_triggers(source, triggers, move |context| {
@@ -100,7 +119,12 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
                 return Vec::new();
             };
 
-            flatten_errors(&errors, &path_map, &mapper)
+            flatten_errors(
+                &errors,
+                &path_map,
+                unmapped_path_reporter.as_deref(),
+                &mapper,
+            )
         })
     }
 
@@ -128,6 +152,7 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
             source,
             triggers,
             path_map,
+            unmapped_path_reporter,
         } = self;
 
         form.register_sync_form_validator_for_triggers(source, triggers, move |context| {
@@ -138,7 +163,12 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
                 return Vec::new();
             };
 
-            flatten_errors(&errors, &path_map, &mapper)
+            flatten_errors(
+                &errors,
+                &path_map,
+                unmapped_path_reporter.as_deref(),
+                &mapper,
+            )
         })
     }
 }
@@ -190,13 +220,21 @@ fn validator_error_to_string(diagnostic: ValidatorDiagnostic<'_>) -> String {
 fn flatten_errors<Model, Error, Mapper>(
     errors: &validator::ValidationErrors,
     path_map: &ValidatorPathMap<Model>,
+    unmapped_path_reporter: Option<&UnmappedPathReporter>,
     mapper: &Mapper,
 ) -> Vec<FormValidationError<Error>>
 where
     Mapper: for<'diagnostic> Fn(ValidatorDiagnostic<'diagnostic>) -> Error,
 {
     let mut output = Vec::new();
-    collect_errors(errors, "", path_map, mapper, &mut output);
+    collect_errors(
+        errors,
+        "",
+        path_map,
+        unmapped_path_reporter,
+        mapper,
+        &mut output,
+    );
     output
 }
 
@@ -204,6 +242,7 @@ fn collect_errors<Model, Error, Mapper>(
     errors: &validator::ValidationErrors,
     prefix: &str,
     path_map: &ValidatorPathMap<Model>,
+    unmapped_path_reporter: Option<&UnmappedPathReporter>,
     mapper: &Mapper,
     output: &mut Vec<FormValidationError<Error>>,
 ) where
@@ -226,6 +265,11 @@ fn collect_errors<Model, Error, Mapper>(
                 let target = path_map.target_for_path(&field_path);
                 // Per-field error vector order is preserved as reported by `validator`.
                 for error in field_errors {
+                    if target.is_form()
+                        && let Some(reporter) = unmapped_path_reporter
+                    {
+                        reporter(&field_path);
+                    }
                     let diagnostic = ValidatorDiagnostic::new(&field_path, error, target.clone());
                     output.push(FormValidationError::for_target(
                         target.clone(),
@@ -234,13 +278,27 @@ fn collect_errors<Model, Error, Mapper>(
                 }
             }
             ValidationErrorsKind::Struct(inner) => {
-                collect_errors(inner, &field_path, path_map, mapper, output);
+                collect_errors(
+                    inner,
+                    &field_path,
+                    path_map,
+                    unmapped_path_reporter,
+                    mapper,
+                    output,
+                );
             }
             ValidationErrorsKind::List(items) => {
                 // `BTreeMap` iterates in ascending index order.
                 for (index, inner) in items {
                     let indexed = format!("{field_path}[{index}]");
-                    collect_errors(inner, &indexed, path_map, mapper, output);
+                    collect_errors(
+                        inner,
+                        &indexed,
+                        path_map,
+                        unmapped_path_reporter,
+                        mapper,
+                        output,
+                    );
                 }
             }
         }

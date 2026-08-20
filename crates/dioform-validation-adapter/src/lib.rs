@@ -20,7 +20,8 @@ use dioform_core::{FieldPath, ValidationTarget};
 /// typed **Validation Target** in one **Form Model**.
 ///
 /// Registered paths attach to their typed field targets; unregistered paths resolve to the form, so an
-/// unknown diagnostic is preserved as a form-level error rather than dropped or matched by field name.
+/// **Unmapped Diagnostic** is preserved as a form-level error rather than dropped or matched by field
+/// name.
 pub struct PathMap<Model> {
     targets: BTreeMap<String, ValidationTarget>,
     _marker: PhantomData<fn() -> Model>,
@@ -32,6 +33,15 @@ impl<Model> Clone for PathMap<Model> {
             targets: self.targets.clone(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<Model> fmt::Debug for PathMap<Model> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PathMap")
+            .field("targets", &self.targets)
+            .finish()
     }
 }
 
@@ -48,6 +58,16 @@ impl<Model> PathMap<Model> {
             targets: BTreeMap::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Returns the number of registered external paths.
+    pub fn len(&self) -> usize {
+        self.targets.len()
+    }
+
+    /// Returns whether no external paths are registered.
+    pub fn is_empty(&self) -> bool {
+        self.targets.is_empty()
     }
 
     /// Returns a new path map with one exact external path registered to a typed field path.

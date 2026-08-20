@@ -98,11 +98,33 @@ form.garde_validation()
     .register(map_garde);
 ```
 
-Path matching is exact and uses the canonical `garde::Path::to_string()` representation. If `garde` reports an unmapped path, the adapter attaches that diagnostic to the form with `ValidationTarget::form()` instead of dropping it. The mapper can still inspect the original unknown external path through `diagnostic.path()`.
+Path matching is exact and uses the canonical `garde::Path::to_string()` representation. If `garde` reports a path with no **Explicit Path Mapping**, the adapter preserves that **Unmapped Diagnostic** by attaching it to the form with `ValidationTarget::form()` instead of dropping it. This can happen with a partially populated map as well as an empty one. Under the default **Error Visibility** policy, the form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**.
+
+The mapper can inspect the original external path through `diagnostic.path()`. Because a `GardePathMap` contains only field targets, a non-empty path whose `diagnostic.target().is_form()` is an **Unmapped Diagnostic**. The empty-path case is different: `garde` uses an empty `garde::Path` for a genuinely whole-model diagnostic, which also resolves to the form.
+
+### Reporting Unmapped Diagnostics
+
+Use `on_unmapped_path` when the application should log, test, or otherwise diagnose incomplete path mapping:
+
+```rust
+use std::{cell::RefCell, rc::Rc};
+
+let unmapped_paths = Rc::new(RefCell::new(Vec::new()));
+let reported_paths = Rc::clone(&unmapped_paths);
+
+form.garde_validation()
+    .path_map(GardePathMap::new().with_field("email", email_path()))
+    .on_unmapped_path(move |path| {
+        reported_paths.borrow_mut().push(path.to_string());
+    })
+    .register_string_errors();
+```
+
+The reporter runs once per **Unmapped Diagnostic**, in report order, on every validation run against the current **Form Draft**. It does not require `Send`, change diagnostic routing, or report `garde`'s genuinely whole-model empty path. Without a reporter, the adapter remains silent.
 
 ## Trigger Choices
 
-The low-level default is `ValidationTriggers::all()` so the adapter behaves like native synchronous form validators by default. Whole-model external validation can be more expensive than field-local validation, so choose triggers deliberately.
+The builder defaults to the `garde` source, `ValidationTriggers::all()`, and an empty `GardePathMap`. It therefore behaves like a native synchronous form validator and routes every non-empty diagnostic path to the form until mappings are added. Whole-model external validation can be more expensive than field-local validation, so choose triggers deliberately.
 
 Submit-only validation is often the right first choice:
 
@@ -180,7 +202,7 @@ Rerunning the `garde` adapter replaces only errors from that adapter source. A s
 
 # Validator Adapter
 
-`dioform-validator` maps [`validator`](https://docs.rs/validator) diagnostics into the form's shared **Validation Error** type. It mirrors the `garde` adapter UX: a builder on `FormCore`, explicit external-path mapping, unknown-diagnostic preservation, source-aware replacement, and a string convenience for simple forms.
+`dioform-validator` maps [`validator`](https://docs.rs/validator) diagnostics into the form's shared **Validation Error** type. It mirrors the `garde` adapter UX: a builder on `FormCore`, **Explicit Path Mapping**, **Unmapped Diagnostic** preservation and reporting, source-aware replacement, and a string convenience for simple forms.
 
 ```rust
 use dioform_core::{FormCore, ValidationTrigger};
@@ -254,7 +276,9 @@ form.validator_validation()
 
 ## Explicit Path Mapping
 
-Path matching is exact against the canonical flattened path. Unmapped paths attach to the form with `ValidationTarget::form()` instead of being dropped, and the mapper can still inspect the unknown path through `diagnostic.path()`. The adapter never treats rendered **Field Names**, serde names, `validator` field keys, or Rust field names as implicit validation addresses.
+Path matching is exact against the canonical flattened path. A path with no **Explicit Path Mapping** produces an **Unmapped Diagnostic** that attaches to the form with `ValidationTarget::form()` instead of being dropped. This can happen with a partially populated map as well as an empty one. Under the default **Error Visibility** policy, the form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**. The adapter never treats rendered **Field Names**, serde names, `validator` field keys, or Rust field names as implicit validation addresses.
+
+The mapper can inspect the external path through `diagnostic.path()`. Because a `ValidatorPathMap` contains only field targets, `diagnostic.target().is_form()` inside the mapper means that path was unregistered.
 
 ```rust
 let path_map = ValidatorPathMap::new()
@@ -264,6 +288,28 @@ let path_map = ValidatorPathMap::new()
 
 form.validator_validation().path_map(path_map).register(map_validator);
 ```
+
+This example registers only `lines[0].quantity`. A diagnostic for any other row, such as `lines[1].quantity`, is unmapped and therefore routes to the form. See the collection identity limitation described under [Flattened Diagnostic Paths](#flattened-diagnostic-paths).
+
+### Reporting Unmapped Diagnostics
+
+The same opt-in configuration step is available on the `validator` builder, including before both string-convenience terminal methods:
+
+```rust
+use std::{cell::RefCell, rc::Rc};
+
+let unmapped_paths = Rc::new(RefCell::new(Vec::new()));
+let reported_paths = Rc::clone(&unmapped_paths);
+
+form.validator_validation()
+    .path_map(ValidatorPathMap::new().with_field("email", email_path()))
+    .on_unmapped_path(move |path| {
+        reported_paths.borrow_mut().push(path.to_owned());
+    })
+    .register_string_errors();
+```
+
+The reporter runs once per **Unmapped Diagnostic**, in flattened diagnostic order, on every validation run against the current **Form Draft**. Duplicate diagnostics at one path produce duplicate reports. Reporting does not require `Send` and does not change diagnostic routing. Without a reporter, the adapter remains silent.
 
 ## Context-Aware Validator Validation
 
@@ -292,7 +338,7 @@ The provider runs for each validation run. String-error forms can use `register_
 
 ## Trigger Choices And Coexistence
 
-Like `garde`, the low-level default is `ValidationTriggers::all()`, and whole-model validation can be more expensive than field-local validation, so submit-only validation is often the right first choice. Adapter errors coexist with native **Field Validation**, native **Form Validation**, submit errors, and the `garde` adapter as long as they share the same **Validation Error** type. Rerunning the adapter replaces only errors from its own source; a successful run clears its own prior errors without touching other sources. The default source label is `validator`.
+The builder defaults to the `validator` source, `ValidationTriggers::all()`, and an empty `ValidatorPathMap`. It therefore routes every diagnostic to the form until mappings are added. Whole-model validation can be more expensive than field-local validation, so submit-only validation is often the right first choice. Adapter errors coexist with native **Field Validation**, native **Form Validation**, submit errors, and the `garde` adapter as long as they share the same **Validation Error** type. Rerunning the adapter replaces only errors from its own source; a successful run clears its own prior errors without touching other sources.
 
 # Choosing An Adapter
 
@@ -324,15 +370,18 @@ third-party adapter:
 - depends on `dioform-core`, `dioform-validation-adapter`, and the external library only:
   never adding the external library to `dioform-core` or the `dioform` facade (ADR-0003);
 - builds a `PathMap<Model>` from explicit `External Diagnostic Path` → typed **Field Path** entries,
-  and resolves each diagnostic with `PathMap::target_for_path` so unmapped paths attach to the form
-  instead of being dropped;
+  and resolves each diagnostic with `PathMap::target_for_path` so an **Unmapped Diagnostic** attaches
+  to the form instead of being dropped;
 - runs its library's validator inside a registered synchronous form validator so validation re-runs on
   each configured **Validation Trigger** against the current **Form Draft**;
 - hands each diagnostic to the application mapper as a `DiagnosticView<'_, Path, Err>` (original path,
   original error, resolved `ValidationTarget`) and constructs the shared **Validation Error** through
   `FormValidationError::for_target`;
-- exposes its own thin builder (`source`, `triggers`, `path_map`, `register` /
-  `register_string_errors` / `register_with_context`) with the bounds its library requires.
+- optionally exposes an adapter-local reporter for paths whose resolved target is the form, accounting
+  for any external-library convention that also uses a form target for genuine whole-model errors;
+- exposes its own thin builder (`source`, `triggers`, `path_map`, `on_unmapped_path`, `register` /
+  `register_string_errors` / `register_with_context` / `register_string_errors_with_context`) with
+  the bounds its library requires.
 
 A `#[derive(Form)]`-derived path map plugs into this seam directly, because a derived map
 is just a `PathMap` passed to the existing `path_map(...)` builder step; it needs no adapter trait.

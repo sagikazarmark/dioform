@@ -22,8 +22,8 @@ pub const DEFAULT_GARDE_SOURCE: &str = "garde";
 
 /// Explicit exact-path mapping from external `garde` diagnostic paths to typed form fields.
 ///
-/// Paths are keyed by the canonical `garde::Path::to_string` representation. Unknown paths map
-/// to form-level validation targets so external diagnostics are preserved as form-level validation
+/// Paths are keyed by the canonical `garde::Path::to_string` representation. Unregistered paths map
+/// to form-level validation targets so **Unmapped Diagnostics** are preserved as form-level validation
 /// errors instead of being dropped. This is a re-export of the shared
 /// [`PathMap`]; resolve a `garde::Path` with
 /// `target_for_path(&path.to_string())`.
@@ -34,6 +34,8 @@ pub type GardePathMap<Model> = PathMap<Model>;
 /// This is the value passed to a `garde` mapper closure. Its [`path`](DiagnosticView::path) is the
 /// original `garde::Path` and its [`error`](DiagnosticView::error) is the original `garde::Error`.
 pub type GardeDiagnostic<'a> = DiagnosticView<'a, garde::Path, garde::Error>;
+
+type UnmappedPathReporter = dyn Fn(&garde::Path) + 'static;
 
 /// Extension methods for registering `garde` validation on [`FormCore`].
 pub trait GardeValidationExt<Model, Error> {
@@ -48,6 +50,7 @@ impl<Model, Error> GardeValidationExt<Model, Error> for FormCore<Model, Error> {
             source: ValidatorSource::new(DEFAULT_GARDE_SOURCE),
             triggers: ValidationTriggers::all(),
             path_map: GardePathMap::new(),
+            unmapped_path_reporter: None,
         }
     }
 }
@@ -58,6 +61,7 @@ pub struct GardeValidationBuilder<'form, Model, Error> {
     source: ValidatorSource,
     triggers: ValidationTriggers,
     path_map: GardePathMap<Model>,
+    unmapped_path_reporter: Option<Box<UnmappedPathReporter>>,
 }
 
 impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
@@ -81,10 +85,24 @@ impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
 
     /// Uses an explicit `garde` external-path map for field-level diagnostic attachment.
     ///
-    /// Mapped paths attach to the registered typed field targets. Unmapped paths attach to the
-    /// form, preserving unknown diagnostics without implicit field-name or Rust-field matching.
+    /// Mapped paths attach to the registered typed field targets. **Unmapped Diagnostics** attach to
+    /// the form without implicit field-name or Rust-field matching. The default map is empty.
     pub fn path_map(mut self, path_map: GardePathMap<Model>) -> Self {
         self.path_map = path_map;
+        self
+    }
+
+    /// Reports each **External Diagnostic Path** that the configured path map could not route.
+    ///
+    /// The reporter runs once per **Unmapped Diagnostic**, in `garde` report order, and does not
+    /// change where the diagnostic attaches. Genuinely whole-model diagnostics use an empty
+    /// `garde::Path` and are not reported as unmapped. The reporter does not need to implement
+    /// `Send`.
+    pub fn on_unmapped_path<Reporter>(mut self, reporter: Reporter) -> Self
+    where
+        Reporter: Fn(&garde::Path) + 'static,
+    {
+        self.unmapped_path_reporter = Some(Box::new(reporter));
         self
     }
 
@@ -105,6 +123,7 @@ impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
             source,
             triggers,
             path_map,
+            unmapped_path_reporter,
         } = self;
 
         form.register_sync_form_validator_for_triggers(source, triggers, move |context| {
@@ -112,7 +131,12 @@ impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
                 return Vec::new();
             };
 
-            map_report(&report, &path_map, &mapper)
+            map_report(
+                &report,
+                &path_map,
+                unmapped_path_reporter.as_deref(),
+                &mapper,
+            )
         })
     }
 
@@ -139,6 +163,7 @@ impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
             source,
             triggers,
             path_map,
+            unmapped_path_reporter,
         } = self;
 
         form.register_sync_form_validator_for_triggers(source, triggers, move |context| {
@@ -148,7 +173,12 @@ impl<Model, Error> GardeValidationBuilder<'_, Model, Error> {
                 return Vec::new();
             };
 
-            map_report(&report, &path_map, &mapper)
+            map_report(
+                &report,
+                &path_map,
+                unmapped_path_reporter.as_deref(),
+                &mapper,
+            )
         })
     }
 }
@@ -192,6 +222,7 @@ fn garde_error_to_string(diagnostic: GardeDiagnostic<'_>) -> String {
 fn map_report<Model, Error, Mapper>(
     report: &garde::Report,
     path_map: &GardePathMap<Model>,
+    unmapped_path_reporter: Option<&UnmappedPathReporter>,
     mapper: &Mapper,
 ) -> Vec<FormValidationError<Error>>
 where
@@ -201,6 +232,12 @@ where
         .iter()
         .map(|(path, error)| {
             let target = path_map.target_for_path(&path.to_string());
+            if target.is_form()
+                && !path.is_empty()
+                && let Some(reporter) = unmapped_path_reporter
+            {
+                reporter(path);
+            }
             let diagnostic = GardeDiagnostic::new(path, error, target.clone());
             FormValidationError::for_target(target, mapper(diagnostic))
         })

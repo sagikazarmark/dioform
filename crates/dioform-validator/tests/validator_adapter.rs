@@ -1,4 +1,9 @@
-use std::{borrow::Cow, cell::Cell, collections::BTreeMap, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+};
 
 use dioform_core::{
     FieldIdentity, FieldPath, FormCore, FormValidationError, SubmitError, SubmitErrors,
@@ -356,6 +361,56 @@ fn unmapped_validator_diagnostics_attach_to_form_level_errors_sorted_by_path() {
             ),
         ],
     );
+}
+
+#[test]
+fn validator_reporter_receives_unmapped_paths_from_each_validation_run() {
+    let runs = Rc::new(Cell::new(0));
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
+    let mut form = FormCore::new(SignupForm::new("", "short", Rc::clone(&runs)));
+    form.validator_validation()
+        .path_map(ValidatorPathMap::new().with_field("email", email_path()))
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_owned());
+        })
+        .register_string_errors();
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["password"]);
+    assert_eq!(form.validation_errors().len(), 2);
+    assert!(form.visible_validation_errors().is_empty());
+    assert!(!form.submit_availability().is_available());
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["password", "password"]);
+
+    form.set_field(password_path(), "long-enough".to_owned());
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(runs.get(), 3);
+    assert_eq!(reported.borrow().as_slice(), ["password", "password"]);
+}
+
+#[test]
+fn validator_reporter_with_an_empty_map_reports_all_diagnostics_in_sorted_order() {
+    let runs = Rc::new(Cell::new(0));
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
+    let mut form: FormCore<SignupForm, AppError> =
+        FormCore::new_with_error_type(SignupForm::new("", "short", Rc::clone(&runs)));
+    form.validator_validation()
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_owned());
+        })
+        .register(app_error);
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(reported.borrow().as_slice(), ["email", "password"]);
+    assert_eq!(form.form_validation_errors().len(), 2);
 }
 
 #[test]
@@ -884,8 +939,10 @@ fn context_provider_can_derive_validator_args_from_validation_trigger() {
 }
 
 #[test]
-fn context_string_error_convenience_maps_validator_messages_to_strings() {
+fn context_string_error_convenience_maps_messages_and_reports_unmapped_paths() {
     let runs = Rc::new(Cell::new(0));
+    let reported = Rc::new(RefCell::new(Vec::new()));
+    let reported_by_adapter = Rc::clone(&reported);
     let mut form = FormCore::new(ContextSignupForm::new(
         "ada@example.net",
         "long-enough",
@@ -895,9 +952,12 @@ fn context_string_error_convenience_maps_validator_messages_to_strings() {
     let validator_id = form
         .validator_validation()
         .path_map(ValidatorPathMap::new().with_field("email", context_email_path()))
+        .on_unmapped_path(move |path| {
+            reported_by_adapter.borrow_mut().push(path.to_owned());
+        })
         .register_string_errors_with_context(|context| SignupLimits {
             email_suffix: context.form().required_email_suffix.clone(),
-            minimum_password_length: 0,
+            minimum_password_length: 20,
         });
 
     form.validate_form(ValidationTrigger::Manual);
@@ -913,6 +973,7 @@ fn context_string_error_convenience_maps_validator_messages_to_strings() {
             .as_str(),
         "email must end with @example.com",
     );
+    assert_eq!(reported.borrow().as_slice(), ["password"]);
 }
 
 #[test]
