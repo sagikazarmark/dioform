@@ -6173,7 +6173,7 @@ impl<Model, Error> FormCore<Model, Error> {
     ) -> Vec<ValidationErrorView<'_, Error>> {
         let field = path.identity();
 
-        self.validation_errors_matching(|target| target.as_field() == Some(&field))
+        self.field_validation_errors_by_identity(&field)
     }
 
     /// Returns validation errors for one field identity in deterministic flattened order.
@@ -6181,7 +6181,13 @@ impl<Model, Error> FormCore<Model, Error> {
         &self,
         field: &FieldIdentity,
     ) -> Vec<ValidationErrorView<'_, Error>> {
-        self.validation_errors_matching(|target| target.as_field() == Some(field))
+        let mut errors = Vec::new();
+
+        self.validation_chains
+            .append_field_validation_errors(&mut errors, field);
+        self.append_submit_errors_for_field_matching(&mut errors, field, |_| true);
+
+        errors
     }
 
     /// Returns form-level validation errors in deterministic flattened order.
@@ -6218,9 +6224,7 @@ impl<Model, Error> FormCore<Model, Error> {
     ) -> Vec<ValidationErrorView<'_, Error>> {
         let field = path.identity();
 
-        self.validation_errors_matching(|target| {
-            target.as_field() == Some(&field) && self.should_show_validation_errors(target)
-        })
+        self.visible_field_validation_errors_by_identity(&field)
     }
 
     /// Returns visible validation errors relevant to one submit intent for one field.
@@ -6234,9 +6238,7 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         let field = path.identity();
 
-        self.validation_errors_matching_for_submit_intent(intent, |target| {
-            target.as_field() == Some(&field) && self.should_show_validation_errors(target)
-        })
+        self.visible_field_validation_errors_by_identity_for_intent(&field, intent)
     }
 
     /// Returns visible validation errors for one field identity.
@@ -6244,9 +6246,12 @@ impl<Model, Error> FormCore<Model, Error> {
         &self,
         field: &FieldIdentity,
     ) -> Vec<ValidationErrorView<'_, Error>> {
-        self.validation_errors_matching(|target| {
-            target.as_field() == Some(field) && self.should_show_validation_errors(target)
-        })
+        let target = ValidationTarget::Field(field.clone());
+        if !self.should_show_validation_errors(&target) {
+            return Vec::new();
+        }
+
+        self.field_validation_errors_by_identity(field)
     }
 
     /// Returns visible validation errors relevant to one submit intent for one field identity.
@@ -6258,9 +6263,74 @@ impl<Model, Error> FormCore<Model, Error> {
     where
         Intent: PartialEq + 'static,
     {
-        self.validation_errors_matching_for_submit_intent(intent, |target| {
-            target.as_field() == Some(field) && self.should_show_validation_errors(target)
-        })
+        let target = ValidationTarget::Field(field.clone());
+        if !self.should_show_validation_errors(&target) {
+            return Vec::new();
+        }
+
+        let mut errors = Vec::new();
+
+        self.validation_chains
+            .append_field_validation_errors_for_submit_intent(&mut errors, field, intent);
+        self.append_submit_errors_for_field_matching(&mut errors, field, |error| {
+            self.submit_error_blocks_submit_intent(error, intent)
+        });
+
+        errors
+    }
+
+    /// Returns whether one field has any validation error visible under the configured policy.
+    pub fn has_visible_field_validation_errors<Value>(
+        &self,
+        path: FieldPath<Model, Value>,
+    ) -> bool {
+        self.has_visible_field_validation_errors_by_identity(&path.identity())
+    }
+
+    /// Returns whether one field identity has any validation error visible under the configured policy.
+    pub fn has_visible_field_validation_errors_by_identity(&self, field: &FieldIdentity) -> bool {
+        let target = ValidationTarget::Field(field.clone());
+
+        self.should_show_validation_errors(&target)
+            && (self.validation_chains.has_field_validation_errors(field)
+                || self
+                    .submission
+                    .errors()
+                    .iter()
+                    .any(|error| error.target.as_field() == Some(field)))
+    }
+
+    /// Returns whether one field has any visible validation error relevant to one submit intent.
+    pub fn has_visible_field_validation_errors_for_intent<Value, Intent>(
+        &self,
+        path: FieldPath<Model, Value>,
+        intent: &Intent,
+    ) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.has_visible_field_validation_errors_by_identity_for_intent(&path.identity(), intent)
+    }
+
+    /// Returns whether one field identity has any visible validation error relevant to one submit intent.
+    pub fn has_visible_field_validation_errors_by_identity_for_intent<Intent>(
+        &self,
+        field: &FieldIdentity,
+        intent: &Intent,
+    ) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        let target = ValidationTarget::Field(field.clone());
+
+        self.should_show_validation_errors(&target)
+            && (self
+                .validation_chains
+                .has_field_validation_errors_for_submit_intent(field, intent)
+                || self.submission.errors().iter().any(|error| {
+                    error.target.as_field() == Some(field)
+                        && self.submit_error_blocks_submit_intent(error, intent)
+                }))
     }
 
     /// Returns visible form-level validation errors.
@@ -7668,6 +7738,26 @@ impl<Model, Error> FormCore<Model, Error> {
         }
 
         errors
+    }
+
+    fn append_submit_errors_for_field_matching<'a>(
+        &'a self,
+        errors: &mut Vec<ValidationErrorView<'a, Error>>,
+        field: &FieldIdentity,
+        include: impl Fn(&StoredSubmitError<Error>) -> bool,
+    ) {
+        for error in self.submission.errors() {
+            if error.target.as_field() != Some(field) || !include(error) {
+                continue;
+            }
+
+            errors.push(ValidationErrorView {
+                target: error.target.clone(),
+                source: &error.source,
+                validator_id: None,
+                error: &error.error,
+            });
+        }
     }
 
     fn clear_submit_errors(&mut self) {

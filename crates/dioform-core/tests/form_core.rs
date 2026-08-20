@@ -2272,6 +2272,140 @@ fn flattened_error_views_use_source_category_order_across_validation_and_submit(
 }
 
 #[test]
+fn field_scoped_error_views_preserve_source_category_and_registration_order() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let lines = lines_path();
+    let description = line_description_path();
+    let first = form.collection_items(lines.clone())[0].identity();
+    let field = FieldIdentity::collection_item("lines", first, "description");
+
+    let direct = form.register_sync_field_identity_validator_for_triggers(
+        field.clone(),
+        "direct",
+        ValidationTrigger::Manual,
+        |_model, _context| vec!["direct_first", "direct_second"],
+    );
+    let collection = form.register_sync_collection_item_field_validator_for_triggers(
+        lines,
+        description,
+        "collection",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["collection"],
+    );
+    let form_rule =
+        form.register_sync_form_validator_for_triggers("form", ValidationTrigger::Manual, {
+            let field = field.clone();
+            move |_context| vec![FormValidationError::field_identity(field.clone(), "form")]
+        });
+
+    assert_eq!(
+        form.submit(|_submitted| SubmitError::field_identity(field.clone(), "submit")),
+        SubmitResult::Rejected,
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    let errors: Vec<_> = form
+        .field_validation_errors_by_identity(&field)
+        .into_iter()
+        .map(|error| {
+            (
+                error.validator_id(),
+                error.target(),
+                error.source().as_str(),
+                *error.error(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        errors,
+        vec![
+            (
+                Some(direct),
+                ValidationTarget::Field(field.clone()),
+                "direct",
+                "direct_first",
+            ),
+            (
+                Some(direct),
+                ValidationTarget::Field(field.clone()),
+                "direct",
+                "direct_second",
+            ),
+            (
+                Some(collection),
+                ValidationTarget::Field(field.clone()),
+                "collection",
+                "collection",
+            ),
+            (
+                Some(form_rule),
+                ValidationTarget::Field(field.clone()),
+                "form",
+                "form",
+            ),
+            (
+                None,
+                ValidationTarget::Field(field.clone()),
+                "submit",
+                "submit",
+            ),
+        ]
+    );
+    assert!(form.has_visible_field_validation_errors_by_identity(&field));
+    assert_eq!(
+        form.visible_field_validation_errors_by_identity(&field)
+            .into_iter()
+            .map(|error| (
+                error.validator_id(),
+                error.target(),
+                error.source().as_str(),
+                *error.error(),
+            ))
+            .collect::<Vec<_>>(),
+        errors,
+    );
+}
+
+#[test]
+fn visible_field_error_boolean_matches_visibility_and_submit_intent() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTriggers::new([ValidationTrigger::Manual, ValidationTrigger::Submit]),
+        |_value, _context| vec!["required"],
+    );
+    form.validate_field(name_path(), ValidationTrigger::Manual);
+
+    assert!(!form.has_visible_field_validation_errors(name_path()));
+
+    form.mark_field_blurred_without_validation(name_path());
+
+    assert!(form.has_visible_field_validation_errors(name_path()));
+    assert!(form.has_visible_field_validation_errors_by_identity(&name_path().identity()));
+
+    assert_eq!(
+        form.intent(ContactSubmitIntent::Publish)
+            .submit(|_submitted| ()),
+        SubmitResult::Blocked(SubmitBlocker::ValidationErrors),
+    );
+    assert!(form.has_visible_field_validation_errors_for_intent(
+        name_path(),
+        &ContactSubmitIntent::Publish,
+    ));
+    assert!(!form.has_visible_field_validation_errors_for_intent(
+        name_path(),
+        &ContactSubmitIntent::SaveDraft,
+    ));
+}
+
+#[test]
 fn optional_validator_adapters_support_zero_or_one_error_rules() {
     let mut form: FormCore<RegistrationForm, &'static str> =
         FormCore::new_with_error_type(RegistrationForm {

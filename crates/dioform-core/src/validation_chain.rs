@@ -434,6 +434,32 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
             })
     }
 
+    fn field_entries_for<'a>(
+        &'a self,
+        field: &FieldIdentity,
+    ) -> impl Iterator<Item = (&'a ValidatorKey, &'a RegisteredFieldValidator<Model, Error>)> + 'a
+    {
+        let field = field.clone();
+        self.field_validators
+            .range(ValidatorKey::new(field.clone(), ValidatorId(0))..)
+            .take_while(move |(key, _)| key.field == field)
+    }
+
+    fn collection_item_entries_for<'a>(
+        &'a self,
+        field: &FieldIdentity,
+    ) -> impl Iterator<
+        Item = (
+            &'a ValidatorKey,
+            &'a validation_lifecycle::SourceState<Error>,
+        ),
+    > + 'a {
+        let field = field.clone();
+        self.collection_item_field_validator_states
+            .range(ValidatorKey::new(field.clone(), ValidatorId(0))..)
+            .take_while(move |(key, _)| key.field == field)
+    }
+
     pub(super) fn sorted_field_entries(
         &self,
     ) -> Vec<(&ValidatorKey, &RegisteredFieldValidator<Model, Error>)> {
@@ -873,5 +899,128 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
                 });
             }
         }
+    }
+
+    pub(super) fn append_field_validation_errors<'a>(
+        &'a self,
+        errors: &mut Vec<ValidationErrorView<'a, Error>>,
+        field: &FieldIdentity,
+    ) {
+        self.append_field_validation_errors_matching(errors, field, |_| true, |_| true);
+    }
+
+    pub(super) fn append_field_validation_errors_for_submit_intent<'a, Intent>(
+        &'a self,
+        errors: &mut Vec<ValidationErrorView<'a, Error>>,
+        field: &FieldIdentity,
+        intent: &Intent,
+    ) where
+        Intent: PartialEq + 'static,
+    {
+        self.append_field_validation_errors_matching(
+            errors,
+            field,
+            |state| state.matches_submit_intent(intent),
+            |state| state.matches_submit_intent(intent),
+        );
+    }
+
+    fn append_field_validation_errors_matching<'a>(
+        &'a self,
+        errors: &mut Vec<ValidationErrorView<'a, Error>>,
+        field: &FieldIdentity,
+        include_field: impl Fn(&validation_lifecycle::SourceState<Error>) -> bool,
+        include_form: impl Fn(&validation_lifecycle::SourceState<FormValidationError<Error>>) -> bool,
+    ) {
+        let target = ValidationTarget::Field(field.clone());
+
+        for (key, validator) in self.field_entries_for(field) {
+            if !include_field(&validator.lifecycle) {
+                continue;
+            }
+
+            for error in validator.lifecycle.errors() {
+                errors.push(ValidationErrorView {
+                    target: target.clone(),
+                    source: validator.lifecycle.source(),
+                    validator_id: Some(key.id),
+                    error,
+                });
+            }
+        }
+
+        for (key, validator) in self.collection_item_entries_for(field) {
+            if !include_field(validator) {
+                continue;
+            }
+
+            for error in validator.errors() {
+                errors.push(ValidationErrorView {
+                    target: target.clone(),
+                    source: validator.source(),
+                    validator_id: Some(key.id),
+                    error,
+                });
+            }
+        }
+
+        for (id, validator) in self.sorted_form_entries() {
+            if !include_form(&validator.lifecycle) {
+                continue;
+            }
+
+            for error in validator.lifecycle.errors() {
+                if error.target.as_field() != Some(field) {
+                    continue;
+                }
+
+                errors.push(ValidationErrorView {
+                    target: error.target.clone(),
+                    source: validator.lifecycle.source(),
+                    validator_id: Some(*id),
+                    error: &error.error,
+                });
+            }
+        }
+    }
+
+    pub(super) fn has_field_validation_errors(&self, field: &FieldIdentity) -> bool {
+        self.has_field_validation_errors_matching(field, |_| true, |_| true)
+    }
+
+    pub(super) fn has_field_validation_errors_for_submit_intent<Intent>(
+        &self,
+        field: &FieldIdentity,
+        intent: &Intent,
+    ) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.has_field_validation_errors_matching(
+            field,
+            |state| state.matches_submit_intent(intent),
+            |state| state.matches_submit_intent(intent),
+        )
+    }
+
+    fn has_field_validation_errors_matching(
+        &self,
+        field: &FieldIdentity,
+        include_field: impl Fn(&validation_lifecycle::SourceState<Error>) -> bool,
+        include_form: impl Fn(&validation_lifecycle::SourceState<FormValidationError<Error>>) -> bool,
+    ) -> bool {
+        self.field_entries_for(field).any(|(_, validator)| {
+            include_field(&validator.lifecycle) && !validator.lifecycle.errors().is_empty()
+        }) || self
+            .collection_item_entries_for(field)
+            .any(|(_, validator)| include_field(validator) && !validator.errors().is_empty())
+            || self.form_values().any(|validator| {
+                include_form(&validator.lifecycle)
+                    && validator
+                        .lifecycle
+                        .errors()
+                        .iter()
+                        .any(|error| error.target.as_field() == Some(field))
+            })
     }
 }

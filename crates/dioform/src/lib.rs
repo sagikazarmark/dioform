@@ -9664,11 +9664,10 @@ impl<Model, Error> FormHandle<Model, Error> {
             .track_visible_field_validation_errors(&field);
         self.reactivity.track_field_parse_errors(&field);
 
-        let has_visible_validation_errors = !self
+        let has_visible_validation_errors = self
             .core
             .borrow()
-            .visible_field_validation_errors(path.clone())
-            .is_empty();
+            .has_visible_field_validation_errors(path.clone());
         let has_parse_errors = self.adapter.has_field_parse_errors(field);
 
         FieldAccessibility::new(
@@ -9692,11 +9691,10 @@ impl<Model, Error> FormHandle<Model, Error> {
             .track_visible_field_validation_errors(&field);
         self.reactivity.track_field_parse_errors(&field);
 
-        let has_visible_validation_errors = !self
+        let has_visible_validation_errors = self
             .core
             .borrow()
-            .visible_field_validation_errors_for_intent(path.clone(), intent)
-            .is_empty();
+            .has_visible_field_validation_errors_for_intent(path.clone(), intent);
         let has_parse_errors = self.adapter.has_field_parse_errors(field);
 
         FieldAccessibility::new(
@@ -9716,11 +9714,10 @@ impl<Model, Error> FormHandle<Model, Error> {
             .track_visible_field_validation_errors(&field);
         self.reactivity.track_field_parse_errors(&field);
 
-        let has_visible_validation_errors = !self
+        let has_visible_validation_errors = self
             .core
             .borrow()
-            .visible_field_validation_errors_by_identity(&field)
-            .is_empty();
+            .has_visible_field_validation_errors_by_identity(&field);
         let has_parse_errors = self.adapter.has_field_parse_errors(field);
 
         FieldAccessibility::new(
