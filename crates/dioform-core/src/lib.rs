@@ -991,7 +991,7 @@ use submission::SubmissionState;
 #[doc(hidden)]
 pub mod __private {
     pub use super::collection_addressing::CollectionItemFieldAddress;
-    pub use super::field_ancestry::FieldAncestry;
+    pub use super::field_ancestry::{FieldAncestry, validator_selection_reaches};
 }
 
 use collection_addressing::CollectionItemFieldAddress;
@@ -7351,10 +7351,11 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Runs one field's synchronous chain and reports whether *that field's own* validators passed.
     ///
-    /// The chain spans **Field Ancestry**, but the verdict does not: callers use it to decide
-    /// whether to skip or clear this field's async validators, and a relative's sync failure says
-    /// nothing about whether this field's async validators should run. Widening the verdict too
-    /// would let a child's failing validator suppress its parent's async validation entirely.
+    /// The chain uses the trigger's **Validator Selection Reach**, but the verdict does not: callers
+    /// use it to decide whether to skip or clear this field's async validators, and a relative's sync
+    /// failure says nothing about whether this field's async validators should run. Widening the
+    /// verdict too would let a child's failing validator suppress its parent's async validation
+    /// entirely.
     fn validate_field_sync_chain(
         &mut self,
         field: &FieldIdentity,

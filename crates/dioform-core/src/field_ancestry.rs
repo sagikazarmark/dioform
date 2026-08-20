@@ -11,7 +11,7 @@
 //! reserved. Segment ancestry is separator-anchored, so `counterparty` does not relate to the
 //! sibling `counterparty_account`.
 
-use super::FieldIdentity;
+use super::{FieldIdentity, ValidationTrigger};
 
 /// The character reserved to delimit static path segments inside a **Field Identity**.
 const IDENTITY_PATH_SEPARATOR: char = '.';
@@ -98,6 +98,25 @@ impl FieldAncestry {
             },
             _ => false,
         }
+    }
+}
+
+/// Returns whether a validator registered on `validator_field` runs for an event on `event_field`.
+///
+/// A value replacement reaches both directions of **Field Ancestry** because it changes both
+/// contained values and the values that contain them. A blur only asserts that something happened
+/// inside the fields containing the blurred field, so it reaches outward only. See ADR-0035.
+pub fn validator_selection_reaches(
+    validator_field: &FieldIdentity,
+    event_field: &FieldIdentity,
+    trigger: ValidationTrigger,
+) -> bool {
+    match trigger {
+        ValidationTrigger::Blur => FieldAncestry::contains(validator_field, event_field),
+        ValidationTrigger::Initial
+        | ValidationTrigger::Change
+        | ValidationTrigger::Manual
+        | ValidationTrigger::Submit => FieldAncestry::relates(validator_field, event_field),
     }
 }
 

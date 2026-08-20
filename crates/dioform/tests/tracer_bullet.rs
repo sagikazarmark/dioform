@@ -11584,6 +11584,173 @@ fn async_validation_on_a_contained_field_restarts_when_its_container_is_written(
 }
 
 #[derive(Default)]
+struct NestedAsyncBlurValidationProbe {
+    blur_name: RefCell<Option<Box<ActionHandler>>>,
+    blur_customer: RefCell<Option<Box<ActionHandler>>>,
+    name_runs: Cell<u32>,
+    customer_runs: Cell<u32>,
+}
+
+fn nested_async_blur_validation_probe(probe: Rc<NestedAsyncBlurValidationProbe>) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<NestedCustomerForm, &'static str> =
+                FormHandle::new_with_error_type(NestedCustomerForm::default())
+                    .with_validation_mode(ValidationMode::on_blur());
+            let name_runs_probe = Rc::clone(&probe);
+            let customer_runs_probe = Rc::clone(&probe);
+
+            form.field(nested_customer_name_path())
+                .async_validator("name_available")
+                .on(ValidationTrigger::Blur)
+                .check(move |_value, _snapshot| {
+                    name_runs_probe
+                        .name_runs
+                        .set(name_runs_probe.name_runs.get() + 1);
+                    async { Vec::new() }
+                });
+            form.field(nested_customer_path())
+                .async_validator("customer_allowed")
+                .on(ValidationTrigger::Blur)
+                .check(move |_value, _snapshot| {
+                    customer_runs_probe
+                        .customer_runs
+                        .set(customer_runs_probe.customer_runs.get() + 1);
+                    async { Vec::new() }
+                });
+
+            form
+        }
+    });
+
+    let runtime = dioxus_core::Runtime::current();
+    let scope = runtime.current_scope_id();
+    let blur_name = {
+        let runtime = Rc::clone(&runtime);
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.mark_field_blurred(nested_customer_name_path());
+            });
+        }
+    };
+    let blur_customer = {
+        let form = form.clone();
+
+        move || {
+            runtime.in_scope(scope, || {
+                form.mark_field_blurred(nested_customer_path());
+            });
+        }
+    };
+
+    probe.blur_name.borrow_mut().replace(Box::new(blur_name));
+    probe
+        .blur_customer
+        .borrow_mut()
+        .replace(Box::new(blur_customer));
+
+    VNode::empty()
+}
+
+#[test]
+fn async_blur_validation_reaches_only_the_blurred_field_and_its_containers() {
+    let probe = Rc::new(NestedAsyncBlurValidationProbe::default());
+    let mut dom = VirtualDom::new_with_props(nested_async_blur_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    run_probe_action(&probe.blur_customer);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_runs.get(), 0);
+    assert_eq!(probe.customer_runs.get(), 1);
+
+    run_probe_action(&probe.blur_name);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_runs.get(), 1);
+    assert_eq!(probe.customer_runs.get(), 2);
+}
+
+#[derive(Default)]
+struct CollectionAsyncBlurValidationProbe {
+    blur_description: RefCell<Option<Box<ActionHandler>>>,
+    collection_runs: Cell<u32>,
+    form_runs: Cell<u32>,
+}
+
+fn collection_async_blur_validation_probe(
+    probe: Rc<CollectionAsyncBlurValidationProbe>,
+) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<InvoiceCollectionForm, &'static str> =
+                FormHandle::new_with_error_type(invoice_collection_form())
+                    .with_validation_mode(ValidationMode::on_blur());
+            let collection_runs_probe = Rc::clone(&probe);
+            let form_runs_probe = Rc::clone(&probe);
+
+            form.field(InvoiceCollectionForm::fields().lines())
+                .async_validator("lines_allowed")
+                .on(ValidationTrigger::Blur)
+                .check(move |_value, _snapshot| {
+                    collection_runs_probe
+                        .collection_runs
+                        .set(collection_runs_probe.collection_runs.get() + 1);
+                    async { Vec::new() }
+                });
+            form.async_validator("invoice_allowed")
+                .on(ValidationTrigger::Blur)
+                .check(move |_snapshot| {
+                    form_runs_probe
+                        .form_runs
+                        .set(form_runs_probe.form_runs.get() + 1);
+                    async { Vec::new() }
+                });
+
+            form
+        }
+    });
+    let description = form
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()[0]
+        .text(InvoiceCollectionLine::fields().description());
+    let runtime = dioxus_core::Runtime::current();
+    let scope = runtime.current_scope_id();
+    let blur_description = move || {
+        runtime.in_scope(scope, || description.on_blur());
+    };
+
+    probe
+        .blur_description
+        .borrow_mut()
+        .replace(Box::new(blur_description));
+
+    VNode::empty()
+}
+
+#[test]
+fn collection_item_blur_starts_async_collection_and_form_validation() {
+    let probe = Rc::new(CollectionAsyncBlurValidationProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(collection_async_blur_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    run_probe_action(&probe.blur_description);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.collection_runs.get(), 1);
+    assert_eq!(probe.form_runs.get(), 1);
+}
+
+#[derive(Default)]
 struct RuntimeSyncRunProbe {
     field_gate: AsyncGate<Vec<&'static str>>,
     form_gate: AsyncGate<Vec<FormValidationError<&'static str>>>,

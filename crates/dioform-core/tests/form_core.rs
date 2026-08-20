@@ -5604,7 +5604,7 @@ fn blurring_a_contained_field_reveals_its_container_error_without_blurring_the_c
 }
 
 #[test]
-fn blurring_a_container_does_not_reveal_an_error_on_a_field_it_contains() {
+fn blurring_a_container_does_not_run_validators_on_fields_it_contains() {
     let mut form: FormCore<NestedPage, &'static str> =
         FormCore::new_with_error_type(NestedPage::default());
     form.register_sync_field_validator(
@@ -5615,13 +5615,74 @@ fn blurring_a_container_does_not_reveal_an_error_on_a_field_it_contains() {
 
     form.mark_field_blurred(nested_customer_path());
 
+    assert!(
+        form.field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+    assert!(form.can_submit());
+}
+
+#[test]
+fn manual_validation_on_a_container_runs_validators_on_fields_it_contains() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "name_invalid",
+        ValidationTrigger::Manual,
+        |_name, _context| vec!["name_invalid"],
+    );
+
+    form.validate_field(nested_customer_path(), ValidationTrigger::Manual);
+
     assert_eq!(
         form.field_validation_errors(nested_customer_name_path())[0].error(),
         &"name_invalid"
     );
+}
+
+#[test]
+fn blurring_a_collection_item_container_does_not_run_its_descendant_validators() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(nested_page_with_one_line());
+    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+    form.register_sync_collection_item_field_validator_for_triggers(
+        nested_invoice_lines_path(),
+        line_customer_name_path(),
+        "name_invalid",
+        ValidationTrigger::Blur,
+        |_name, _context| vec!["name_invalid"],
+    );
+
+    assert!(form.mark_collection_item_field_blurred(
+        nested_invoice_lines_path(),
+        item,
+        line_customer_path(),
+    ));
+
     assert!(
-        form.visible_field_validation_errors(nested_customer_name_path())
+        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
             .is_empty()
+    );
+}
+
+#[test]
+fn blurring_a_collection_item_field_runs_its_collection_validator() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let item = form.collection_items(lines_path())[0].identity();
+    form.register_sync_field_validator_for_triggers(
+        lines_path(),
+        "lines_invalid",
+        ValidationTrigger::Blur,
+        |_lines, _context| vec!["lines_invalid"],
+    );
+
+    assert!(form.mark_collection_item_field_blurred(lines_path(), item, line_description_path(),));
+
+    assert_eq!(
+        form.field_validation_errors(lines_path())[0].error(),
+        &"lines_invalid"
     );
 }
 

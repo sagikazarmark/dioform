@@ -39,7 +39,7 @@ pub mod __private {
 }
 
 use dioform_core::{
-    __private::{CollectionItemFieldAddress, FieldAncestry},
+    __private::{CollectionItemFieldAddress, FieldAncestry, validator_selection_reaches},
     AsyncValidatorContext, CollectionIdentityState, FormCore, FormStateRestoreError,
     FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot, ValidationStatusView, ValidatorId,
 };
@@ -3032,9 +3032,10 @@ const MAX_LISTENER_CAUSED_DEBOUNCED_RUNS: u32 = 16;
 /// the nearer registration with strictly less than a listener on an enclosing **Field**.
 ///
 /// The widening comes from directional [`FieldAncestry::contains`], while symmetric
-/// [`FieldAncestry::relates`] stays strict for selectors and validators. Keeping it in the
-/// directional predicate avoids a second identity co-dispatched at each write site, which would
-/// relate every static descendant of the collection path downward to its items. See ADR-0028.
+/// [`FieldAncestry::relates`] stays strict for selectors and value-replacement validation. Keeping
+/// it in the directional predicate avoids a second identity co-dispatched at each write site,
+/// which would relate every static descendant of the collection path downward to its items. See
+/// ADR-0028.
 fn value_replacement_reaches(listener: &FieldIdentity, written: &FieldIdentity) -> bool {
     FieldAncestry::relates(listener, written) || FieldAncestry::contains(listener, written)
 }
@@ -7266,12 +7267,12 @@ impl<Model, Error> FormHandle<Model, Error> {
         started
     }
 
-    /// Starts the async validators of a written field and of every field in **Field Ancestry**
-    /// with it.
+    /// Starts async validators selected by one field's **Validation Trigger**.
     ///
-    /// A write invalidates async field validators model-wide and clears their errors, so restarting
-    /// only the written identity would leave a relative's async result permanently blank — a worse
-    /// outcome than the stale render this propagation exists to fix.
+    /// Value replacement reaches both directions of **Field Ancestry**, while blur reaches only the
+    /// validators on the blurred field and the fields containing it. A write invalidates async
+    /// field validators model-wide and clears their errors, so restarting only the written identity
+    /// would leave a relative's async result permanently blank.
     fn start_runtime_async_field_validators(
         &self,
         field: FieldIdentity,
@@ -7282,7 +7283,9 @@ impl<Model, Error> FormHandle<Model, Error> {
             .borrow()
             .field_validators
             .iter()
-            .filter(|((validator_field, _), _)| FieldAncestry::relates(validator_field, &field))
+            .filter(|((validator_field, _), _)| {
+                validator_selection_reaches(validator_field, &field, trigger)
+            })
             .map(|((validator_field, id), validator)| {
                 (validator_field.clone(), *id, Rc::clone(&validator.start))
             })
@@ -7331,6 +7334,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
 
         started
+    }
+
+    fn start_runtime_async_validation_for_field_event(
+        &self,
+        field: FieldIdentity,
+        trigger: ValidationTrigger,
+    ) {
+        self.start_runtime_async_field_validators(field, trigger);
+        self.start_runtime_async_form_validators(trigger);
     }
 
     fn should_skip_runtime_async_start_for_pending_debounced_submit(
@@ -8140,6 +8152,10 @@ impl<Model, Error> FormHandle<Model, Error> {
         if blurred {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
             if validates_on_blur {
+                self.start_runtime_async_validation_for_field_event(
+                    identity.clone(),
+                    ValidationTrigger::Blur,
+                );
                 self.notify_validation_changed();
             }
             self.dispatch_form_blur_listeners(
@@ -9416,8 +9432,7 @@ impl<Model, Error> FormHandle<Model, Error> {
     pub fn validate_field<Value>(&self, path: FieldPath<Model, Value>, trigger: ValidationTrigger) {
         let field = path.identity();
         self.write_core(|core| core.validate_field(path, trigger));
-        self.start_runtime_async_field_validators(field, trigger);
-        self.start_runtime_async_form_validators(trigger);
+        self.start_runtime_async_validation_for_field_event(field, trigger);
         self.notify_selectors(SelectorTransition::ValidationChanged);
     }
 
@@ -9515,8 +9530,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
 
         if validates {
-            self.start_runtime_async_field_validators(field.clone(), trigger);
-            self.start_runtime_async_form_validators(trigger);
+            self.start_runtime_async_validation_for_field_event(field.clone(), trigger);
         }
 
         // Every field mutation notifies validation subscribers, whether or not it ran validation:
