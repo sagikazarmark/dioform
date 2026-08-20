@@ -4319,6 +4319,39 @@ fn reset_field_notifies_a_descendant_validator_error_reader() {
     assert_eq!(probe.name_error_counts.borrow().as_slice(), [1, 0]);
 }
 
+/// A containing write clears a descendant's stale synchronous validator verdict in **Form Core**
+/// and wakes a mounted reader of that descendant's **Validation Errors**.
+#[test]
+fn containing_field_write_notifies_a_descendant_validator_error_reader() {
+    let probe = Rc::new(ResetFieldValidationErrorProbe::new());
+    probe
+        .form
+        .field(nested_customer_name_path())
+        .validator("required")
+        .on(ValidationTrigger::Manual)
+        .check(|_value, _context| vec!["name_required"]);
+    probe.form.validate_all(ValidationTrigger::Manual);
+
+    let mut dom = VirtualDom::new_with_props(reset_field_validation_error_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1]);
+
+    probe
+        .form
+        .set_field(nested_customer_path(), nested_customer("Ada"));
+    assert!(
+        probe
+            .form
+            .field_validation_errors(nested_customer_name_path())
+            .is_empty()
+    );
+
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.name_error_counts.borrow().as_slice(), [1, 0]);
+}
+
 #[derive(Default)]
 struct ResetFieldFormAsyncProbe {
     gate: AsyncGate<Vec<FormValidationError<&'static str>>>,
@@ -7827,6 +7860,10 @@ fn dioform_handle_preserves_duplicate_validator_registrations() {
 
     handle.set_user_field(email.clone(), "ada@example.com".to_owned());
 
+    assert_eq!(
+        handle.validate_field_validator(email.clone(), second, ValidationTrigger::Manual),
+        Some(ValidationStatus::Invalid)
+    );
     assert_eq!(
         handle.validate_field_validator(email.clone(), first, ValidationTrigger::Manual),
         Some(ValidationStatus::Valid)

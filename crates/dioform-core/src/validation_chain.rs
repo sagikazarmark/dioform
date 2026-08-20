@@ -420,6 +420,37 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
         }
     }
 
+    /// Clears completed synchronous verdicts selected by `matches` without disturbing async work.
+    ///
+    /// Form-validator errors are selected by their field target. Form-scoped errors remain because
+    /// a field write does not say that their verdict was replaced.
+    pub(super) fn clear_sync_results_matching(
+        &mut self,
+        mut matches: impl FnMut(&FieldIdentity) -> bool,
+    ) {
+        for (key, validator) in self.field_validators.iter_mut() {
+            if matches(&key.field) {
+                validator.lifecycle.clear_completed_sync_verdict();
+            }
+        }
+
+        for (key, validator) in self.collection_item_field_validator_states.iter_mut() {
+            if matches(&key.field) {
+                validator.clear_completed_sync_verdict();
+            }
+        }
+
+        for validator in self.form_validators.values_mut() {
+            if !validator.lifecycle.has_completed_sync_verdict() {
+                continue;
+            }
+
+            validator
+                .lifecycle
+                .retain_errors(|error| !error.target.as_field().is_some_and(&mut matches));
+        }
+    }
+
     pub(super) fn has_field_validation_state_matching(
         &self,
         mut matches: impl FnMut(&FieldIdentity) -> bool,
@@ -431,6 +462,13 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
             .iter()
             .any(|(key, validator)| {
                 matches(&key.field) && validator.status() != ValidationStatus::Unknown
+            })
+            || self.form_validators.values().any(|validator| {
+                validator
+                    .lifecycle
+                    .errors()
+                    .iter()
+                    .any(|error| error.target.as_field().is_some_and(&mut matches))
             })
     }
 

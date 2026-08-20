@@ -968,7 +968,7 @@ fn collection_item_removal_clears_item_scoped_state() {
 
     form.mark_collection_item_field_blurred(lines_path(), item, line_description_path());
     let validated_description = description.clone();
-    form.register_sync_form_validator("line-errors", move |_context| {
+    let line_errors = form.register_sync_form_validator("line-errors", move |_context| {
         vec![FormValidationError::field_identity(
             validated_description.clone(),
             "bad line",
@@ -995,6 +995,10 @@ fn collection_item_removal_clears_item_scoped_state() {
     assert!(
         form.collection_item_field_value(lines_path(), item, line_description_path())
             .is_none()
+    );
+    assert_eq!(
+        form.form_validation_status_by_id(line_errors),
+        Some(ValidationStatus::Unknown)
     );
     assert_eq!(form.snapshot().lines.len(), 1);
 }
@@ -1128,6 +1132,134 @@ fn collection_item_validator_errors_follow_reordered_items_and_clear_on_removal(
     assert!(
         form.field_validation_statuses_by_identity(&second_quantity)
             .is_empty()
+    );
+}
+
+#[test]
+fn collection_item_field_write_clears_collection_and_written_row_verdicts_only() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let items = form.collection_items(lines_path());
+    let first = items[0].identity();
+    let second = items[1].identity();
+    let first_quantity = line_field_identity(first, "quantity");
+    let second_quantity = line_field_identity(second, "quantity");
+    let lines_rule = form.register_sync_field_validator_for_triggers(
+        lines_path(),
+        "lines",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["lines"],
+    );
+    form.register_sync_collection_item_field_validator_for_triggers(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["quantity"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert!(form.set_user_collection_item_field(lines_path(), first, line_quantity_path(), 3,));
+
+    assert_eq!(
+        form.field_validation_status(lines_path(), lines_rule),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&first_quantity)[0].status(),
+        ValidationStatus::Unknown
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&second_quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+}
+
+#[test]
+fn collection_reorder_clears_collection_verdict_but_preserves_row_verdicts() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let items = form.collection_items(lines_path());
+    let first = items[0].identity();
+    let second = items[1].identity();
+    let first_quantity = line_field_identity(first, "quantity");
+    let lines_rule = form.register_sync_field_validator_for_triggers(
+        lines_path(),
+        "lines",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["lines"],
+    );
+    form.register_sync_collection_item_field_validator_for_triggers(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["quantity"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert!(form.move_user_collection_item_to_index(lines_path(), second, 0));
+
+    assert_eq!(
+        form.field_validation_status(lines_path(), lines_rule),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&first_quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+}
+
+#[test]
+fn replacing_a_collection_item_clears_that_rows_verdicts_only() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let items = form.collection_items(lines_path());
+    let first = items[0].identity();
+    let second = items[1].identity();
+    let first_quantity = line_field_identity(first, "quantity");
+    let second_quantity = line_field_identity(second, "quantity");
+    form.register_sync_collection_item_field_validator_for_triggers(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["quantity"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    assert!(form.replace_user_collection_item(lines_path(), 0, line("Review")));
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&first_quantity)[0].status(),
+        ValidationStatus::Unknown
+    );
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&second_quantity)[0].status(),
+        ValidationStatus::Invalid
+    );
+}
+
+#[test]
+fn replacing_a_collection_field_clears_its_kept_row_verdicts() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let first = form.collection_items(lines_path())[0].identity();
+    let first_quantity = line_field_identity(first, "quantity");
+    form.register_sync_collection_item_field_validator_for_triggers(
+        lines_path(),
+        line_quantity_path(),
+        "quantity",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["quantity"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    form.set_field(lines_path(), invoice_form().lines);
+
+    assert_eq!(
+        form.field_validation_statuses_by_identity(&first_quantity)[0].status(),
+        ValidationStatus::Unknown
     );
 }
 
@@ -2481,6 +2613,7 @@ fn rerunning_one_validator_source_replaces_only_that_sources_errors() {
 
     form.validate_field(name_path(), ValidationTrigger::Manual);
     form.set_user_field(name_path(), "Ada".to_owned());
+    form.validate_field_source(name_path(), "reserved", ValidationTrigger::Manual);
 
     assert_eq!(
         form.validate_field_source(name_path(), "required", ValidationTrigger::Manual),
@@ -2499,6 +2632,62 @@ fn rerunning_one_validator_source_replaces_only_that_sources_errors() {
     );
     assert_eq!(
         form.validation_status(name_path(), "reserved"),
+        Some(ValidationStatus::Invalid)
+    );
+}
+
+#[test]
+fn field_writes_clear_sync_verdicts_across_ancestry_but_not_for_siblings() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    let customer = form.register_sync_field_validator_for_triggers(
+        nested_customer_path(),
+        "customer",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["customer"],
+    );
+    let name = form.register_sync_field_validator_for_triggers(
+        nested_customer_name_path(),
+        "name",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["name"],
+    );
+    let account_name = form.register_sync_field_validator_for_triggers(
+        nested_customer_account_name_path(),
+        "account_name",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["account_name"],
+    );
+    form.validate_all(ValidationTrigger::Manual);
+
+    form.set_field(nested_customer_name_path(), "Ada".to_owned());
+
+    assert_eq!(
+        form.field_validation_status(nested_customer_path(), customer),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_name_path(), name),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_account_name_path(), account_name),
+        Some(ValidationStatus::Invalid)
+    );
+
+    form.validate_field_source(
+        nested_customer_name_path(),
+        "name",
+        ValidationTrigger::Manual,
+    );
+    form.set_field(nested_customer_path(), nested_customer("Grace"));
+
+    assert_eq!(
+        form.field_validation_status(nested_customer_name_path(), name),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_status(nested_customer_account_name_path(), account_name),
         Some(ValidationStatus::Invalid)
     );
 }
@@ -3199,6 +3388,59 @@ fn stale_async_field_validation_completion_after_edit_does_not_replace_newer_res
     assert_eq!(
         form.field_validation_status(name_path(), availability),
         Some(ValidationStatus::Invalid)
+    );
+}
+
+#[test]
+fn field_write_clears_only_completed_sync_verdicts_and_leaves_async_invalidation_in_charge() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "first".to_owned(),
+        });
+    let pending_async = form.register_async_field_validator_for_triggers(
+        name_path(),
+        "pending_async",
+        ValidationTrigger::Manual,
+    );
+    let run = form
+        .begin_async_field_validation(name_path(), pending_async, ValidationTrigger::Manual)
+        .expect("async validator should start");
+    let completed_sync = form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "completed_sync",
+        ValidationTrigger::Manual,
+        |_value, _context| vec!["completed_sync"],
+    );
+    let never_run_sync = form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "never_run_sync",
+        ValidationTrigger::Blur,
+        |_value, _context| vec!["never_run_sync"],
+    );
+    form.validate_field_source(name_path(), "completed_sync", ValidationTrigger::Manual);
+
+    form.set_field(name_path(), "second".to_owned());
+
+    assert_eq!(
+        form.field_validation_status(name_path(), completed_sync),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_status(name_path(), never_run_sync),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.field_validation_status(name_path(), pending_async),
+        Some(ValidationStatus::Stale)
+    );
+    assert_eq!(
+        form.complete_async_field_validation(
+            name_path(),
+            pending_async,
+            &run,
+            ["first_unavailable"],
+        ),
+        None
     );
 }
 
@@ -6654,12 +6896,20 @@ fn non_submit_triggered_validator_errors_do_not_block_submit_validation_authorit
     );
 
     form.validate_field(name_path(), ValidationTrigger::Manual);
+    form.mark_field_blurred_without_validation(name_path());
+
+    assert!(!form.can_submit());
+    assert_eq!(form.visible_field_validation_errors(name_path()).len(), 1);
+
     form.set_user_field(name_path(), "Ada".to_owned());
 
     assert_eq!(
         form.validation_status(name_path(), "manual_hint"),
-        Some(ValidationStatus::Invalid)
+        Some(ValidationStatus::Unknown)
     );
+    assert!(form.validation_errors().is_empty());
+    assert!(form.visible_field_validation_errors(name_path()).is_empty());
+    assert!(form.can_submit());
 
     let result = form.submit(|submitted| {
         assert_eq!(submitted.value().name, "Ada");
@@ -6670,7 +6920,7 @@ fn non_submit_triggered_validator_errors_do_not_block_submit_validation_authorit
     assert!(called.get());
     assert_eq!(
         form.validation_status(name_path(), "manual_hint"),
-        Some(ValidationStatus::Invalid)
+        Some(ValidationStatus::Unknown)
     );
     assert_eq!(
         form.validation_status(name_path(), "submit_required"),
@@ -8413,6 +8663,56 @@ fn rerunning_one_form_validator_source_replaces_only_that_sources_errors() {
 }
 
 #[test]
+fn field_write_clears_related_form_validator_errors_and_collapses_empty_source_to_unknown() {
+    let mut form: FormCore<RegistrationForm, &'static str> =
+        FormCore::new_with_error_type(RegistrationForm {
+            email: "ada@example.com".to_owned(),
+            password: "secret".to_owned(),
+            confirm_password: String::new(),
+        });
+    let mixed = form.register_sync_form_validator_for_triggers(
+        "mixed",
+        ValidationTrigger::Manual,
+        |_context| {
+            vec![
+                FormValidationError::field(confirm_password_path(), "confirm"),
+                FormValidationError::field(email_path(), "email"),
+                FormValidationError::form("form"),
+            ]
+        },
+    );
+    let confirm_only = form.register_sync_form_validator_for_triggers(
+        "confirm_only",
+        ValidationTrigger::Manual,
+        |_context| vec![FormValidationError::field(confirm_password_path(), "only")],
+    );
+    form.validate_form(ValidationTrigger::Manual);
+
+    form.set_field(confirm_password_path(), "secret".to_owned());
+
+    let errors: Vec<_> = form
+        .validation_errors()
+        .into_iter()
+        .map(|error| (error.target(), *error.error()))
+        .collect();
+    assert_eq!(
+        errors,
+        vec![
+            (ValidationTarget::Field(email_path().identity()), "email"),
+            (ValidationTarget::Form, "form"),
+        ]
+    );
+    assert_eq!(
+        form.form_validation_status_by_id(mixed),
+        Some(ValidationStatus::Invalid)
+    );
+    assert_eq!(
+        form.form_validation_status_by_id(confirm_only),
+        Some(ValidationStatus::Unknown)
+    );
+}
+
+#[test]
 fn reset_restores_baseline_values_and_clears_interaction_metadata() {
     let mut form = FormCore::new(ContactForm {
         name: "Grace".to_owned(),
@@ -8590,6 +8890,35 @@ fn clearing_a_related_validator_result_retires_a_submit_validation_token() {
         !form
             .begin_submission_after_validation(&validation)
             .is_started()
+    );
+}
+
+#[test]
+fn clearing_a_related_form_validator_error_retires_a_submit_validation_token() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    let rule = form.register_sync_form_validator_for_triggers(
+        "valid name",
+        ValidationTrigger::Manual,
+        |_context| {
+            vec![FormValidationError::field(
+                nested_customer_name_path(),
+                "name rejected",
+            )]
+        },
+    );
+    form.validate_form(ValidationTrigger::Manual);
+    let validation = form.submit_validation_snapshot();
+
+    form.reset_field(nested_customer_path());
+
+    assert_eq!(
+        form.form_validation_status_by_id(rule),
+        Some(ValidationStatus::Unknown)
+    );
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
     );
 }
 

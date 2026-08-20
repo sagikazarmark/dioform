@@ -762,6 +762,10 @@ fn rerunning_garde_replaces_only_adapter_errors_and_success_preserves_unrelated_
 
     form.set_field(email_path(), "ada@example.com".to_owned());
     assert_eq!(
+        form.validate_field_validator(email_path(), native_field_id, ValidationTrigger::Manual),
+        Some(ValidationStatus::Invalid),
+    );
+    assert_eq!(
         form.validate_form_validator(garde_id, ValidationTrigger::Manual),
         Some(ValidationStatus::Invalid),
     );

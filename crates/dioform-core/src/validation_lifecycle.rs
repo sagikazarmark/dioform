@@ -132,7 +132,9 @@ impl<Error> SourceState<Error> {
         self.errors.retain(|error| retain(error));
 
         if self.status == ValidationStatus::Invalid && self.errors.is_empty() {
-            self.status = ValidationStatus::Valid;
+            self.status = ValidationStatus::Unknown;
+            self.status_trigger = None;
+            self.submit_intent = None;
         }
     }
 
@@ -205,6 +207,20 @@ impl<Error> SourceState<Error> {
 
     pub(super) const fn is_async(&self) -> bool {
         matches!(self.kind, SourceKind::Async)
+    }
+
+    pub(super) fn has_completed_sync_verdict(&self) -> bool {
+        self.is_sync()
+            && matches!(
+                self.status,
+                ValidationStatus::Valid | ValidationStatus::Invalid
+            )
+    }
+
+    pub(super) fn clear_completed_sync_verdict(&mut self) {
+        if self.has_completed_sync_verdict() {
+            self.clear();
+        }
     }
 
     pub(super) fn should_run(&self, trigger: ValidationTrigger) -> bool {

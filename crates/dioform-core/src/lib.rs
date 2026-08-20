@@ -3492,6 +3492,10 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             .clear_field_results_matching(|validator_field| {
                 field_reset_reaches_validator_result(&field_identity, validator_field)
             });
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                field_reset_reaches_validator_result(&field_identity, validator_field)
+            });
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
         self.clear_submit_errors_for_field(&field_identity);
@@ -3507,6 +3511,13 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
 /// symmetric predicate deliberately stays strict at that boundary for selectors and validators.
 fn field_reset_reaches_validator_result(reset: &FieldIdentity, field: &FieldIdentity) -> bool {
     FieldAncestry::relates(reset, field) || FieldAncestry::contains(reset, field)
+}
+
+/// Returns whether writing `written` replaces the value described by a validator result on `field`.
+fn field_write_reaches_validator_result(written: &FieldIdentity, field: &FieldIdentity) -> bool {
+    FieldAncestry::relates(written, field)
+        || FieldAncestry::contains(written, field)
+        || FieldAncestry::contains(field, written)
 }
 
 impl<Model, Error, Intent> FormCoreIntent<'_, Model, Error, Intent> {
@@ -6367,6 +6378,10 @@ impl<Model, Error> FormCore<Model, Error> {
         self.increment_field_version(&field_identity);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                field_write_reaches_validator_result(&field_identity, validator_field)
+            });
         self.clear_submit_errors_for_field(&field_identity);
         self.emit_observer_event(FormObserverEvent::FieldUpdated {
             field,
@@ -6401,13 +6416,18 @@ impl<Model, Error> FormCore<Model, Error> {
     /// Records a user change for field-like state that lives outside the form draft.
     ///
     /// This preserves the same field-scoped lifecycle invariants as ordinary field replacement
-    /// without mutating the form model: stale submit errors are cleared and submit snapshots use a
-    /// new field version. The form version stays scoped to draft/model edits so pending ordinary
-    /// async field validators do not become stale because adapter-owned field-like state changed.
+    /// without mutating the form model: stale validation and submit verdicts are cleared and submit
+    /// snapshots use a new field version. The form version stays scoped to draft/model edits so
+    /// pending ordinary async field validators do not become stale because adapter-owned field-like
+    /// state changed.
     pub fn record_field_identity_user_change(&mut self, field: &FieldIdentity) {
         self.increment_field_version(field);
         self.invalidate_async_field_validators_for_field(field);
         self.invalidate_pending_async_form_validators();
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                field_write_reaches_validator_result(field, validator_field)
+            });
         self.clear_submit_errors_for_field(field);
         self.field_metadata_mut(field).touched = true;
 
@@ -6759,16 +6779,24 @@ impl<Model, Error> FormCore<Model, Error> {
             .collection(&collection)
             .and_then(|state| state.current_items.get(index).copied())
             .expect("collection item identity should exist at a valid index");
-        // The whole item value changed, so submit errors previously attached to this item's child
-        // fields no longer describe the current value. Clear them, matching the per-child replace
-        // path (`replace_collection_item_field_with_origin`) and item removal. Sync validation
-        // results recompute through the configured value-change trigger, exactly like `set_field`.
+        self.begin_collection_mutation(&collection, origin);
+        // The whole item value changed, so stored verdicts attached to this item's child fields no
+        // longer describe the current value. Clear them after versioning while preserving sibling
+        // rows, then let configured validation regenerate current verdicts.
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                CollectionItemFieldAddress::matches_item(
+                    validator_field,
+                    &collection,
+                    item_identity,
+                )
+            });
         self.submission.retain_errors(|error| {
             !error.target.as_field().is_some_and(|field| {
                 CollectionItemFieldAddress::matches_item(field, &collection, item_identity)
             })
         });
-        self.after_collection_mutation(&collection, origin);
+        self.validate_collection_value_change_if_configured_by_identity(&collection);
         self.emit_observer_event(FormObserverEvent::CollectionItemReplaced {
             collection,
             item: item_identity,
@@ -6835,6 +6863,10 @@ impl<Model, Error> FormCore<Model, Error> {
         self.increment_field_version(&identity);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                field_write_reaches_validator_result(&identity, validator_field)
+            });
         self.clear_submit_errors_for_field(&collection_identity);
         self.clear_submit_errors_for_field(&identity);
         self.emit_observer_event(FormObserverEvent::FieldUpdated {
@@ -6851,17 +6883,24 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     fn after_collection_mutation(&mut self, collection: &FieldIdentity, origin: FieldUpdateOrigin) {
+        self.begin_collection_mutation(collection, origin);
+        self.validate_collection_value_change_if_configured_by_identity(collection);
+    }
+
+    fn begin_collection_mutation(&mut self, collection: &FieldIdentity, origin: FieldUpdateOrigin) {
         self.increment_form_version();
         self.increment_field_version(collection);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
+        self.validation_chains
+            .clear_sync_results_matching(|validator_field| {
+                FieldAncestry::relates(collection, validator_field)
+            });
         self.clear_submit_errors_for_field(collection);
 
         if matches!(origin, FieldUpdateOrigin::User) {
             self.field_metadata_mut(collection).touched = true;
         }
-
-        self.validate_collection_value_change_if_configured_by_identity(collection);
     }
 
     fn validate_collection_value_change_if_configured_by_identity(
