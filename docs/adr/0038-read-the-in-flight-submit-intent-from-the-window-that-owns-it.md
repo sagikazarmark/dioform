@@ -85,12 +85,28 @@ not the one running is still blocked by the one that is. "Publish is in flight" 
 blocked" are both true, and a button that wants to distinguish its own spinner from someone else's now
 has a read for each.
 
+## Every adapter submission entry point respects the waiting window
+
+The managed async-validation wait is an **In-Flight Submission** at the adapter boundary, so it blocks
+submission through every `FormHandle` entry point, not only managed and progressive submission
+bindings. Direct intentless and intent-scoped submission therefore report
+`SubmitBlocker::InFlightSubmission` through their ordinary attempted-and-blocked lifecycle while a
+managed wait owns the window. They do not run validation, capture a payload, invoke application submit
+behavior, or replace the waiting request.
+
+Allowing a direct submission to overlap once the waiting window has request identity was declined.
+Request identity would prevent the old waiter from clearing the newer submission's ownership, but the
+overlap would still contradict the adapter's `is_submitting` and availability answers and could make
+the waiter publish a late terminal block while another submission is already accepted. `FormCore`
+remains unaware of the adapter-owned waiting window; this guard belongs to the Dioxus adapter entry
+points that compose both windows.
+
 ## Consequences
 
-**The reader can be `None` while the form is submitting, in two documented ways.** Asking for the wrong
-intent type is one; the other is a wait loop closing a window opened by a later submission, which is the
-separately recorded ownership defect. Both are consistent with the implication this decision pins, which
-is why it is stated as an implication.
+**The reader can be `None` while the form is submitting when the caller asks for the wrong intent
+type.** A managed wait carries request identity, so a waiter that no longer owns the window cannot close
+it or erase the current intent. The implication remains the general typed-reader invariant because the
+caller may still request a type other than the stored one.
 
 **Availability and the reader may disagree in direction, and that is correct.** With Publish running, a
 Save Draft scope reports no in-flight intent of its own and no availability, because the blocker is

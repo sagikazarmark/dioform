@@ -1,5 +1,9 @@
 # Report a retired Submit Validation Token as its own Submit Blocker
 
+> **Currency boundary update:** [ADR-0041](0041-track-submit-validation-currency-with-a-dedicated-generation.md)
+> supersedes this decision's draft-only account of what retires the token. This ADR still governs how
+> a retired token is reported.
+
 A **Submission** refused because the **Submit Validation Token** presented to it no longer describes the
 current **Form Draft** reports `SubmitBlocker::StaleSubmitValidation`, a fifth variant, rather than
 borrowing `ValidationErrors`. The variant is chosen ahead of `PendingValidation` and behind
@@ -128,7 +132,8 @@ is deliberate — `CONTEXT.md` and ADR-0019 both hold that an **In-Flight Submis
 intent — but the intent is stored without a public reader, so a Save-Draft button still cannot report
 that Publish is the submission running. That is a missing accessor, not a blocker-category question.
 
-A refusal can also fire when nothing semantically changed, because a value-preserving write still bumps
-the version counters this decision compares. That makes the refusal spurious; it does not make the
-category wrong. The variant is therefore documented against the verdict's currency rather than against
-a semantic change, so it stays true whether or not the spurious refusals are fixed.
+A value-preserving assignment still performs a **Field Replacement**: it clears validation evidence,
+may change validator-visible metadata, and retains the listener behavior decided in ADR-0028. Retiring
+submit-validation proof for that replacement is therefore required even when the **Form Draft** remains
+equal. ADR-0041 separates this broader proof currency from the form and field versions used for async
+staleness; the blocker category chosen here remains unchanged.

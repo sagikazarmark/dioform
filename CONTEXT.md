@@ -70,6 +70,10 @@ _Avoid_: Array input, repeated component
 Structured internal metadata that identifies one logical item inside a **Collection Field** so item metadata follows the item independently from its rendered index. Minted from a per-collection counter that never moves backward, so a retired identity is never issued twice and denotes one logical item for as long as any binding holds it ([ADR-0025](docs/adr/0025-mint-collection-item-identities-from-a-never-rewinding-counter.md)).
 _Avoid_: Array index, row ID, application key
 
+**Collection Identity Reconciliation**:
+The coordinated alignment of a **Collection Field**'s current and baseline **Collection Item Identities** with a **Form Draft** lifecycle transition without guessing logical correspondence or reusing a retired identity.
+_Avoid_: Positional matching, identity resync, path map refresh
+
 **Unresolved Binding**:
 A **Field Binding** whose addressed **Field** has no value in the **Form Draft**, because the **Collection Item Identity** it was created for no longer belongs to its **Collection Field**.
 _Avoid_: Stale binding, dangling binding, removed row
@@ -123,12 +127,24 @@ A path emitted by an external validation library as part of an **External Valida
 _Avoid_: Field path, field name
 
 **Explicit Path Mapping**:
-The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs; an unregistered path is never matched by **Field Name**, serde name, or Rust field name, and resolves to the form.
+The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs; an unregistered path is never matched by **Field Name**, serde name, or Rust field name, and resolves to the form. For a collection-row path, each validation run resolves the external row index to the **Collection Item Identity** currently at that index.
 _Avoid_: Field name matching, string path map, implicit binding, path inference
 
+**Collection Validation Target Rule**:
+A durable typed **Explicit Path Mapping** rule that resolves one external collection-row index during a validation run to the current item's or one static descendant's **Validation Target**; each adapter owns how its external path matches the rule.
+_Avoid_: Static row target, mutable path map, wildcard field name
+
 **Unmapped Diagnostic**:
-An **External Validation Diagnostic** whose **External Diagnostic Path** matched no **Explicit Path Mapping** entry, so it resolved to a form-scoped **Validation Target** rather than a typed **Field**.
+An **External Validation Diagnostic** whose **External Diagnostic Path** matched no eligible exact mapping and no **Collection Validation Target Rule**, so it resolved to a form-scoped **Validation Target** rather than a typed **Field**.
 _Avoid_: Unknown diagnostic, dropped diagnostic, unmatched path, unrouted error
+
+**Collection Validation Target Resolution Failure**:
+A failure to produce one current field target for an **External Validation Diagnostic** that matched a **Collection Validation Target Rule**, because its row index did not resolve or multiple rules claimed it. The diagnostic resolves to the form and is reported separately from an **Unmapped Diagnostic**.
+_Avoid_: Unmapped diagnostic, stale validation result, unresolved binding
+
+**Diagnostic Route Provenance**:
+Ephemeral **Validation Adapter** information describing how an **External Validation Diagnostic** selected its **Validation Target** or form fallback, available while the diagnostic is mapped but not stored in core validation state unless the application copies it into its **Validation Error**.
+_Avoid_: Validation source, stored target metadata, external path in core
 
 **Validation Trigger**:
 A semantic form event that determines when validation runs, such as a value change, field blur, submit request, or form initialization.
@@ -203,7 +219,7 @@ An owned submit-time capture for one **Submission** that carries the **Submitted
 _Avoid_: Submitted value, command object, submit validation token
 
 **Submit Validation Token**:
-Proof that submit validation passed for one **Submit Intent** against a specific **Form Draft**, held outside the form while submit-relevant **Async Validation** finishes and presented back when the **Submission** starts, so a submission can only begin against the draft that was validated. It carries no form values, which is what separates it from a **Form Snapshot** or a **Submission Snapshot**, and a write that moves the draft retires it.
+Proof that submit validation passed for one **Submit Intent** against specific validation-relevant state: the **Form Draft**, validator-visible field metadata, **File Selections**, collection logical identities, applicable validators, and the validation results that establish the pass. It is held outside the form while submit-relevant **Async Validation** finishes and presented back when the **Submission** starts. A change to those inputs, or discarding evidence the token relied on, retires it; presentation-only state does not, and a retired token never becomes current again merely because values later return to an earlier state. It carries no form values, which is what separates it from a **Form Snapshot** or a **Submission Snapshot**.
 _Avoid_: Submission snapshot, form snapshot, validation result
 
 **Last Submit Status**:
@@ -406,6 +422,10 @@ _Avoid_: Dynamic field path
 An explicit replacement of a **Field** value through the form API so the form can update metadata, validation state, and observers consistently.
 _Avoid_: Untracked mutable access
 
+**Collection-Affecting Field Replacement**:
+A **Field Replacement** whose replaced **Field** is a tracked **Collection Field** or contains one, so its current logical item sequence is replaced rather than matched by position.
+_Avoid_: Collection item replacement, positional reconciliation
+
 **Successful Submission**:
 A **Submission** that completes without returned submit errors and leaves reset or baseline changes to the application.
 _Avoid_: Automatic reset, automatic save marker
@@ -413,6 +433,10 @@ _Avoid_: Automatic reset, automatic save marker
 **Dioxus-Managed Submission**:
 A **Submission** handled through the Dioxus adapter rather than native browser form posting.
 _Avoid_: Native form POST
+
+**Managed Submit Continuation**:
+An explicit request-scoped **Dioxus-Managed Submission** policy under which one **Submit Attempt** may continue after an ordinary **Form Draft** replacement retires its **Submit Validation Token**, by running at most one additional full submit-validation cycle for the same **Submit Intent**. The default policy terminates the attempt instead; **File Selection** and form-lifecycle changes do not qualify for continuation, and the retired token never authorizes the changed state.
+_Avoid_: Retry submission, token refresh, automatic latest-draft authorization
 
 **Native Browser Submission**:
 A browser-owned form submission where rendered controls are serialized and posted by the browser rather than by Dioform's typed submission lifecycle.
@@ -694,7 +718,11 @@ Domain expert: Yes. Application-facing submit state exposes the **Submit Intent*
 
 Developer: The form validated, then the user edited a field while the async check was still running. Can the submission still start?
 
-Domain expert: No. The **Submit Validation Token** was proof about the **Form Draft** it validated, and the write retired it, so the attempt is refused rather than submitting a draft nothing validated. That refusal is its own known blocker: the user should submit again, not hunt for errors or wait for a check that is no longer running.
+Domain expert: No. The **Submit Validation Token** was proof about the validation-relevant state the attempt checked, and the write retired it, so the attempt is refused rather than submitting state nothing validated. That refusal is its own known blocker: the user should submit again, not hunt for errors or wait for a check that is no longer running.
+
+Developer: If the Form Draft stays equal but a submit listener changes metadata a validator can read, or clears a validator result that established the pass, can the old token still start submission?
+
+Domain expert: No. Validator-visible metadata and the evidence that established the pass are part of the **Submit Validation Token**'s currency even when the **Form Draft** is unchanged.
 
 Developer: So can a form report no blockers and still refuse a submit?
 
