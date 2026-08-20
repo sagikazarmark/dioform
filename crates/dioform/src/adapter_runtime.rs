@@ -6,6 +6,7 @@
 //! reset, reinitialize, and cleanup path.
 
 use std::{
+    any::Any,
     cell::{Cell, RefCell},
     collections::BTreeMap,
     future::Future,
@@ -147,8 +148,13 @@ impl AdapterRuntime {
         self.state.borrow().is_active()
     }
 
-    pub(super) fn begin_managed_async_submission(&self) -> bool {
-        self.state.borrow_mut().begin_managed_async_submission()
+    pub(super) fn begin_managed_async_submission<Intent>(&self, intent: Intent) -> bool
+    where
+        Intent: 'static,
+    {
+        self.state
+            .borrow_mut()
+            .begin_managed_async_submission(Rc::new(intent))
     }
 
     pub(super) fn finish_managed_async_submission(&self) {
@@ -157,6 +163,28 @@ impl AdapterRuntime {
 
     pub(super) fn has_managed_async_submission(&self) -> bool {
         self.state.borrow().has_managed_async_submission()
+    }
+
+    pub(super) fn managed_async_submission_intent<Intent>(&self) -> Option<Intent>
+    where
+        Intent: Clone + 'static,
+    {
+        self.state
+            .borrow()
+            .managed_async_submission_intent()
+            .and_then(|intent| intent.downcast_ref::<Intent>())
+            .cloned()
+    }
+
+    pub(super) fn managed_async_submission_matches<Intent>(&self, expected: &Intent) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.state
+            .borrow()
+            .managed_async_submission_intent()
+            .and_then(|intent| intent.downcast_ref::<Intent>())
+            == Some(expected)
     }
 
     pub(super) fn has_validation_tasks(&self) -> bool {
@@ -341,7 +369,7 @@ impl AdapterRuntime {
 
 struct AdapterState {
     active: bool,
-    managed_async_submission_pending: bool,
+    managed_async_submission_intent: Option<Rc<dyn Any>>,
     next_task_id: u64,
     validation_tasks: Vec<ValidationTaskRegistration>,
     validation_waiters: Vec<Rc<ValidationWaiterState>>,
@@ -352,7 +380,7 @@ impl Default for AdapterState {
     fn default() -> Self {
         Self {
             active: true,
-            managed_async_submission_pending: false,
+            managed_async_submission_intent: None,
             next_task_id: 0,
             validation_tasks: Vec::new(),
             validation_waiters: Vec::new(),
@@ -535,21 +563,25 @@ impl AdapterState {
         self.active
     }
 
-    pub(super) fn begin_managed_async_submission(&mut self) -> bool {
-        if self.managed_async_submission_pending {
+    pub(super) fn begin_managed_async_submission(&mut self, intent: Rc<dyn Any>) -> bool {
+        if self.managed_async_submission_intent.is_some() {
             return false;
         }
 
-        self.managed_async_submission_pending = true;
+        self.managed_async_submission_intent = Some(intent);
         true
     }
 
     pub(super) fn finish_managed_async_submission(&mut self) {
-        self.managed_async_submission_pending = false;
+        self.managed_async_submission_intent = None;
     }
 
     pub(super) fn has_managed_async_submission(&self) -> bool {
-        self.managed_async_submission_pending
+        self.managed_async_submission_intent.is_some()
+    }
+
+    pub(super) fn managed_async_submission_intent(&self) -> Option<&dyn Any> {
+        self.managed_async_submission_intent.as_deref()
     }
 
     pub(super) fn register_debounced_validation(

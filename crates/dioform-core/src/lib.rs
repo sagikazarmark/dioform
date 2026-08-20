@@ -3554,6 +3554,16 @@ impl<Model, Error, Intent> FormCoreIntent<'_, Model, Error, Intent> {
         self.availability().is_available()
     }
 
+    /// Returns whether this submit intent is the one currently in flight.
+    ///
+    /// Returns `false` when nothing is in flight or when another intent is running.
+    pub fn is_in_flight(&self) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.core.intent_is_in_flight(&self.intent)
+    }
+
     /// Returns the latest outcome when this submit intent produced the latest status.
     pub fn last_status(&self) -> Option<SubmitStatus>
     where
@@ -3934,6 +3944,27 @@ impl<Model, Error> FormCore<Model, Error> {
     /// Returns whether a submission has started and not completed yet.
     pub const fn is_submitting(&self) -> bool {
         self.submission.is_in_flight()
+    }
+
+    /// Returns the typed submit intent of the in-flight submission.
+    ///
+    /// Returns `None` when no submission is in flight or when `Intent` does not match the stored
+    /// intent type.
+    pub fn in_flight_submit_intent<Intent>(&self) -> Option<Intent>
+    where
+        Intent: Clone + 'static,
+    {
+        self.submission.in_flight_intent()?.cloned()
+    }
+
+    /// Returns whether `intent` is the submit intent of the in-flight submission.
+    pub fn intent_is_in_flight<Intent>(&self, intent: &Intent) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.submission
+            .in_flight_intent()
+            .is_some_and(|in_flight| in_flight.matches(intent))
     }
 
     /// Returns the latest meaningful submission outcome, if one has been recorded.

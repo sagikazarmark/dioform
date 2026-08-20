@@ -6192,6 +6192,16 @@ impl<Model, Intent, Error> IntentFormHandle<Model, Intent, Error> {
         self.availability().is_available()
     }
 
+    /// Returns whether this submit intent is the one currently in flight.
+    ///
+    /// Returns `false` when nothing is in flight or when another intent is running.
+    pub fn is_in_flight(&self) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.handle.submit_intent_is_in_flight(&self.intent)
+    }
+
     /// Returns the latest outcome when this submit intent produced the latest status.
     pub fn last_status(&self) -> Option<SubmitStatus>
     where
@@ -7434,10 +7444,45 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.core.borrow().field_value(path).clone()
     }
 
-    /// Returns whether a submission has started and not completed yet.
+    /// Returns whether managed submit validation is waiting or a submission has started and not
+    /// completed yet.
     pub fn is_submitting(&self) -> bool {
         self.reactivity.track_submit();
         self.core.borrow().is_submitting() || self.adapter.has_managed_async_submission()
+    }
+
+    /// Returns the typed submit intent of the current managed wait or in-flight submission.
+    ///
+    /// An accepted submission takes precedence over a managed async-validation wait. Returns `None`
+    /// when neither window is open or when `Intent` does not match the stored intent type.
+    pub fn in_flight_submit_intent<Intent>(&self) -> Option<Intent>
+    where
+        Intent: Clone + 'static,
+    {
+        self.reactivity.track_submit();
+
+        let core = self.core.borrow();
+        if core.is_submitting() {
+            return core.in_flight_submit_intent();
+        }
+        drop(core);
+
+        self.adapter.managed_async_submission_intent()
+    }
+
+    fn submit_intent_is_in_flight<Intent>(&self, intent: &Intent) -> bool
+    where
+        Intent: PartialEq + 'static,
+    {
+        self.reactivity.track_submit();
+
+        let core = self.core.borrow();
+        if core.is_submitting() {
+            return core.intent_is_in_flight(intent);
+        }
+        drop(core);
+
+        self.adapter.managed_async_submission_matches(intent)
     }
 
     /// Returns current UI-oriented submit availability through a selector subscription.
@@ -12204,6 +12249,12 @@ mod tests {
         phone: String,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum TestSubmitIntent {
+        SaveDraft,
+        Publish,
+    }
+
     /// A form with no reader of any kind, so every registration in it came from the test body.
     fn contact_form() -> FormHandle<Contact> {
         FormHandle::new(Contact {
@@ -12277,6 +12328,50 @@ mod tests {
         VNode::empty()
     }
 
+    #[derive(Clone, Copy)]
+    enum InFlightIntentRead {
+        Typed,
+        Scoped,
+    }
+
+    struct InFlightIntentProbe {
+        form: FormHandle<Contact>,
+        read: InFlightIntentRead,
+        renders: Cell<u32>,
+    }
+
+    fn in_flight_intent_selector_probe(probe: Rc<InFlightIntentProbe>) -> Element {
+        match probe.read {
+            InFlightIntentRead::Typed => {
+                probe.form.in_flight_submit_intent::<TestSubmitIntent>();
+            }
+            InFlightIntentRead::Scoped => {
+                probe.form.intent(TestSubmitIntent::Publish).is_in_flight();
+            }
+        }
+        probe.renders.set(probe.renders.get() + 1);
+        VNode::empty()
+    }
+
+    struct SubmitListenerProbe {
+        form: FormHandle<Contact>,
+        succeeded_intents: RefCell<Vec<TestSubmitIntent>>,
+    }
+
+    fn typed_submit_listener_probe(probe: Rc<SubmitListenerProbe>) -> Element {
+        let listener_probe = Rc::clone(&probe);
+        use_submit_listener(probe.form.clone(), move |context| {
+            if context.event() == SubmitListenerEvent::SubmissionSucceeded {
+                listener_probe.succeeded_intents.borrow_mut().push(
+                    *context
+                        .submit_intent::<TestSubmitIntent>()
+                        .expect("manual success should preserve its typed intent"),
+                );
+            }
+        });
+        VNode::empty()
+    }
+
     /// A **Selector Registration** exists because a **Form Selector** for that **Field** was read
     /// inside a reactive scope, and for no other reason (ADR-0029). Notification resolves
     /// registrations without creating them, so writing a **Field** nothing has read registers
@@ -12345,6 +12440,103 @@ mod tests {
                 "{field:?} is registered with no subscriber"
             );
         }
+    }
+
+    #[test]
+    fn each_in_flight_intent_read_subscribes_to_submission_changes() {
+        let form = contact_form();
+        let typed = Rc::new(InFlightIntentProbe {
+            form: form.clone(),
+            read: InFlightIntentRead::Typed,
+            renders: Cell::new(0),
+        });
+        let scoped = Rc::new(InFlightIntentProbe {
+            form: form.clone(),
+            read: InFlightIntentRead::Scoped,
+            renders: Cell::new(0),
+        });
+        let mut typed_dom =
+            VirtualDom::new_with_props(in_flight_intent_selector_probe, Rc::clone(&typed));
+        let mut scoped_dom =
+            VirtualDom::new_with_props(in_flight_intent_selector_probe, Rc::clone(&scoped));
+
+        typed_dom.rebuild_in_place();
+        scoped_dom.rebuild_in_place();
+        assert_eq!(typed.renders.get(), 1);
+        assert_eq!(scoped.renders.get(), 1);
+
+        assert!(matches!(
+            form.intent(TestSubmitIntent::Publish).begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+        assert!(!form.intent(TestSubmitIntent::SaveDraft).is_in_flight());
+        typed_dom.render_immediate_to_vec();
+        scoped_dom.render_immediate_to_vec();
+        assert_eq!(typed.renders.get(), 2);
+        assert_eq!(scoped.renders.get(), 2);
+
+        assert!(form.finish_submission_success());
+        typed_dom.render_immediate_to_vec();
+        scoped_dom.render_immediate_to_vec();
+        assert_eq!(typed.renders.get(), 3);
+        assert_eq!(scoped.renders.get(), 3);
+    }
+
+    #[test]
+    fn manual_submission_success_listener_receives_the_typed_in_flight_intent() {
+        let probe = Rc::new(SubmitListenerProbe {
+            form: contact_form(),
+            succeeded_intents: RefCell::new(Vec::new()),
+        });
+        let mut dom = VirtualDom::new_with_props(typed_submit_listener_probe, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        assert!(matches!(
+            probe
+                .form
+                .intent(TestSubmitIntent::Publish)
+                .begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+        assert!(probe.form.finish_submission_success());
+
+        assert_eq!(
+            probe.succeeded_intents.borrow().as_slice(),
+            [TestSubmitIntent::Publish]
+        );
+    }
+
+    #[test]
+    fn handle_state_replacement_clears_the_in_flight_submit_intent() {
+        let form = contact_form();
+        let snapshot = form.state_snapshot();
+
+        assert_eq!(form.in_flight_submit_intent::<TestSubmitIntent>(), None);
+
+        assert!(matches!(
+            form.intent(TestSubmitIntent::Publish).begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+        form.reset();
+        assert_eq!(form.in_flight_submit_intent::<TestSubmitIntent>(), None);
+
+        assert!(matches!(
+            form.intent(TestSubmitIntent::Publish).begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+        form.reinitialize(Contact {
+            email: "grace@example.com".to_owned(),
+            phone: String::new(),
+        });
+        assert_eq!(form.in_flight_submit_intent::<TestSubmitIntent>(), None);
+
+        assert!(matches!(
+            form.intent(TestSubmitIntent::Publish).begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+        form.restore_state_snapshot(snapshot)
+            .expect("fresh state snapshot should restore");
+        assert_eq!(form.in_flight_submit_intent::<TestSubmitIntent>(), None);
     }
 
     /// Reports whether both handles share every one of their `Rc`-shaped fields.

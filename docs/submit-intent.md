@@ -57,6 +57,10 @@ let publish_status = publish.last_status();
 
 let publish_availability = publish.availability();
 
+let publish_is_in_flight = publish.is_in_flight();
+
+let in_flight_intent = form.in_flight_submit_intent::<ArticleSubmitIntent>();
+
 let latest = form
     .last_submit_status_as::<ArticleSubmitIntent>()
     .map(|status| (*status.intent(), status.status()));
@@ -69,7 +73,7 @@ let publish_title_errors = form.visible_field_validation_errors_for_intent(
 );
 ```
 
-`last_submit_status()`, `submit_availability()`, and global visible-error selectors remain outcome-only/global conveniences. Intentful UIs that render per-button state should prefer `form.intent(intent).last_status()`, `form.intent(intent).availability()`, `visible_validation_errors_for_intent(&intent)`, and `visible_field_validation_errors_for_intent(path, &intent)` so a Save Draft result is not confused with a Publish result. UIs that need to react to whichever intent produced the latest outcome can use `last_submit_status_as::<Intent>()`. Availability is a read-only known-blocker signal; the submit attempt still performs submit-triggered validation with the provided intent before application submit behavior runs.
+`last_submit_status()`, `submit_availability()`, and global visible-error selectors remain outcome-only/global conveniences. Intentful UIs that render per-button state should prefer `form.intent(intent).last_status()`, `form.intent(intent).availability()`, `form.intent(intent).is_in_flight()`, `visible_validation_errors_for_intent(&intent)`, and `visible_field_validation_errors_for_intent(path, &intent)` so a Save Draft result is not confused with a Publish result. UIs that need to react to whichever intent produced the latest outcome can use `last_submit_status_as::<Intent>()`, and `in_flight_submit_intent::<Intent>()` identifies whichever intent currently owns the managed validation wait or accepted submission. Availability remains un-narrowed: when Publish is in flight, a Save Draft scope reports `is_in_flight()` as `false` while its availability still contains `SubmitBlocker::InFlightSubmission`. Availability is a read-only known-blocker signal; the submit attempt still performs submit-triggered validation with the provided intent before application submit behavior runs.
 
 Each **Validator Source** retains only one submit-triggered verdict, which belongs to the most recent attempting **Submit Intent**. Per-intent availability and per-intent visible errors are therefore meaningful for the intent last attempted: after another intent reruns the same source, reads such as `form.intent(intent).availability()`, `form.intent(intent).can_submit()`, `visible_validation_errors_for_intent`, and `visible_field_validation_errors_for_intent` do not retain the earlier intent's verdict. An optimistic availability read still self-corrects because the next submit attempt runs submit-triggered validation for its own intent. [ADR-0039](adr/0039-decline-per-intent-retention-of-submit-triggered-validator-results.md) records why Dioform declines per-intent retention.
 
@@ -77,4 +81,4 @@ Progressive browser submit preflight also scopes typed intent explicitly with `p
 
 Use **Submit Intent** only for submission purpose. Do not use it for secrets, large payloads, form field values, analytics data, mouse coordinates, or UI state that does not participate in validation, submit errors, or application submit behavior. The **Submission Snapshot** already carries the validated submitted value.
 
-Observer events omit raw **Submit Intent** values by default. Intent remains available through typed application-facing APIs such as the submit handler payload, validation context, and intent-aware status, availability, and visible-error reads. `FormStateSnapshot` does not serialize submit-scoped validation state, stored submit errors, or the latest submit status because that state is associated with an arbitrary application-defined intent type.
+Observer events omit raw **Submit Intent** values by default. Intent remains available through typed application-facing APIs such as the submit handler payload, validation context, in-flight state, and intent-aware status, availability, and visible-error reads. `FormStateSnapshot` does not serialize submit-scoped validation state, stored submit errors, or the latest submit status because that state is associated with an arbitrary application-defined intent type.

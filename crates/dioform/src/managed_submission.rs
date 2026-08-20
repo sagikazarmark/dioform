@@ -241,7 +241,11 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 .flush_submit_relevant_debounced_validations(&core);
         }
 
-        if !self.handle.adapter.begin_managed_async_submission() {
+        if !self
+            .handle
+            .adapter
+            .begin_managed_async_submission(validation.intent().clone())
+        {
             return self.block_duplicate_submission(validation.intent().clone());
         }
 
@@ -497,6 +501,7 @@ mod tests {
         validation_snapshot: RefCell<Option<(u8, u8)>>,
         submitted_snapshot: RefCell<Option<AccountForm>>,
         submit_calls: Cell<u32>,
+        succeeded_intents: RefCell<Vec<ManagedSubmitIntent>>,
     }
 
     #[derive(Default)]
@@ -601,6 +606,17 @@ mod tests {
             }
         });
 
+        let listener_probe = Rc::clone(&probe);
+        crate::use_submit_listener(form.clone(), move |context| {
+            if context.event() == SubmitListenerEvent::SubmissionSucceeded {
+                listener_probe.succeeded_intents.borrow_mut().push(
+                    *context
+                        .submit_intent::<ManagedSubmitIntent>()
+                        .expect("managed success should preserve its typed intent"),
+                );
+            }
+        });
+
         use_hook({
             let form = form.clone();
             let probe = Rc::clone(&probe);
@@ -608,8 +624,9 @@ mod tests {
             move || {
                 let submit = probe.submit.clone();
                 let submit_probe = Rc::clone(&probe);
-                let result =
-                    ManagedSubmission::new(form.clone()).submit_async((), move |submitted| {
+                let result = ManagedSubmission::new(form.clone()).submit_async(
+                    ManagedSubmitIntent::Publish,
+                    move |submitted| {
                         submit_probe
                             .submit_calls
                             .set(submit_probe.submit_calls.get() + 1);
@@ -618,7 +635,8 @@ mod tests {
                             .borrow_mut()
                             .replace(submitted.value().clone());
                         submit.future()
-                    });
+                    },
+                );
 
                 probe.result.borrow_mut().replace(result);
             }
@@ -847,6 +865,23 @@ mod tests {
 
         assert_eq!(*probe.result.borrow(), Some(SubmitResult::Started));
         assert!(handle.is_submitting());
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            Some(ManagedSubmitIntent::Publish)
+        );
+        assert_eq!(handle.in_flight_submit_intent::<String>(), None);
+        assert_eq!(
+            handle.read_core(|core| core.in_flight_submit_intent::<ManagedSubmitIntent>()),
+            None
+        );
+        assert!(handle.intent(ManagedSubmitIntent::Publish).is_in_flight());
+        assert!(!handle.intent(ManagedSubmitIntent::SaveDraft).is_in_flight());
+        assert!(
+            handle
+                .intent(ManagedSubmitIntent::SaveDraft)
+                .availability()
+                .contains(SubmitBlocker::InFlightSubmission)
+        );
         assert_eq!(probe.submit_calls.get(), 0);
 
         dom.render_immediate_to_vec();
@@ -863,12 +898,28 @@ mod tests {
             Some(&AccountForm { age: 42 })
         );
         assert!(handle.is_submitting());
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            Some(ManagedSubmitIntent::Publish)
+        );
+        assert_eq!(
+            handle.read_core(|core| core.in_flight_submit_intent::<ManagedSubmitIntent>()),
+            Some(ManagedSubmitIntent::Publish)
+        );
 
         probe.submit.complete(());
         dom.render_immediate_to_vec();
 
         assert!(!handle.is_submitting());
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            None
+        );
         assert_eq!(handle.last_submit_status(), Some(SubmitStatus::Succeeded));
+        assert_eq!(
+            probe.succeeded_intents.borrow().as_slice(),
+            [ManagedSubmitIntent::Publish]
+        );
     }
 
     #[test]
@@ -1070,7 +1121,47 @@ mod tests {
 
         assert!(!handle.finish_submission_success());
         assert!(handle.is_submitting());
+        let intent = handle.in_flight_submit_intent::<()>();
+        assert_eq!(intent, Some(()));
+        assert!(!intent.is_some() || handle.is_submitting());
+        assert!(handle.intent(()).is_in_flight());
         assert!(handle.validation_errors().is_empty());
+    }
+
+    #[test]
+    fn accepted_submission_intent_takes_precedence_over_managed_wait_intent() {
+        let probe = Rc::new(PendingValidationProbe::default());
+        let mut dom = VirtualDom::new_with_props(pending_validation_probe, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+
+        let handle = probe
+            .handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose its form handle")
+            .clone();
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            Some(ManagedSubmitIntent::Publish)
+        );
+        assert!(handle.write_advanced(|core| {
+            core.unregister_field_validator(AccountForm::fields().age(), "age_check")
+        }));
+
+        assert!(matches!(
+            handle
+                .intent(ManagedSubmitIntent::SaveDraft)
+                .begin_submission(),
+            SubmitAttempt::Started(_)
+        ));
+
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            Some(ManagedSubmitIntent::SaveDraft)
+        );
+        assert!(handle.intent(ManagedSubmitIntent::SaveDraft).is_in_flight());
+        assert!(!handle.intent(ManagedSubmitIntent::Publish).is_in_flight());
     }
 
     #[test]

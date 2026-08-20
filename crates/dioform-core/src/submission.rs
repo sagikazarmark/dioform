@@ -75,6 +75,11 @@ impl<Error> SubmissionState<Error> {
         self.in_flight_intent = intent;
     }
 
+    /// Borrows the erased submit intent of the in-flight submission.
+    pub(crate) fn in_flight_intent(&self) -> Option<&SubmitIntentSnapshot> {
+        self.in_flight_intent.as_ref()
+    }
+
     /// Takes the erased in-flight submit intent, leaving none behind.
     pub(crate) fn take_in_flight_intent(&mut self) -> Option<SubmitIntentSnapshot> {
         self.in_flight_intent.take()

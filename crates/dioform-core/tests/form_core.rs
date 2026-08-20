@@ -6380,6 +6380,71 @@ fn submit_intent_reaches_submit_validation_and_handler_snapshot() {
 }
 
 #[test]
+fn accepted_submission_exposes_its_typed_in_flight_intent() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+    assert!(matches!(
+        form.intent(ContactSubmitIntent::Publish).begin_submission(),
+        SubmitAttempt::Started(_)
+    ));
+
+    assert_eq!(
+        form.in_flight_submit_intent::<ContactSubmitIntent>(),
+        Some(ContactSubmitIntent::Publish)
+    );
+    assert_eq!(form.in_flight_submit_intent::<String>(), None);
+    assert!(form.is_submitting());
+    assert!(form.intent(ContactSubmitIntent::Publish).is_in_flight());
+    assert!(!form.intent(ContactSubmitIntent::SaveDraft).is_in_flight());
+    assert_eq!(
+        form.intent(ContactSubmitIntent::SaveDraft).availability(),
+        dioform_core::SubmitAvailability::blocked_by([SubmitBlocker::InFlightSubmission,])
+    );
+
+    assert!(form.finish_submission());
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+}
+
+#[test]
+fn core_state_replacement_clears_the_in_flight_submit_intent() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    let snapshot = form.state_snapshot();
+
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+
+    assert!(matches!(
+        form.intent(ContactSubmitIntent::Publish).begin_submission(),
+        SubmitAttempt::Started(_)
+    ));
+    form.reset();
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+
+    assert!(matches!(
+        form.intent(ContactSubmitIntent::Publish).begin_submission(),
+        SubmitAttempt::Started(_)
+    ));
+    form.reinitialize(ContactForm {
+        name: "Grace".to_owned(),
+    });
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+
+    assert!(matches!(
+        form.intent(ContactSubmitIntent::Publish).begin_submission(),
+        SubmitAttempt::Started(_)
+    ));
+    form.restore_state_snapshot(snapshot)
+        .expect("fresh state snapshot should restore");
+    assert_eq!(form.in_flight_submit_intent::<ContactSubmitIntent>(), None);
+}
+
+#[test]
 fn submit_intent_scope_rejects_mismatched_validation_snapshot() {
     let mut form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
