@@ -164,7 +164,7 @@ Dioxus-managed async submit can wait. `managed_submit().on_submit_async(...)` us
 
 Progressive browser submit preflight does not wait. `progressive_submit().on_submit(event)` runs synchronous submit validation and blocks existing known blockers, but it does not start submit-only async validators or wait for them before allowing browser POST. Use managed async submit when client async validation must finish before submit behavior runs.
 
-Mounted parse blockers are checked before async validation or application submit behavior starts. Parsed text bindings own mounted parse-error state, so Dioxus components should create them with `use_parsed_text(form.clone(), path)` rather than constructing a fresh `parsed_text` binding on every render.
+Mounted parse blockers are checked before async validation or application submit behavior starts. Parsed text bindings own mounted parse-error state, so Dioxus components should create them with `use_parsed_text(&form, path)` rather than constructing a fresh `parsed_text` binding on every render.
 
 ```rust
 use std::time::Duration;

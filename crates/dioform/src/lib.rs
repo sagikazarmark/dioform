@@ -399,7 +399,7 @@ pub fn use_submit_listener<Model, Error, Listener>(
 }
 
 fn use_field_binding_hook<Model, Value, Error, Binding, Create>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
     create: Create,
 ) -> Binding
@@ -410,14 +410,15 @@ where
     Binding: Clone + 'static,
     Create: FnOnce(FormHandle<Model, Error>, FieldPath<Model, Value>) -> Binding + 'static,
 {
-    let cleanup_handle = handle.clone();
+    let hook_handle = handle.clone();
+    let cleanup_handle = hook_handle.clone();
     let cleanup_field = path.identity();
 
     dioxus_core::use_hook_with_cleanup(
         move || {
             let field = path.identity();
-            let binding = create(handle.clone(), path);
-            handle.dispatch_field_binding_listeners(field, FieldBindingLifecycle::Mounted);
+            let binding = create(hook_handle.clone(), path);
+            hook_handle.dispatch_field_binding_listeners(field, FieldBindingLifecycle::Mounted);
             binding
         },
         move |_binding| {
@@ -538,7 +539,7 @@ where
 
 /// Creates a stable controlled select binding for a component instance.
 pub fn use_select<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
 ) -> SelectBinding<Model, Value, Error>
 where
@@ -554,7 +555,7 @@ where
 /// Use this for native select controls whose Dioxus events expose rendered string values while the
 /// form field remains an enum or other typed Rust value.
 pub fn use_select_with<Model, Value, Error, Parser, ParserError, Formatter>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
     parser: Parser,
     formatter: Formatter,
@@ -574,7 +575,7 @@ where
 
 /// Creates a stable controlled radio group binding for a component instance.
 pub fn use_radio_group<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
 ) -> RadioGroupBinding<Model, Value, Error>
 where
@@ -587,7 +588,7 @@ where
 
 /// Creates a stable true multi-select binding for a direct `Vec<Value>` field.
 pub fn use_multi_select<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Vec<Value>>,
 ) -> MultiSelectBinding<Model, Value, Error>
 where
@@ -645,7 +646,7 @@ pub fn use_collection_item_radio_group<Model, Item, Value, Error>(
 /// unregister the previous parse blocker, so components should use this hook when binding parsed
 /// inputs.
 pub fn use_parsed_text<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
 ) -> ParsedTextBinding<Model, Value, Error>
 where
@@ -668,7 +669,7 @@ where
 /// unregister the previous parse blocker, so components should use this hook when binding parsed
 /// inputs.
 pub fn use_parsed_text_with<Model, Value, Error, Parser, ParserError, Formatter>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
     parser: Parser,
     formatter: Formatter,
@@ -681,21 +682,9 @@ where
     ParserError: fmt::Display + 'static,
     Formatter: Fn(&Value) -> String + 'static,
 {
-    let cleanup_handle = handle.clone();
-    let cleanup_field = path.identity();
-
-    dioxus_core::use_hook_with_cleanup(
-        move || {
-            let field = path.identity();
-            let binding = handle.parsed_text_with(path, parser, formatter);
-            handle.dispatch_field_binding_listeners(field, FieldBindingLifecycle::Mounted);
-            binding
-        },
-        move |_binding| {
-            cleanup_handle
-                .dispatch_field_binding_listeners(cleanup_field, FieldBindingLifecycle::Unmounted);
-        },
-    )
+    use_field_binding_hook(handle, path, move |handle, path| {
+        handle.parsed_text_with(path, parser, formatter)
+    })
 }
 
 /// Creates a stable numeric input binding for a component instance.
@@ -705,7 +694,7 @@ where
 /// validation. Empty input for non-optional numeric fields is a parse error from the field type's
 /// [`FromStr`] implementation.
 pub fn use_number<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
 ) -> ParsedTextBinding<Model, Value, Error>
 where
@@ -722,7 +711,7 @@ where
 /// Use this when the application needs behavior such as optional numeric fields where empty input
 /// has domain-specific meaning.
 pub fn use_number_with<Model, Value, Error, Parser, ParserError, Formatter>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
     parser: Parser,
     formatter: Formatter,
@@ -917,7 +906,7 @@ where
 /// format. Date relationship rules such as check-out after check-in belong in field or form
 /// validation.
 pub fn use_date<Model, Value, Error>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
 ) -> ParsedTextBinding<Model, Value, Error>
 where
@@ -936,7 +925,7 @@ where
 /// typed value parser. Date relationship rules such as check-out after check-in belong in field or
 /// form validation.
 pub fn use_date_with<Model, Value, Error, Parser, ParserError, Formatter>(
-    handle: FormHandle<Model, Error>,
+    handle: &FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
     parser: Parser,
     formatter: Formatter,

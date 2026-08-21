@@ -1448,7 +1448,7 @@ fn field_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
             context.lifecycle(),
         ));
     });
-    let _binding = use_parsed_text(form, email_path);
+    let _binding = use_parsed_text(&form, email_path);
 
     VNode::empty()
 }
@@ -1463,7 +1463,7 @@ fn field_binding_listener_after_binding_probe(probe: Rc<BindingListenerProbe>) -
     let email_path = ProfileForm::fields().email();
     let listener_probe = Rc::clone(&probe);
 
-    let _binding = use_parsed_text(form.clone(), email_path.clone());
+    let _binding = use_parsed_text(&form, email_path.clone());
     use_field_binding_listener(form, email_path, move |context| {
         listener_probe.events.borrow_mut().push((
             context.field_identity().as_str().to_owned(),
@@ -1480,7 +1480,7 @@ fn container_binding_listener_after_descendant_binding_probe(
     let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
     let listener_probe = Rc::clone(&probe);
 
-    let _binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    let _binding = use_parsed_text(&form, nested_customer_name_path());
     use_field_binding_listener(form, nested_customer_path(), move |context| {
         listener_probe.events.borrow_mut().push((
             context.field_identity().as_str().to_owned(),
@@ -1503,7 +1503,7 @@ fn container_binding_listener_before_descendant_binding_probe(
             context.lifecycle(),
         ));
     });
-    let _binding = use_parsed_text(form, nested_customer_name_path());
+    let _binding = use_parsed_text(&form, nested_customer_name_path());
 
     VNode::empty()
 }
@@ -1514,8 +1514,8 @@ fn container_binding_listener_after_two_descendant_bindings_probe(
     let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
     let listener_probe = Rc::clone(&probe);
 
-    let _first_binding = use_parsed_text(form.clone(), nested_customer_name_path());
-    let _second_binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    let _first_binding = use_parsed_text(&form, nested_customer_name_path());
+    let _second_binding = use_parsed_text(&form, nested_customer_name_path());
     use_field_binding_listener(form, nested_customer_path(), move |context| {
         listener_probe.events.borrow_mut().push((
             context.field_identity().as_str().to_owned(),
@@ -1533,7 +1533,7 @@ fn descendant_binding_listener_after_container_binding_probe(
     let listener_probe = Rc::clone(&probe);
 
     let _binding = use_parsed_text_with(
-        form.clone(),
+        &form,
         nested_customer_path(),
         |value: &str| Ok::<_, String>(nested_customer(value)),
         |value| value.name.clone(),
@@ -1561,7 +1561,7 @@ fn descendant_binding_listener_before_container_binding_probe(
         ));
     });
     let _binding = use_parsed_text_with(
-        form,
+        &form,
         nested_customer_path(),
         |value: &str| Ok::<_, String>(nested_customer(value)),
         |value| value.name.clone(),
@@ -1576,8 +1576,8 @@ fn container_binding_listener_after_distinct_descendant_bindings_probe(
     let form = use_form_handle(|| FormHandle::new(NestedCustomerForm::default()));
     let listener_probe = Rc::clone(&probe);
 
-    let _tax_id_binding = use_parsed_text(form.clone(), nested_customer_tax_id_path());
-    let _name_binding = use_parsed_text(form.clone(), nested_customer_name_path());
+    let _tax_id_binding = use_parsed_text(&form, nested_customer_tax_id_path());
+    let _name_binding = use_parsed_text(&form, nested_customer_name_path());
     use_field_binding_listener(form, nested_customer_path(), move |context| {
         listener_probe.events.borrow_mut().push((
             context.field_identity().as_str().to_owned(),
@@ -1590,7 +1590,7 @@ fn container_binding_listener_after_distinct_descendant_bindings_probe(
 
 #[component]
 fn DescendantBinding(form: FormHandle<NestedCustomerForm>) -> Element {
-    let _binding = use_parsed_text(form, nested_customer_name_path());
+    let _binding = use_parsed_text(&form, nested_customer_name_path());
 
     VNode::empty()
 }
@@ -1641,7 +1641,7 @@ fn number_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
             context.lifecycle(),
         ));
     });
-    let _binding = use_number(form, age_path);
+    let _binding = use_number(&form, age_path);
 
     VNode::empty()
 }
@@ -1670,7 +1670,7 @@ fn custom_parsed_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Ele
         ));
     });
     let _binding = use_parsed_text_with(
-        form,
+        &form,
         token_path,
         |value: &str| {
             Ok::<_, String>(UploadToken {
@@ -1706,7 +1706,7 @@ fn date_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
             context.lifecycle(),
         ));
     });
-    let _binding = use_date_with(form, check_in_path, parse_date_ymd, format_date_ymd);
+    let _binding = use_date_with(&form, check_in_path, parse_date_ymd, format_date_ymd);
 
     VNode::empty()
 }
@@ -1734,7 +1734,7 @@ fn default_date_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Elem
             context.lifecycle(),
         ));
     });
-    let _binding = use_date(form, check_in_path);
+    let _binding = use_date(&form, check_in_path);
 
     VNode::empty()
 }
@@ -1763,7 +1763,7 @@ fn custom_number_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Ele
         ));
     });
     let _binding = use_number_with(
-        form,
+        &form,
         age_path,
         |value: &str| value.parse::<u8>().map_err(|error| error.to_string()),
         |value| value.to_string(),
@@ -1787,7 +1787,7 @@ fn select_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
             context.lifecycle(),
         ));
     });
-    let _binding = use_select(form, plan_path);
+    let _binding = use_select(&form, plan_path);
 
     VNode::empty()
 }
@@ -1807,7 +1807,7 @@ fn radio_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Element {
             context.lifecycle(),
         ));
     });
-    let _binding = use_radio_group(form, plan_path);
+    let _binding = use_radio_group(&form, plan_path);
 
     VNode::empty()
 }
@@ -1827,7 +1827,7 @@ fn rendered_select_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> E
             context.lifecycle(),
         ));
     });
-    let _binding = use_select_with(form, plan_path, parse_plan, format_plan);
+    let _binding = use_select_with(&form, plan_path, parse_plan, format_plan);
 
     VNode::empty()
 }
@@ -1847,7 +1847,7 @@ fn multi_select_binding_lifecycle_probe(probe: Rc<BindingListenerProbe>) -> Elem
             context.lifecycle(),
         ));
     });
-    let _binding = use_multi_select(form, topics_path);
+    let _binding = use_multi_select(&form, topics_path);
 
     VNode::empty()
 }
@@ -1877,7 +1877,7 @@ fn multi_select_listener_probe(probe: Rc<MultiSelectListenerProbe>) -> Element {
         ));
     });
 
-    let topics = use_multi_select(form, topics_path);
+    let topics = use_multi_select(&form, topics_path);
     probe.topics.borrow_mut().replace(topics);
 
     VNode::empty()
@@ -1910,7 +1910,7 @@ fn multi_select_blur_probe(probe: Rc<MultiSelectBlurProbe>) -> Element {
     probe
         .topics
         .borrow_mut()
-        .replace(use_multi_select(form, MultiSelectForm::fields().topics()));
+        .replace(use_multi_select(&form, MultiSelectForm::fields().topics()));
 
     VNode::empty()
 }
@@ -2022,7 +2022,7 @@ fn parsed_listener_parse_blocker_probe(probe: Rc<ParsedListenerParseBlockerProbe
             });
     });
 
-    let age = use_number(form, ParsedLifecycleForm::fields().age());
+    let age = use_number(&form, ParsedLifecycleForm::fields().age());
     probe.age.borrow_mut().replace(age);
 
     VNode::empty()
@@ -2078,7 +2078,7 @@ fn parsed_submit_listener_probe(probe: Rc<ParsedSubmitListenerProbe>) -> Element
         listener_probe.events.borrow_mut().push(context.event());
     });
 
-    let age = use_number(form.clone(), ParsedLifecycleForm::fields().age());
+    let age = use_number(&form, ParsedLifecycleForm::fields().age());
     probe.handle.borrow_mut().replace(form);
     probe.age.borrow_mut().replace(age);
 
@@ -4155,7 +4155,7 @@ fn reset_field_parse_probe(probe: Rc<ResetFieldParseProbe>) -> Element {
             },
         })
     });
-    let age = use_number(form.clone(), ParsedLifecycleForm::fields().age());
+    let age = use_number(&form, ParsedLifecycleForm::fields().age());
     probe.age.borrow_mut().replace(age);
     probe.handle.borrow_mut().replace(form);
 
@@ -11222,9 +11222,9 @@ fn choice_hooks_probe(probe: Rc<ChoiceHookProbe>) -> Element {
         })
     });
     let plan_path = PlanForm::fields().plan();
-    let typed_select = use_select(form.clone(), plan_path.clone());
-    let rendered_select = use_select_with(form.clone(), plan_path.clone(), parse_plan, format_plan);
-    let radio = use_radio_group(form.clone(), plan_path);
+    let typed_select = use_select(&form, plan_path.clone());
+    let rendered_select = use_select_with(&form, plan_path.clone(), parse_plan, format_plan);
+    let radio = use_radio_group(&form, plan_path);
 
     probe
         .typed_select_selected
@@ -18170,7 +18170,7 @@ struct ParseSelectorProbe {
 fn reactive_parse_selector_probe(probe: Rc<ParseSelectorProbe>) -> Element {
     let form = use_form_handle(|| FormHandle::new(AccountForm { age: 42 }));
     let age_path = AccountForm::fields().age();
-    let age = use_number(form.clone(), age_path.clone());
+    let age = use_number(&form, age_path.clone());
 
     let rendered_value = age.value();
     let parse_error_count = form.field_parse_errors(age_path).len();
@@ -18218,7 +18218,7 @@ fn managed_async_submit_parse_probe(probe: Rc<ManagedAsyncSubmitParseProbe>) -> 
         }
     });
     let age_path = AccountForm::fields().age();
-    let age = use_parsed_text(form.clone(), age_path);
+    let age = use_parsed_text(&form, age_path);
 
     use_hook({
         let form = form.clone();
@@ -18267,7 +18267,7 @@ fn date_hook_probe(probe: Rc<DateHookProbe>) -> Element {
             },
         })
     });
-    let check_in = use_date(form.clone(), DateForm::fields().check_in());
+    let check_in = use_date(&form, DateForm::fields().check_in());
 
     probe.rendered_value.borrow_mut().replace(check_in.value());
     probe.handle.borrow_mut().replace(form);

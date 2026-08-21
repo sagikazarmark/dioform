@@ -182,5 +182,5 @@ metadata, item-level validation attachment, dirty tracking, reset, reinitializat
 future reordering compatibility follow existing **Collection Field** semantics rather than ad hoc
 adapter-only state.
 
-In Dioxus components, `use_multi_select(form, path)` provides the same stable binding pattern as the
+In Dioxus components, `use_multi_select(&form, path)` provides the same stable binding pattern as the
 other choice-helper hooks.

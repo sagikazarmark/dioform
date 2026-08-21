@@ -199,7 +199,7 @@ pub fn Invoice() -> Element {
     let mut status = use_signal(String::new);
 
     let customer = form.text(f.customer());
-    let due_date = use_date(form.clone(), f.due_date());
+    let due_date = use_date(&form, f.due_date());
     let terms = form.select(f.terms());
     let lines = form.collection(f.lines());
     let submit = form.managed_submit();

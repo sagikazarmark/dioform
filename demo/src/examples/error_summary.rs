@@ -66,7 +66,7 @@ pub fn ErrorSummaryExample() -> Element {
     let fields = ContactForm::fields();
     let email = form.text(fields.email());
     let phone = form.text(fields.phone());
-    let age = use_number(form.clone(), fields.age());
+    let age = use_number(&form, fields.age());
 
     let email_oninput = email.clone();
     let phone_oninput = phone.clone();

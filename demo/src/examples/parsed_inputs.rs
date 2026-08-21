@@ -39,9 +39,9 @@ pub fn ParsedInputsExample() -> Element {
     });
     let fields = OrderForm::fields();
 
-    let quantity = use_number(form.clone(), fields.quantity());
+    let quantity = use_number(&form, fields.quantity());
     let price = use_number_with(
-        form.clone(),
+        &form,
         fields.unit_price_cents(),
         parse_dollars_to_cents,
         |cents| format_cents(*cents),

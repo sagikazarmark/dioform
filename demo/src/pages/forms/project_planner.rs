@@ -146,7 +146,7 @@ pub fn ProjectPlanner() -> Element {
     let company = form.text(company_path);
     let contact_email = form.text(email_path.clone());
     let currency = form.select(currency_path);
-    let cap = use_number_with(form.clone(), cap_path, parse_dollars_to_cents, |cents| {
+    let cap = use_number_with(&form, cap_path, parse_dollars_to_cents, |cents| {
         cents_to_dollars(*cents)
     });
     let milestones = form.collection(milestones_path());
