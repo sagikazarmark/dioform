@@ -3402,9 +3402,8 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             return SubmitAttempt::Blocked(blocker);
         }
 
-        self.submission.set_in_flight(true);
         self.submission
-            .set_in_flight_intent(Some(SubmitIntentSnapshot::new(intent.clone())));
+            .start_in_flight(SubmitIntentSnapshot::new(intent.clone()));
         SubmitAttempt::Started(SubmissionSnapshot::with_intent_and_field_versions(
             self.snapshot(),
             intent,
@@ -3460,11 +3459,10 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             return SubmitAttempt::Blocked(blocker);
         }
 
-        self.submission.set_in_flight(true);
         self.submission
             .set_validation_intent(Some(SubmitIntentSnapshot::new(validation.intent.clone())));
         self.submission
-            .set_in_flight_intent(Some(SubmitIntentSnapshot::new(validation.intent.clone())));
+            .start_in_flight(SubmitIntentSnapshot::new(validation.intent.clone()));
         SubmitAttempt::Started(SubmissionSnapshot::with_intent_and_field_versions(
             self.snapshot(),
             validation.intent.clone(),
@@ -4358,24 +4356,16 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Completes an in-flight submission without changing values or the baseline.
     pub fn finish_submission(&mut self) -> bool {
-        if !self.submission.is_in_flight() {
-            return false;
-        }
-
-        self.submission.set_in_flight(false);
-        self.submission.set_in_flight_intent(None);
-        true
+        self.submission.take_in_flight_intent().is_some()
     }
 
     /// Completes a successful submission without resetting or changing the baseline.
     pub fn finish_submission_success(&mut self) -> bool {
-        if !self.submission.is_in_flight() {
+        let Some(intent) = self.submission.take_in_flight_intent() else {
             return false;
-        }
+        };
 
-        self.submission.set_in_flight(false);
         self.clear_submit_errors();
-        let intent = self.take_submission_in_flight_intent();
         self.record_submit_status_snapshot(SubmitStatus::Succeeded, intent);
         true
     }
@@ -4389,12 +4379,10 @@ impl<Model, Error> FormCore<Model, Error> {
     where
         Outcome: Into<SubmitErrors<Model, Error>>,
     {
-        if !self.submission.is_in_flight() {
+        let Some(intent) = self.submission.take_in_flight_intent() else {
             return false;
-        }
+        };
 
-        self.submission.set_in_flight(false);
-        let intent = self.take_submission_in_flight_intent();
         self.store_submit_errors(&submitted, errors.into(), intent.clone());
         self.record_submit_status_snapshot(SubmitStatus::Rejected, intent);
         true
@@ -7889,12 +7877,6 @@ impl<Model, Error> FormCore<Model, Error> {
     ) {
         self.submission
             .record_status(StoredLastSubmitStatus::with_snapshot(status, intent));
-    }
-
-    fn take_submission_in_flight_intent(&mut self) -> SubmitIntentSnapshot {
-        self.submission
-            .take_in_flight_intent()
-            .unwrap_or_else(|| SubmitIntentSnapshot::new(()))
     }
 
     fn async_run_is_stale(&self, run: &AsyncValidationRun, model_dependent: bool) -> bool {

@@ -16,8 +16,7 @@ use crate::{FieldIdentity, StoredLastSubmitStatus, StoredSubmitError, SubmitInte
 /// Owns the submit lifecycle state of one **Form Core**.
 pub(crate) struct SubmissionState<Error> {
     attempts: u64,
-    in_flight: bool,
-    in_flight_intent: Option<SubmitIntentSnapshot>,
+    in_flight: Option<SubmitIntentSnapshot>,
     last_status: Option<StoredLastSubmitStatus>,
     validation_intent: Option<SubmitIntentSnapshot>,
     errors: Vec<StoredSubmitError<Error>>,
@@ -27,8 +26,7 @@ impl<Error> Default for SubmissionState<Error> {
     fn default() -> Self {
         Self {
             attempts: 0,
-            in_flight: false,
-            in_flight_intent: None,
+            in_flight: None,
             last_status: None,
             validation_intent: None,
             errors: Vec::new(),
@@ -62,27 +60,22 @@ impl<Error> SubmissionState<Error> {
 
     /// Returns whether a submission has started and not completed.
     pub(crate) const fn is_in_flight(&self) -> bool {
-        self.in_flight
+        self.in_flight.is_some()
     }
 
-    /// Sets whether a submission is currently in flight.
-    pub(crate) fn set_in_flight(&mut self, in_flight: bool) {
-        self.in_flight = in_flight;
-    }
-
-    /// Sets the erased submit intent of the in-flight submission.
-    pub(crate) fn set_in_flight_intent(&mut self, intent: Option<SubmitIntentSnapshot>) {
-        self.in_flight_intent = intent;
+    /// Opens the in-flight submission window with its erased submit intent.
+    pub(crate) fn start_in_flight(&mut self, intent: SubmitIntentSnapshot) {
+        self.in_flight = Some(intent);
     }
 
     /// Borrows the erased submit intent of the in-flight submission.
     pub(crate) fn in_flight_intent(&self) -> Option<&SubmitIntentSnapshot> {
-        self.in_flight_intent.as_ref()
+        self.in_flight.as_ref()
     }
 
-    /// Takes the erased in-flight submit intent, leaving none behind.
+    /// Closes the in-flight submission window and returns its erased submit intent.
     pub(crate) fn take_in_flight_intent(&mut self) -> Option<SubmitIntentSnapshot> {
-        self.in_flight_intent.take()
+        self.in_flight.take()
     }
 
     // --- submit-validation intent ---
