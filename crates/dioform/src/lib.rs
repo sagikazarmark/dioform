@@ -8269,16 +8269,27 @@ impl<Model, Error> FormHandle<Model, Error> {
     {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
-        let replaced = self.write_core(|core| core.replace_collection_item(path, index, item));
-        if replaced {
-            self.notify_collection_changed(collection.clone());
+        let replaced = self.write_core(|core| {
+            core.replace_collection_item_with_identity(
+                path,
+                index,
+                item,
+                FieldUpdateOrigin::Programmatic,
+            )
+        });
+        if let Some(retained_item) = replaced {
+            self.notify_collection_item_replaced(
+                collection.clone(),
+                retained_item,
+                FieldUpdateOrigin::Programmatic,
+            );
             self.dispatch_value_replacement_listeners(
                 collection,
                 field_name,
                 FieldUpdateOrigin::Programmatic,
             );
         }
-        replaced
+        replaced.is_some()
     }
 
     fn replace_user_collection_item<Item: 'static>(
@@ -8292,16 +8303,22 @@ impl<Model, Error> FormHandle<Model, Error> {
     {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
-        let replaced = self.write_core(|core| core.replace_user_collection_item(path, index, item));
-        if replaced {
-            self.notify_collection_user_changed(collection.clone());
+        let replaced = self.write_core(|core| {
+            core.replace_collection_item_with_identity(path, index, item, FieldUpdateOrigin::User)
+        });
+        if let Some(retained_item) = replaced {
+            self.notify_collection_item_replaced(
+                collection.clone(),
+                retained_item,
+                FieldUpdateOrigin::User,
+            );
             self.dispatch_value_replacement_listeners(
                 collection,
                 field_name,
                 FieldUpdateOrigin::User,
             );
         }
-        replaced
+        replaced.is_some()
     }
 
     fn clear_collection_items<Item: 'static>(&self, path: FieldPath<Model, Vec<Item>>) -> bool
@@ -8559,6 +8576,25 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.notify_selectors(SelectorTransition::CollectionItemsRemoved {
             collection,
             items,
+            origin,
+        });
+    }
+
+    fn notify_collection_item_replaced(
+        &self,
+        collection: FieldIdentity,
+        retained_item: CollectionItemIdentity,
+        origin: FieldUpdateOrigin,
+    ) {
+        let collection_path = collection
+            .static_path()
+            .expect("collection fields in the first slice must have static identities")
+            .to_owned();
+        let item_field = FieldIdentity::collection_item_value(collection_path, retained_item);
+
+        self.notify_selectors(SelectorTransition::CollectionItemReplaced {
+            collection,
+            item: item_field,
             origin,
         });
     }

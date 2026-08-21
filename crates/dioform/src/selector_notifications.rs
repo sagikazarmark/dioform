@@ -19,6 +19,11 @@ pub(super) enum SelectorTransition {
         items: Vec<FieldIdentity>,
         origin: FieldUpdateOrigin,
     },
+    CollectionItemReplaced {
+        collection: FieldIdentity,
+        item: FieldIdentity,
+        origin: FieldUpdateOrigin,
+    },
     CollectionItemFieldValueChanged {
         collection: FieldIdentity,
         field: FieldIdentity,
@@ -59,6 +64,7 @@ impl SelectorTransition {
                 | Self::CollectionStructureChanged(_)
                 | Self::CollectionStructureUserChanged(_)
                 | Self::CollectionItemsRemoved { .. }
+                | Self::CollectionItemReplaced { .. }
                 | Self::CollectionItemFieldValueChanged { .. }
                 | Self::CollectionItemFieldUserValueChanged { .. }
                 | Self::ValidationChanged
@@ -147,6 +153,25 @@ impl SelectorTransition {
                 origin,
                 tracked_fields,
             ),
+            Self::CollectionItemReplaced {
+                collection,
+                item,
+                origin,
+            } => {
+                let written = [collection, item];
+                let mut legs = vec![
+                    Self::FieldValueChanged(written[0].clone()).selector_notifications([]),
+                    Self::FieldValueChanged(written[1].clone()).selector_notifications([]),
+                ];
+
+                if origin == FieldUpdateOrigin::User {
+                    legs.push(
+                        Self::FieldMetadataChanged(written[0].clone()).selector_notifications([]),
+                    );
+                }
+
+                Self::composite_notifications(legs, tracked_fields, &written)
+            }
             Self::CollectionItemFieldValueChanged { collection, field } => {
                 let written = [collection, field];
 

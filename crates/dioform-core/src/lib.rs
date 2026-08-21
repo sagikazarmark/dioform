@@ -4822,13 +4822,29 @@ impl<Model, Error> FormCore<Model, Error> {
     where
         Model: 'static,
     {
+        self.replace_collection_item_with_identity(
+            path,
+            index,
+            item,
+            FieldUpdateOrigin::Programmatic,
+        )
+        .is_some()
+    }
+
+    /// Replaces one collection item and returns its retained logical identity for adapter effects.
+    #[doc(hidden)]
+    pub fn replace_collection_item_with_identity<Item: 'static>(
+        &mut self,
+        path: FieldPath<Model, Vec<Item>>,
+        index: usize,
+        item: Item,
+        origin: FieldUpdateOrigin,
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
         self.with_eligible_submit_continuation_root(move |core| {
-            core.replace_collection_item_with_origin(
-                path,
-                index,
-                item,
-                FieldUpdateOrigin::Programmatic,
-            )
+            core.replace_collection_item_with_origin(path, index, item, origin)
         })
     }
 
@@ -4842,9 +4858,8 @@ impl<Model, Error> FormCore<Model, Error> {
     where
         Model: 'static,
     {
-        self.with_eligible_submit_continuation_root(move |core| {
-            core.replace_collection_item_with_origin(path, index, item, FieldUpdateOrigin::User)
-        })
+        self.replace_collection_item_with_identity(path, index, item, FieldUpdateOrigin::User)
+            .is_some()
     }
 
     /// Removes every collection item through the programmatic update path.
@@ -7712,7 +7727,7 @@ impl<Model, Error> FormCore<Model, Error> {
         index: usize,
         item: Item,
         origin: FieldUpdateOrigin,
-    ) -> bool
+    ) -> Option<CollectionItemIdentity>
     where
         Model: 'static,
     {
@@ -7720,7 +7735,7 @@ impl<Model, Error> FormCore<Model, Error> {
         {
             let items = path.get_mut(self.draft.current_mut());
             if index >= items.len() {
-                return false;
+                return None;
             }
             items[index] = item;
         }
@@ -7757,7 +7772,7 @@ impl<Model, Error> FormCore<Model, Error> {
             value: FormObserverValue::Redacted,
         });
 
-        true
+        Some(item_identity)
     }
 
     fn clear_collection_items_with_origin<Item: 'static>(

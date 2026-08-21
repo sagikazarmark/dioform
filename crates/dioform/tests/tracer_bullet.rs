@@ -8726,9 +8726,11 @@ fn field_mutations_notify_validation_subscribers_even_without_running_validation
 
 struct CollectionSelectorProbe {
     form: FormHandle<InvoiceCollectionForm>,
+    first_item: CollectionItemBinding<InvoiceCollectionForm, InvoiceCollectionLine>,
     first_description: CollectionTextBinding<InvoiceCollectionForm, InvoiceCollectionLine>,
     second_description: CollectionTextBinding<InvoiceCollectionForm, InvoiceCollectionLine>,
     line_counts: RefCell<Vec<usize>>,
+    first_item_resolutions: RefCell<Vec<bool>>,
     first_description_values: RefCell<Vec<String>>,
     second_description_values: RefCell<Vec<String>>,
     first_description_touched: RefCell<Vec<bool>>,
@@ -8744,15 +8746,25 @@ impl CollectionSelectorProbe {
 
         Self {
             form,
+            first_item: items[0].clone(),
             first_description: items[0].text(description_path.clone()),
             second_description: items[1].text(description_path),
             line_counts: RefCell::new(Vec::new()),
+            first_item_resolutions: RefCell::new(Vec::new()),
             first_description_values: RefCell::new(Vec::new()),
             second_description_values: RefCell::new(Vec::new()),
             first_description_touched: RefCell::new(Vec::new()),
             second_description_touched: RefCell::new(Vec::new()),
         }
     }
+}
+
+fn first_collection_item_root_selector_probe(probe: Rc<CollectionSelectorProbe>) -> Element {
+    let is_resolved = probe.first_item.is_resolved();
+
+    probe.first_item_resolutions.borrow_mut().push(is_resolved);
+
+    VNode::empty()
 }
 
 fn collection_count_selector_probe(probe: Rc<CollectionSelectorProbe>) -> Element {
@@ -8885,6 +8897,72 @@ fn collection_structure_selectors_rerender_without_rerendering_item_value_reader
         probe.first_description_values.borrow().as_slice(),
         ["Design"]
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CollectionReplacement {
+    User,
+    Programmatic,
+}
+
+fn assert_collection_replacement_wakes_retained_item_readers(replacement: CollectionReplacement) {
+    let probe = Rc::new(CollectionSelectorProbe::new());
+    let retained_identity = probe.first_item.identity();
+    let mut root_dom =
+        VirtualDom::new_with_props(first_collection_item_root_selector_probe, Rc::clone(&probe));
+    let mut first_dom = VirtualDom::new_with_props(
+        first_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+    let mut second_dom = VirtualDom::new_with_props(
+        second_collection_item_value_selector_probe,
+        Rc::clone(&probe),
+    );
+
+    root_dom.rebuild_in_place();
+    first_dom.rebuild_in_place();
+    second_dom.rebuild_in_place();
+
+    let lines = probe
+        .form
+        .collection(InvoiceCollectionForm::fields().lines());
+    let replacement_item = InvoiceCollectionLine {
+        description: "Deploy".to_owned(),
+        quantity: 5,
+    };
+    let replaced = match replacement {
+        CollectionReplacement::User => lines.replace(0, replacement_item),
+        CollectionReplacement::Programmatic => lines.replace_programmatic(0, replacement_item),
+    };
+
+    assert!(replaced);
+    root_dom.render_immediate_to_vec();
+    first_dom.render_immediate_to_vec();
+    second_dom.render_immediate_to_vec();
+
+    assert_eq!(probe.first_item.identity(), retained_identity);
+    assert_eq!(
+        probe.first_item_resolutions.borrow().as_slice(),
+        [true, true]
+    );
+    assert_eq!(
+        probe.first_description_values.borrow().as_slice(),
+        ["Design", "Deploy"]
+    );
+    assert_eq!(
+        probe.second_description_values.borrow().as_slice(),
+        ["Build"]
+    );
+}
+
+#[test]
+fn collection_replacement_wakes_retained_item_root_and_descendant_readers() {
+    for replacement in [
+        CollectionReplacement::User,
+        CollectionReplacement::Programmatic,
+    ] {
+        assert_collection_replacement_wakes_retained_item_readers(replacement);
+    }
 }
 
 #[test]
