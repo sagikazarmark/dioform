@@ -1,10 +1,11 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use super::{
-    CollectionItemIdentity, CollectionState, FieldIdentity, FormValidationError,
-    FormValidatorContext, ValidationErrorView, ValidationStatus, ValidationStatusView,
-    ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorId,
-    ValidatorSource, field_ancestry::validator_selection_reaches, validation_lifecycle,
+    CollectionItemIdentity, CollectionState, CollectionValidationTargetRule, FieldIdentity,
+    FormValidationError, FormValidatorContext, ValidationErrorView, ValidationStatus,
+    ValidationStatusView, ValidationTarget, ValidationTrigger, ValidationTriggers,
+    ValidatorContext, ValidatorId, ValidatorSource, field_ancestry::validator_selection_reaches,
+    validation_lifecycle,
 };
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -80,6 +81,7 @@ pub(super) struct RegisteredCollectionItemFieldValidator<Model, Error> {
 pub(super) struct RegisteredFormValidator<Model, Error> {
     pub(super) lifecycle: validation_lifecycle::SourceState<FormValidationError<Error>>,
     pub(super) validate: Option<Box<SyncFormValidator<Model, Error>>>,
+    pub(super) collection_target_rules: Vec<CollectionValidationTargetRule<Model>>,
 }
 
 pub(super) struct ValidationChainRegistry<Model, Error> {

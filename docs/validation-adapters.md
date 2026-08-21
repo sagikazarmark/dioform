@@ -7,7 +7,7 @@ There are two first-party adapter crates:
 - `dioform-garde` for the [`garde`](https://docs.rs/garde) crate.
 - `dioform-validator` for the [`validator`](https://docs.rs/validator) crate.
 
-Both are renderer-agnostic, depend only on `dioform-core` plus their external library, and register a synchronous form validator on `FormCore`. Neither adds its external library to `dioform-core` or `dioform`. They are intentionally separate but similar; the structure they share (the external-path map and the borrowed diagnostic view) moves into a `dioform-validation-adapter` support crate, while each adapter keeps its own library-specific diagnostic iteration and builder (see [ADR-0012](adr/0012-use-a-shared-validation-adapter-support-crate.md)). The sections below document the `garde` adapter first, then the `validator` adapter, and end with a comparison of both against deferred schema-oriented libraries.
+Both are renderer-agnostic, depend only on `dioform-core` plus their external library, and register a synchronous form validator on `FormCore`. Neither adds its external library to `dioform-core` or `dioform`. They are intentionally separate but share exact-path mapping, classified route outcomes, mapper-facing diagnostic views, and configuration issue types through `dioform-validation-adapter`; **Form Core** supplies the typed live collection rule and rules-aware registration APIs. Each adapter keeps its library-specific path matching, diagnostic iteration, and builder (see [ADR-0012](adr/0012-use-a-shared-validation-adapter-support-crate.md) and [ADR-0043](adr/0043-resolve-collection-diagnostic-targets-against-current-identities.md)).
 
 ## Dependencies
 
@@ -17,8 +17,8 @@ Choose the derive and rule features your application needs:
 
 ```toml
 [dependencies]
-dioform-core = "0.1"
-dioform-garde = "0.1"
+dioform-core = "0.2"
+dioform-garde = "0.2"
 garde = { version = "0.23", default-features = false, features = ["derive", "email"] }
 ```
 
@@ -98,13 +98,42 @@ form.garde_validation()
     .register(map_garde);
 ```
 
-Path matching is exact and uses the canonical `garde::Path::to_string()` representation. If `garde` reports a path with no **Explicit Path Mapping**, the adapter preserves that **Unmapped Diagnostic** by attaching it to the form with `ValidationTarget::form()` instead of dropping it. This can happen with a partially populated map as well as an empty one. Under the default **Error Visibility** policy, the form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**.
+Path matching is exact and uses the canonical `garde::Path::to_string()` representation. Exact mappings are for structurally static targets. A `FieldPath` that captures one **Collection Item Identity** is ineligible as an exact target: the adapter ignores it for routing, reports it through `configuration_issues()`, and never attaches a new diagnostic to the captured identity.
 
-The mapper can inspect the original external path through `diagnostic.path()`. Because a `GardePathMap` contains only field targets, a non-empty path whose `diagnostic.target().is_form()` is an **Unmapped Diagnostic**. The empty-path case is different: `garde` uses an empty `garde::Path` for a genuinely whole-model diagnostic, which also resolves to the form.
+Use a live rule for collection rows. `GardeCollectionRowMatcher::new` takes the named path components before and after exactly one numeric row index; matching reconstructs a public `garde::Path` and compares it structurally, so an index is not confused with a string key containing digits or brackets.
 
-### Reporting Unmapped Diagnostics
+```rust
+use dioform_garde::{GardeCollectionRowMatcher, GardePathMap, GardeValidationExt};
 
-Use `on_unmapped_path` when the application should log, test, or otherwise diagnose incomplete path mapping:
+form.garde_validation()
+    .path_map(GardePathMap::new().with_field("customer.email", customer_email_path()))
+    .collection_row_descendant(
+        GardeCollectionRowMatcher::new(["lines"], ["description"]),
+        lines_path(),
+        line_description_path(),
+    )
+    .expect("the collection and descendant paths must have static identities")
+    .register(map_garde);
+```
+
+This rule maps `lines[0].description`, `lines[1].description`, and later rows to the current logical items at those indices on each validation run. For a diagnostic attached to the item value itself, use
+`collection_row_item(matcher, collection)`, for example with
+`GardeCollectionRowMatcher::new(["tags"], std::iter::empty::<&str>())`.
+
+### Routing And Reporting
+
+Routing has this precedence for every diagnostic:
+
+1. One eligible exact static mapping wins, even if a collection rule also matches.
+2. A captured collection-item exact mapping is ineligible and cannot win. Exactly one matching collection rule resolves its emitted row index against the current **Collection Item Identity** order.
+3. More than one matching rule produces `CollectionValidationTargetResolutionFailure::AmbiguousMatchingRules { match_count }`. One matching rule whose row is absent produces `CollectionValidationTargetResolutionFailure::MissingRow`.
+4. No eligible exact mapping and no matching collection rule is an **Unmapped Diagnostic**.
+
+An ineligible exact mapping can therefore fall through to a live rule, or become an **Unmapped Diagnostic** if no rule matches. Ambiguity, a missing row, and a true miss all preserve the diagnostic at form scope with `ValidationTarget::form()`; none drops it, guesses correspondence, or targets a retired identity. Under the default **Error Visibility** policy, a form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**.
+
+The mapper can inspect `diagnostic.route_provenance()`, which first-party adapters populate with one of `DiagnosticRouteProvenance::ExactStaticTarget`, `CollectionValidationTargetRule`, `CollectionValidationTargetResolutionFailure(...)`, or `UnmappedDiagnostic`. This **Diagnostic Route Provenance** exists only in the `GardeDiagnostic` passed to the mapper. Copy it into the application's **Validation Error** if it must survive mapping; it is not stored in `ValidationTarget` or core validation state. `diagnostic.target().is_form()` alone does not distinguish a collection resolution failure, an unmapped path, or a genuinely whole-model diagnostic.
+
+Use `on_unmapped_path` for true misses and `on_collection_resolution_failure` for matched collection paths that could not select one current target:
 
 ```rust
 use std::{cell::RefCell, rc::Rc};
@@ -113,14 +142,24 @@ let unmapped_paths = Rc::new(RefCell::new(Vec::new()));
 let reported_paths = Rc::clone(&unmapped_paths);
 
 form.garde_validation()
-    .path_map(GardePathMap::new().with_field("email", email_path()))
+    .collection_row_descendant(
+        GardeCollectionRowMatcher::new(["lines"], ["description"]),
+        lines_path(),
+        line_description_path(),
+    )
+    .expect("static collection paths")
     .on_unmapped_path(move |path| {
         reported_paths.borrow_mut().push(path.to_string());
+    })
+    .on_collection_resolution_failure(|path, failure| {
+        eprintln!("could not route {path}: {failure:?}");
     })
     .register_string_errors();
 ```
 
-The reporter runs once per **Unmapped Diagnostic**, in report order, on every validation run against the current **Form Draft**. It does not require `Send`, change diagnostic routing, or report `garde`'s genuinely whole-model empty path. Without a reporter, the adapter remains silent.
+Each configured reporter runs once per applicable diagnostic, in `garde` report order, on every validation run against the current **Form Draft**. `on_unmapped_path` does not report `garde`'s genuinely whole-model empty path; `on_collection_resolution_failure` receives `&CollectionValidationTargetResolutionFailure`. Both callbacks are optional, require no `Send`, have no validation or routing side effects, and leave the same form-scoped fallback in place. Without them, the adapter remains silent.
+
+Before a terminal registration method consumes the builder, `configuration_issues()` returns all statically detectable `ValidationAdapterConfigurationIssue`s: every `IneligibleExactTarget` from the path map and every `DuplicateCollectionRule` detected from equal adapter matchers. Inspection has no validation side effects, and issues do not make registration fallible; runtime ambiguity still follows the classified form fallback.
 
 ## Trigger Choices
 
@@ -235,7 +274,7 @@ validator = { version = "0.20", features = ["derive"] }
 - Nested structs join with a dot: `address.street`.
 - List items use bracketed indices: `lines[0].quantity`.
 
-Ordering is deterministic: `validator` stores fields in a `HashMap`, so the adapter sorts field keys, iterates list indices in ascending order, and preserves each field's error-vector order. This adapter does not translate list indices into Dioform **Collection Item Identity**: a `lines[0]` diagnostic maps to whatever field path you register for that literal path, or to the form if unmapped.
+Ordering is deterministic: `validator` stores fields in a `HashMap`, so the adapter sorts field keys, iterates list indices in ascending order, and preserves each field's error-vector order. `ValidatorCollectionPath` retains the structural list index while the tree is traversed, and `ValidatorCollectionTargetRule` resolves that index to the current Dioform **Collection Item Identity**. The adapter does not parse a wildcard string from the flattened display path.
 
 ## Custom Error Mapping
 
@@ -276,24 +315,36 @@ form.validator_validation()
 
 ## Explicit Path Mapping
 
-Path matching is exact against the canonical flattened path. A path with no **Explicit Path Mapping** produces an **Unmapped Diagnostic** that attaches to the form with `ValidationTarget::form()` instead of being dropped. This can happen with a partially populated map as well as an empty one. Under the default **Error Visibility** policy, the form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**. The adapter never treats rendered **Field Names**, serde names, `validator` field keys, or Rust field names as implicit validation addresses.
-
-The mapper can inspect the external path through `diagnostic.path()`. Because a `ValidatorPathMap` contains only field targets, `diagnostic.target().is_form()` inside the mapper means that path was unregistered.
+Path matching is exact against the canonical flattened path and uses the same precedence and fallback classification described for `garde`: eligible static exact mapping, one live collection rule, collection resolution failure, then true miss. The adapter never treats rendered **Field Names**, serde names, `validator` field keys, or Rust field names as implicit validation addresses.
 
 ```rust
-let path_map = ValidatorPathMap::new()
-    .with_field("email", email_path())
-    .with_field("address.street", street_path())
-    .with_field("lines[0].quantity", first_line_quantity_path());
+use dioform_validator::{
+    ValidatorCollectionPath, ValidatorCollectionTargetRule, ValidatorPathMap,
+    ValidatorValidationExt,
+};
 
-form.validator_validation().path_map(path_map).register(map_validator);
+let quantity_rule = ValidatorCollectionTargetRule::descendant(
+    ValidatorCollectionPath::new(["lines"], ["quantity"]),
+    lines_path(),
+    line_quantity_path(),
+)
+.expect("the collection and descendant paths must have static identities");
+
+form.validator_validation()
+    .path_map(
+        ValidatorPathMap::new()
+            .with_field("email", email_path())
+            .with_field("address.street", street_path()),
+    )
+    .collection_target_rule(quantity_rule)
+    .register(map_validator);
 ```
 
-This example registers only `lines[0].quantity`. A diagnostic for any other row, such as `lines[1].quantity`, is unmapped and therefore routes to the form. See the collection identity limitation described under [Flattened Diagnostic Paths](#flattened-diagnostic-paths).
+`ValidatorCollectionPath::new(before_index, after_index)` matches exactly one structural `ValidationErrorsKind::List` index between the named components. The rule above therefore resolves every current `lines[index].quantity`, including rows appended after registration. To attach a matched row diagnostic to the item value rather than a descendant, pass the same structural matcher to `ValidatorCollectionTargetRule::item`.
 
-### Reporting Unmapped Diagnostics
+### Routing And Reporting
 
-The same opt-in configuration step is available on the `validator` builder, including before both string-convenience terminal methods:
+`ValidatorDiagnostic::route_provenance()` exposes the same ephemeral `DiagnosticRouteProvenance` during a custom mapper call. The reporters use the flattened `&str` path:
 
 ```rust
 use std::{cell::RefCell, rc::Rc};
@@ -302,14 +353,17 @@ let unmapped_paths = Rc::new(RefCell::new(Vec::new()));
 let reported_paths = Rc::clone(&unmapped_paths);
 
 form.validator_validation()
-    .path_map(ValidatorPathMap::new().with_field("email", email_path()))
+    .collection_target_rule(quantity_rule)
     .on_unmapped_path(move |path| {
         reported_paths.borrow_mut().push(path.to_owned());
+    })
+    .on_collection_resolution_failure(|path, failure| {
+        eprintln!("could not route {path}: {failure:?}");
     })
     .register_string_errors();
 ```
 
-The reporter runs once per **Unmapped Diagnostic**, in flattened diagnostic order, on every validation run against the current **Form Draft**. Duplicate diagnostics at one path produce duplicate reports. Reporting does not require `Send` and does not change diagnostic routing. Without a reporter, the adapter remains silent.
+`on_unmapped_path` runs only for **Unmapped Diagnostics**. `on_collection_resolution_failure` runs only for `AmbiguousMatchingRules` or `MissingRow`; it receives `&CollectionValidationTargetResolutionFailure`. Each optional callback runs once per applicable diagnostic in flattened order, so duplicate diagnostics at one path produce duplicate reports. Neither requires `Send` or changes validation and routing. `configuration_issues()` aggregates ineligible exact targets and duplicate `ValidatorCollectionPath` matchers before registration, just as on the `garde` builder.
 
 ## Context-Aware Validator Validation
 
@@ -340,6 +394,28 @@ The provider runs for each validation run. String-error forms can use `register_
 
 The builder defaults to the `validator` source, `ValidationTriggers::all()`, and an empty `ValidatorPathMap`. It therefore routes every diagnostic to the form until mappings are added. Whole-model validation can be more expensive than field-local validation, so submit-only validation is often the right first choice. Adapter errors coexist with native **Field Validation**, native **Form Validation**, submit errors, and the `garde` adapter as long as they share the same **Validation Error** type. Rerunning the adapter replaces only errors from its own source; a successful run clears its own prior errors without touching other sources.
 
+# Live Collection Rule Lifecycle
+
+Both adapters register their core `CollectionValidationTargetRule<Model>` values through
+`FormCore::register_sync_form_validator_for_triggers_with_collection_target_rules` (or the all-trigger
+`register_sync_form_validator_with_collection_target_rules`). Registration prepares each addressed collection's identity state before validation; a run resolves against the **Form Draft** and identity order paired in its `FormValidatorContext`, not against an index-to-identity snapshot captured when the adapter was configured.
+
+The prepared order follows all coordinated collection transitions:
+
+- append and insert mint identities; remove retires the removed identity;
+- move and swap reorder existing identities, while `replace_collection_item` preserves the replaced logical item's identity;
+- clear leaves no current rows;
+- reset and containing-field reset restore baseline values and baseline identities;
+- reinitialization mints a fresh baseline and current identity sequence;
+- cardinality-valid `restore_state_snapshot` restores the snapshot's full draft and identity order atomically;
+- generic `set_field` replacement of the collection or a containing field treats every reached current item as displaced, clears its item-scoped state, and mints a fresh current sequence without positional or value matching.
+
+The per-collection counter never rewinds, so generic replacement does not reuse retired identities; baseline identities remain reserved so reset can restore them. These semantics, including submit-validation currency, are specified in [ADR-0043](adr/0043-resolve-collection-diagnostic-targets-against-current-identities.md).
+
+The shipped rules are synchronous-only and support direct or named-struct-composed `Vec<Item>` collection paths. A rule can target the item value (`CollectionValidationTargetRule::item`) or one static descendant (`CollectionValidationTargetRule::descendant`). Collections nested inside collection items are not representable by the current identity model and are unsupported; future async routing must capture identity sequences with its owned **Form Snapshot**.
+
+`FieldPath::direct(identity, field_name, get, get_mut)` is a semantic trust boundary. Rule constructors reject identities that visibly capture a runtime **Collection Item Identity**, and `PathMap` marks such exact mappings ineligible, but Dioform cannot prove that manually supplied accessors truthfully implement the structurally static identity supplied by the application. Derived or honestly composed static paths preserve the routing guarantees; a lying `FieldPath::direct` can violate them.
+
 # Choosing An Adapter
 
 | Library | Style | Adapter | Notes |
@@ -364,22 +440,32 @@ unifying trait would leak those bounds into every implementor. See
 [ADR-0018](adr/0018-decline-public-validation-adapter-trait.md) and
 [ADR-0012](adr/0012-use-a-shared-validation-adapter-support-crate.md).
 
-The supported seam is the support crate's two data types plus the **Form Core** registration APIs. A
+The supported seam is public data and routing functions rather than a public adapter trait. It includes
+`PathMap<Model>`, `ExactPathLookup`, `DiagnosticRoute`, `DiagnosticRouteProvenance`,
+`CollectionValidationTargetResolutionFailure`, `DiagnosticView`, `route_diagnostic`, and the
+configuration issue types from `dioform-validation-adapter`; `CollectionValidationTargetRule<Model>`
+and `register_sync_form_validator_with_collection_target_rules` /
+`register_sync_form_validator_for_triggers_with_collection_target_rules` come from **Form Core**. A
 third-party adapter:
 
 - depends on `dioform-core`, `dioform-validation-adapter`, and the external library only:
   never adding the external library to `dioform-core` or the `dioform` facade (ADR-0003);
-- builds a `PathMap<Model>` from explicit `External Diagnostic Path` → typed **Field Path** entries,
-  and resolves each diagnostic with `PathMap::target_for_path` so an **Unmapped Diagnostic** attaches
-  to the form instead of being dropped;
-- runs its library's validator inside a registered synchronous form validator so validation re-runs on
-  each configured **Validation Trigger** against the current **Form Draft**;
-- hands each diagnostic to the application mapper as a `DiagnosticView<'_, Path, Err>` (original path,
-  original error, resolved `ValidationTarget`) and constructs the shared **Validation Error** through
-  `FormValidationError::for_target`;
-- optionally exposes an adapter-local reporter for paths whose resolved target is the form, accounting
-  for any external-library convention that also uses a form target for genuine whole-model errors;
-- exposes its own thin builder (`source`, `triggers`, `path_map`, `on_unmapped_path`, `register` /
+- builds a `PathMap<Model>` for structurally static exact entries, calls
+  `PathMap::exact_target_for_path`, and owns the external syntax that extracts one row index for each
+  adapter matcher paired with a core `CollectionValidationTargetRule<Model>`;
+- registers those durable rules with
+  `register_sync_form_validator_for_triggers_with_collection_target_rules`, resolves them through
+  `CollectionValidationTargetRule::resolve`, and passes the resulting candidates to
+  `route_diagnostic` so precedence and fallback classification match first-party adapters;
+- hands each diagnostic to the application mapper as a
+  `DiagnosticView::from_route(path, error, route)` and constructs the shared **Validation Error**
+  through `FormValidationError::for_target`;
+- optionally exposes separate reporters selected from `DiagnosticRouteProvenance` for true misses and
+  `CollectionValidationTargetResolutionFailure`, without inferring either from a form target;
+- aggregates `PathMap::configuration_issues()` with duplicate issues detected by its own matcher
+  grammar;
+- exposes its own thin builder (`source`, `triggers`, `path_map`, collection-rule registration,
+  `on_unmapped_path`, `on_collection_resolution_failure`, `configuration_issues`, `register` /
   `register_string_errors` / `register_with_context` / `register_string_errors_with_context`) with
   the bounds its library requires.
 

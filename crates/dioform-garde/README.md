@@ -17,6 +17,69 @@ selected Dioform target in their own enum or struct error type. Context-aware
 validation translates Dioform's `FormValidatorContext` into the external
 `garde::Validate::Context` value.
 
+## Collection Rows
+
+Configure collection diagnostics with a structured matcher and typed collection
+paths instead of exact entries such as `lines[0].description`:
+
+```rust
+use dioform_garde::{GardeCollectionRowMatcher, GardeValidationExt};
+
+form.garde_validation()
+    .collection_row_descendant(
+        GardeCollectionRowMatcher::new(["lines"], ["description"]),
+        lines_path(),
+        line_description_path(),
+    )
+    .expect("the collection and descendant paths must be structurally static")
+    .register_string_errors();
+```
+
+The matcher inserts exactly one numeric row component between its named
+components. It reconstructs a candidate with public `garde::Path` constructors
+and compares paths structurally. A numeric index is therefore different from a
+string key such as `"0"` or `"[0]"`; there is no wildcard string grammar.
+
+For a diagnostic attached to the item value itself, leave the named suffix
+empty and use `collection_row_item`:
+
+```rust
+form.garde_validation()
+    .collection_row_item(
+        GardeCollectionRowMatcher::new(
+            ["tags"],
+            std::iter::empty::<&str>(),
+        ),
+        tags_path(),
+    )
+    .expect("the collection path must be structurally static")
+    .register_string_errors();
+```
+
+The adapter registers durable `CollectionValidationTargetRule`s with Form Core.
+Each validation run resolves Garde's current row index against the current
+Collection Item Identity order. Append, insert, remove, move, swap, clear,
+item replacement, reset, reinitialization, and collection-affecting replacement
+therefore use the identities paired with the draft being validated.
+
+Eligible static `GardePathMap` entries take precedence over collection rules.
+An exact entry that captures a Collection Item Identity is ineligible and never
+routes to that captured identity. Use `configuration_issues()` before a terminal
+registration call to inspect those entries together with duplicate collection
+matchers; registration itself remains infallible.
+
+Custom mappers can inspect `GardeDiagnostic::route_provenance()`. True misses
+invoke only `on_unmapped_path`. Ambiguous matching rules or a matched row with no
+current identity fail closed to the form and optionally invoke
+`on_collection_resolution_failure`; both reporters run once per diagnostic in
+Garde report order and do not require `Send`.
+
+Current collection rules are synchronous and support direct or named-struct-
+composed collections with item-value or static-descendant targets. Collections
+nested inside collection items are not supported. `FieldPath::direct` is a
+semantic trust boundary: Dioform can reject a captured identity, but cannot
+prove that manually supplied accessors agree with their static identity.
+
 See [`docs/validation-adapters.md`](https://github.com/sagikazarmark/dioform/blob/main/docs/validation-adapters.md)
 in the workspace for usage patterns and dependency guidance.
 

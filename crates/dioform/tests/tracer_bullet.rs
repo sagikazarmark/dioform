@@ -100,6 +100,11 @@ struct InvoiceCollectionForm {
     lines: Vec<InvoiceCollectionLine>,
 }
 
+#[derive(Clone, Debug, Eq, Form, PartialEq)]
+struct InvoiceCollectionPage {
+    invoice: InvoiceCollectionForm,
+}
+
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct InvoiceCollectionLine {
@@ -6126,6 +6131,55 @@ fn resetting_a_collection_clears_kept_and_dropped_item_parse_state() {
     dropped_quantity.on_input("still-dropped");
     assert!(dropped_quantity.parse_error().is_none());
     assert_eq!(handle.parse_errors().len(), 1);
+}
+
+#[test]
+fn resetting_a_collection_container_clears_dropped_item_parse_state() {
+    let handle = FormHandle::new(InvoiceCollectionPage {
+        invoice: invoice_collection_form(),
+    });
+    let invoice_path = InvoiceCollectionPage::fields().invoice();
+    let lines_path = invoice_path
+        .clone()
+        .join(InvoiceCollectionForm::fields().lines());
+    let lines = handle.collection(lines_path);
+    let dropped = lines.append(InvoiceCollectionLine {
+        description: "Support".to_owned(),
+        quantity: 3,
+    });
+    let dropped_quantity = lines
+        .item(dropped)
+        .expect("appended item should resolve")
+        .number(InvoiceCollectionLine::fields().quantity());
+    dropped_quantity.on_input("dropped-invalid");
+    assert_eq!(handle.parse_errors().len(), 1);
+
+    handle.reset_field(invoice_path);
+
+    assert!(dropped_quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+}
+
+#[test]
+fn resetting_an_unchanged_collection_container_clears_kept_item_parse_state() {
+    let handle = FormHandle::new(InvoiceCollectionPage {
+        invoice: invoice_collection_form(),
+    });
+    let invoice_path = InvoiceCollectionPage::fields().invoice();
+    let lines_path = invoice_path
+        .clone()
+        .join(InvoiceCollectionForm::fields().lines());
+    let quantity =
+        handle.collection(lines_path).items()[0].number(InvoiceCollectionLine::fields().quantity());
+    quantity.on_input("kept-invalid");
+    assert_eq!(handle.parse_errors().len(), 1);
+
+    handle.reset_field(invoice_path);
+
+    assert!(quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
 }
 
 #[test]

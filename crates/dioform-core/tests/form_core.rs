@@ -4,10 +4,12 @@ use std::{
 };
 
 use dioform_core::{
-    CollectionItemIdentity, ErrorVisibilityPolicy, FieldIdentity, FieldPath, FieldUpdateOrigin,
-    FormCore, FormObserverEvent, FormObserverField, FormValidationError, SubmitAttempt,
-    SubmitBlocker, SubmitError, SubmitErrors, SubmitResult, SubmitStatus, ValidationMode,
-    ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorSource,
+    CollectionIdentitySequence, CollectionItemIdentity, CollectionValidationTargetRule,
+    CollectionValidationTargetRuleError, ErrorVisibilityPolicy, FieldIdentity, FieldPath,
+    FieldUpdateOrigin, FormCore, FormObserverEvent, FormObserverField, FormStateRestoreError,
+    FormValidationError, SubmitAttempt, SubmitBlocker, SubmitError, SubmitErrors, SubmitResult,
+    SubmitStatus, ValidationMode, ValidationStatus, ValidationTarget, ValidationTrigger,
+    ValidationTriggers, ValidatorSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,6 +249,458 @@ fn line_identities(form: &mut FormCore<InvoiceForm>) -> Vec<CollectionItemIdenti
         .into_iter()
         .map(|item| item.identity())
         .collect()
+}
+
+#[test]
+fn collection_validation_target_rules_prepare_and_resolve_item_and_descendant_targets() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let item_rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let description_rule =
+        CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+            .expect("a static item descendant should be supported");
+    let item_rule_for_validation = item_rule.clone();
+    let description_rule_for_validation = description_rule.clone();
+
+    form.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [item_rule, description_rule],
+        move |context| {
+            vec![
+                FormValidationError::for_target(
+                    item_rule_for_validation
+                        .resolve(&context, 0)
+                        .expect("the first row should resolve"),
+                    "row",
+                ),
+                FormValidationError::for_target(
+                    description_rule_for_validation
+                        .resolve(&context, 1)
+                        .expect("the second row should resolve"),
+                    "description",
+                ),
+            ]
+        },
+    );
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    let items = form.collection_items(lines_path());
+    let targets: Vec<_> = form
+        .validation_errors()
+        .into_iter()
+        .map(|error| error.target())
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            ValidationTarget::field_identity(FieldIdentity::collection_item_value(
+                "lines",
+                items[0].identity(),
+            )),
+            ValidationTarget::field_identity(FieldIdentity::collection_item(
+                "lines",
+                items[1].identity(),
+                "description",
+            )),
+        ]
+    );
+}
+
+#[test]
+fn collection_validation_target_rule_resolves_the_current_order_after_row_lifecycle_changes() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+        .expect("a static item descendant should be supported");
+    let rule_for_validation = rule.clone();
+    form.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        move |context| {
+            (0..context.form().lines.len())
+                .filter_map(|row| rule_for_validation.resolve(&context, row))
+                .map(|target| FormValidationError::for_target(target, "description"))
+                .collect()
+        },
+    );
+    let initial = form.collection_items(lines_path());
+    let removed = initial[0].identity();
+    let survivor = initial[1].identity();
+
+    form.remove_collection_item(lines_path(), removed)
+        .expect("the first row should be removed");
+    let appended = form.push_collection_item(lines_path(), line("Review"));
+    assert!(form.move_collection_item_to_index(lines_path(), appended, 0));
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    let targets: Vec<_> = form
+        .validation_errors()
+        .into_iter()
+        .map(|error| error.expect_field())
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            FieldIdentity::collection_item("lines", appended, "description"),
+            FieldIdentity::collection_item("lines", survivor, "description"),
+        ]
+    );
+    assert!(
+        targets
+            .iter()
+            .all(|target| { target.collection_item_identity() != Some(removed) })
+    );
+}
+
+#[test]
+fn collection_validation_target_rule_follows_replacement_and_containing_field_reset() {
+    let mut form: FormCore<CollectionPage, &'static str> =
+        FormCore::new_with_error_type(CollectionPage {
+            invoice: invoice_form(),
+            archived: vec![line("Archived")],
+        });
+    let rule = CollectionValidationTargetRule::descendant(
+        collection_page_lines_path(),
+        line_description_path(),
+    )
+    .expect("a composed static collection path should be supported");
+    let rule_for_validation = rule.clone();
+    form.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        move |context| {
+            rule_for_validation
+                .resolve(&context, 0)
+                .map(|target| FormValidationError::for_target(target, "description"))
+                .into_iter()
+                .collect()
+        },
+    );
+    let baseline = form.collection_items(collection_page_lines_path());
+
+    assert!(
+        form.replace_collection_item(collection_page_lines_path(), 0, line("Edited in place"),)
+    );
+    form.validate_form(ValidationTrigger::Manual);
+    assert_eq!(
+        form.validation_errors()[0]
+            .expect_field()
+            .collection_item_identity(),
+        Some(baseline[0].identity())
+    );
+
+    form.set_field(
+        collection_page_lines_path(),
+        vec![line("Exact replacement")],
+    );
+    let exact_replacement = form.collection_items(collection_page_lines_path())[0].identity();
+    assert!(
+        !baseline
+            .iter()
+            .any(|item| item.identity() == exact_replacement)
+    );
+
+    form.set_field(
+        collection_page_invoice_path(),
+        InvoiceForm {
+            lines: vec![line("Ancestor replacement")],
+        },
+    );
+    let ancestor_replacement = form.collection_items(collection_page_lines_path())[0].identity();
+    assert_ne!(ancestor_replacement, exact_replacement);
+
+    form.reset_field(collection_page_invoice_path());
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(
+        form.collection_items(collection_page_lines_path()),
+        baseline
+    );
+    assert_eq!(
+        form.validation_errors()[0]
+            .expect_field()
+            .collection_item_identity(),
+        Some(baseline[0].identity())
+    );
+}
+
+#[test]
+fn collection_validation_target_rule_reprepares_fresh_identities_on_reinitialize() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let rule_for_validation = rule.clone();
+    form.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        move |context| {
+            rule_for_validation
+                .resolve(&context, 0)
+                .map(|target| FormValidationError::for_target(target, "row"))
+                .into_iter()
+                .collect()
+        },
+    );
+    let before = form.collection_identity_state();
+    let before = before.collections()[0].current_items().to_vec();
+
+    form.reinitialize(InvoiceForm {
+        lines: vec![line("Reinitialized")],
+    });
+
+    let after = form.collection_identity_state();
+    let after = after.collections()[0].current_items();
+    assert_eq!(after.len(), 1);
+    assert!(!before.contains(&after[0]));
+
+    form.validate_form(ValidationTrigger::Manual);
+    assert_eq!(
+        form.validation_errors()[0]
+            .expect_field()
+            .collection_item_identity(),
+        Some(after[0])
+    );
+}
+
+#[test]
+fn collection_validation_target_rule_resolves_a_valid_restored_identity_order() {
+    let mut source: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let initial = source.collection_items(lines_path());
+    source
+        .remove_collection_item(lines_path(), initial[0].identity())
+        .expect("the first row should be removed");
+    let appended = source.push_collection_item(lines_path(), line("Review"));
+    assert!(source.move_collection_item_to_index(lines_path(), appended, 0));
+    let expected: Vec<_> = source
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let snapshot = source.state_snapshot();
+
+    let mut restored: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+        .expect("a static item descendant should be supported");
+    let rule_for_validation = rule.clone();
+    restored.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        move |context| {
+            (0..context.form().lines.len())
+                .filter_map(|row| rule_for_validation.resolve(&context, row))
+                .map(|target| FormValidationError::for_target(target, "description"))
+                .collect()
+        },
+    );
+
+    restored
+        .restore_state_snapshot(snapshot)
+        .expect("matching draft and identity cardinalities should restore");
+    restored.validate_form(ValidationTrigger::Manual);
+
+    let resolved: Vec<_> = restored
+        .validation_errors()
+        .into_iter()
+        .map(|error| {
+            error
+                .expect_field()
+                .collection_item_identity()
+                .expect("the rule should target a collection item")
+        })
+        .collect();
+    assert_eq!(resolved, expected);
+    assert_eq!(restored.snapshot().lines[0].description, "Review");
+}
+
+#[test]
+fn collection_validation_target_rule_rejects_restore_cardinality_mismatch_atomically() {
+    let source: FormCore<InvoiceForm, &'static str> = FormCore::new_with_error_type(invoice_form());
+    let snapshot_without_identities = source.state_snapshot();
+
+    let mut target: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(InvoiceForm {
+            lines: vec![line("Target stays current")],
+        });
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    target.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        |_context| Vec::new(),
+    );
+    let draft_before = target.snapshot();
+    let identities_before = target.collection_identity_state();
+
+    let error = target
+        .restore_state_snapshot(snapshot_without_identities)
+        .expect_err("registered collection cardinality must match the restored draft");
+
+    assert_eq!(
+        error,
+        FormStateRestoreError::CollectionIdentityCardinalityMismatch {
+            collection: FieldIdentity::new("lines"),
+            sequence: CollectionIdentitySequence::Baseline,
+            model_items: 2,
+            identity_items: 0,
+        }
+    );
+    assert_eq!(target.snapshot(), draft_before);
+    assert_eq!(target.collection_identity_state(), identities_before);
+}
+
+#[test]
+fn collection_validation_target_rule_rejects_current_restore_cardinality_mismatch() {
+    let mut identity_source = FormCore::new(invoice_form());
+    identity_source.collection_items(lines_path());
+    let two_row_identities = identity_source.collection_identity_state();
+
+    let mut snapshot_source: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    snapshot_source.set_field(lines_path(), vec![line("Only current row")]);
+    snapshot_source
+        .restore_collection_identity_state(two_row_identities)
+        .expect("standalone identity state is structurally valid");
+    let mismatched_snapshot = snapshot_source.state_snapshot();
+
+    let mut target: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    target.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        |_context| Vec::new(),
+    );
+
+    let error = target
+        .restore_state_snapshot(mismatched_snapshot)
+        .expect_err("current identity cardinality must match the current restored draft");
+
+    assert_eq!(
+        error,
+        FormStateRestoreError::CollectionIdentityCardinalityMismatch {
+            collection: FieldIdentity::new("lines"),
+            sequence: CollectionIdentitySequence::Current,
+            model_items: 1,
+            identity_items: 2,
+        }
+    );
+}
+
+#[test]
+fn unregistering_collection_validation_target_rule_removes_obligation_without_rewinding() {
+    let mut target: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let validator = target.register_sync_form_validator_with_collection_target_rules(
+        "external rows",
+        [rule],
+        |_context| Vec::new(),
+    );
+    let issued = target.collection_identity_state().collections()[0]
+        .current_items()
+        .to_vec();
+    assert!(target.unregister_form_validator_by_id(validator));
+
+    let source: FormCore<InvoiceForm, &'static str> = FormCore::new_with_error_type(invoice_form());
+    target
+        .restore_state_snapshot(source.state_snapshot())
+        .expect("an unregistered rule should impose no restore obligation");
+
+    let reminted: Vec<_> = target
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert!(reminted.iter().all(|item| !issued.contains(item)));
+    assert!(reminted.iter().all(|item| *item > issued[1]));
+}
+
+#[test]
+fn collection_validation_target_rule_rejects_captured_collection_and_descendant_identities() {
+    let mut form = FormCore::new(invoice_form());
+    let captured = form.collection_items(lines_path())[0].identity();
+    let captured_collection = FieldPath::direct(
+        FieldIdentity::collection_item("outer", captured, "lines"),
+        "lines",
+        |model: &InvoiceForm| &model.lines,
+        |model: &mut InvoiceForm| &mut model.lines,
+    );
+    let captured_descendant = FieldPath::direct(
+        FieldIdentity::collection_item("nested", captured, "description"),
+        "description",
+        |line: &InvoiceLine| &line.description,
+        |line: &mut InvoiceLine| &mut line.description,
+    );
+
+    assert!(matches!(
+        CollectionValidationTargetRule::item(captured_collection),
+        Err(CollectionValidationTargetRuleError::UnsupportedCollectionIdentity { .. })
+    ));
+    assert!(matches!(
+        CollectionValidationTargetRule::descendant(lines_path(), captured_descendant),
+        Err(CollectionValidationTargetRuleError::UnsupportedDescendantIdentity { .. })
+    ));
+}
+
+#[test]
+fn collection_validation_target_rule_preparation_retires_submit_validation_proof() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let validation = form.submit_validation_snapshot();
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+
+    form.register_sync_form_validator_for_triggers_with_collection_target_rules(
+        "manual external rows",
+        ValidationTrigger::Manual,
+        [rule],
+        |context| {
+            let _same_run = context.clone();
+            Vec::new()
+        },
+    );
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn deferred_collection_replacement_preparation_retires_submit_validation_proof() {
+    let mut source: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    source.collection_items(lines_path());
+    let snapshot = source.state_snapshot();
+
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    form.restore_state_snapshot(snapshot)
+        .expect("collection identity state should restore");
+    form.set_field(lines_path(), vec![line("Replacement")]);
+    let validation = form.submit_validation_snapshot();
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+
+    form.register_sync_form_validator_for_triggers_with_collection_target_rules(
+        "manual external rows",
+        ValidationTrigger::Manual,
+        [rule],
+        |_context| Vec::new(),
+    );
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

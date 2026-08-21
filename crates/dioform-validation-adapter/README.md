@@ -4,10 +4,11 @@ Shared support for renderer-agnostic [Dioform](https://github.com/sagikazarmark/
 validation adapters.
 
 A **validation adapter** maps an external validation library's diagnostics into a
-form's shared **validation error** type. Every adapter needs the same two pieces of
-plumbing: a map from an external diagnostic path to a typed validation target, and
-a borrowed view of one external diagnostic paired with the target it resolved to.
-This crate owns both so each first-party adapter
+form's shared **validation error** type. Every adapter needs the same routing
+plumbing: an exact map from an external diagnostic path to a typed validation
+target, adapter-neutral classification of exact and live collection candidates,
+and a borrowed diagnostic view carrying ephemeral route provenance. This crate
+owns those pieces so each first-party adapter
 ([`dioform-garde`](https://crates.io/crates/dioform-garde),
 [`dioform-validator`](https://crates.io/crates/dioform-validator), and any
 future adapter) does not re-derive them.

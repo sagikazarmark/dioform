@@ -1814,6 +1814,130 @@ impl ValidationTarget {
     }
 }
 
+/// A statically detectable problem constructing a [`CollectionValidationTargetRule`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CollectionValidationTargetRuleError {
+    /// The collection path captures runtime identity instead of naming a static collection field.
+    UnsupportedCollectionIdentity { identity: FieldIdentity },
+    /// The item descendant captures runtime identity instead of naming a static descendant.
+    UnsupportedDescendantIdentity { identity: FieldIdentity },
+}
+
+/// A typed, type-erased rule for resolving an external collection row to its current field target.
+///
+/// Validation adapters own their external path syntax and use this rule only after extracting one
+/// row index. Resolution is paired with the [`FormValidatorContext`] for the validation run and
+/// fails closed when the row or its prepared identity order is unavailable or inconsistent with
+/// that run's **Form Draft**.
+pub struct CollectionValidationTargetRule<Model> {
+    collection: FieldIdentity,
+    descendant: Rc<str>,
+    collection_len: Rc<dyn Fn(&Model) -> usize>,
+}
+
+impl<Model> Clone for CollectionValidationTargetRule<Model> {
+    fn clone(&self) -> Self {
+        Self {
+            collection: self.collection.clone(),
+            descendant: Rc::clone(&self.descendant),
+            collection_len: Rc::clone(&self.collection_len),
+        }
+    }
+}
+
+impl<Model> fmt::Debug for CollectionValidationTargetRule<Model> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CollectionValidationTargetRule")
+            .field("collection", &self.collection)
+            .field("descendant", &self.descendant)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Model> CollectionValidationTargetRule<Model> {
+    /// Creates a rule targeting each logical collection item value.
+    pub fn item<Item>(
+        collection: FieldPath<Model, Vec<Item>>,
+    ) -> Result<Self, CollectionValidationTargetRuleError>
+    where
+        Model: 'static,
+        Item: 'static,
+    {
+        Self::from_paths(collection, Rc::from(""))
+    }
+
+    /// Creates a rule targeting one statically named descendant of each collection item.
+    pub fn descendant<Item, Value>(
+        collection: FieldPath<Model, Vec<Item>>,
+        descendant: FieldPath<Item, Value>,
+    ) -> Result<Self, CollectionValidationTargetRuleError>
+    where
+        Model: 'static,
+        Item: 'static,
+        Value: 'static,
+    {
+        let descendant_identity = descendant.identity();
+        let Some(descendant) = descendant_identity.as_static_path() else {
+            return Err(
+                CollectionValidationTargetRuleError::UnsupportedDescendantIdentity {
+                    identity: descendant_identity,
+                },
+            );
+        };
+
+        Self::from_paths(collection, Rc::from(descendant))
+    }
+
+    fn from_paths<Item>(
+        collection: FieldPath<Model, Vec<Item>>,
+        descendant: Rc<str>,
+    ) -> Result<Self, CollectionValidationTargetRuleError>
+    where
+        Model: 'static,
+        Item: 'static,
+    {
+        let collection_identity = collection.identity();
+        if collection_identity.as_static_path().is_none() {
+            return Err(
+                CollectionValidationTargetRuleError::UnsupportedCollectionIdentity {
+                    identity: collection_identity,
+                },
+            );
+        }
+        let collection_for_len = collection;
+
+        Ok(Self {
+            collection: collection_identity,
+            descendant,
+            collection_len: Rc::new(move |model| collection_for_len.get(model).len()),
+        })
+    }
+
+    /// Resolves `row_index` against the identity order paired with this validation context.
+    pub fn resolve(
+        &self,
+        context: &FormValidatorContext<'_, Model>,
+        row_index: usize,
+    ) -> Option<ValidationTarget> {
+        let state = context.field_store.collection(&self.collection)?;
+        if state.current_items.len() != (self.collection_len)(context.form) {
+            return None;
+        }
+        let item = *state.current_items.get(row_index)?;
+        let collection = self.collection.as_static_path()?;
+
+        Some(ValidationTarget::field_identity(
+            CollectionItemFieldAddress::identity_from_static_segments(
+                collection,
+                item,
+                Rc::clone(&self.descendant),
+            ),
+        ))
+    }
+}
+
 type SubmitErrorCurrentCheck<Model> = dyn Fn(&Model, &Model) -> bool + 'static;
 
 /// One structured error returned by application submit behavior.
@@ -2093,6 +2217,7 @@ impl<'a, Model> ValidatorContext<'a, Model> {
 }
 
 /// Read-only information supplied to form validators.
+#[derive(Clone)]
 pub struct FormValidatorContext<'a, Model> {
     form: &'a Model,
     validator_id: ValidatorId,
@@ -2821,13 +2946,13 @@ pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 5;
 /// Current compatibility version for serialized collection identity state.
 pub const COLLECTION_IDENTITY_SERIALIZATION_VERSION: u32 = 2;
 
-/// Which collection item identity sequence is malformed in serialized state.
+/// Which collection item identity sequence has a restore-time integrity problem.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CollectionIdentitySequence {
-    /// The baseline identity sequence is malformed.
+    /// The baseline identity sequence.
     Baseline,
-    /// The current rendered identity sequence is malformed.
+    /// The current rendered identity sequence.
     Current,
 }
 
@@ -2854,6 +2979,13 @@ pub enum FormStateRestoreError {
         collection: FieldIdentity,
         next_item_identity: u64,
         max_item_identity: u64,
+    },
+    /// A registered collection rule's restored identity count does not match its model value.
+    CollectionIdentityCardinalityMismatch {
+        collection: FieldIdentity,
+        sequence: CollectionIdentitySequence,
+        model_items: usize,
+        identity_items: usize,
     },
 }
 
@@ -3503,6 +3635,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         self.increment_submit_validation_generation();
         self.field_store.clear_fields();
         self.retire_collection_identities();
+        self.prepare_all_form_validator_collection_target_rules();
         self.validation_chains
             .clear_collection_item_field_validator_states();
         self.clear_validation_results();
@@ -3529,13 +3662,29 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     /// A `Vec<Item>` path reaches this method like any other, and a tracked collection reached that
     /// way is reset the way [`Self::reset`] resets it: baseline rows keep their **Collection Item
     /// Identity** while their item-scoped validator results are cleared in place, and rows added
-    /// since the baseline are retired along with their item-scoped state. The returned identities
-    /// are the rows that were dropped, so integration layers can release their own item-scoped
-    /// state.
+    /// since the baseline are retired along with their item-scoped state. When `path` is itself a
+    /// tracked collection, the returned identities are the rows dropped from that collection.
     pub fn reset_field<Value>(
         &mut self,
         path: FieldPath<Model, Value>,
     ) -> Vec<CollectionItemIdentity>
+    where
+        Value: Clone + PartialEq,
+    {
+        let reset = path.identity();
+        self.reset_field_with_effects(path)
+            .into_collections()
+            .filter(|effect| effect.collection == reset)
+            .flat_map(|effect| effect.displaced_items)
+            .collect()
+    }
+
+    /// Resets a field and returns adapter cleanup qualified by each reached collection.
+    #[doc(hidden)]
+    pub fn reset_field_with_effects<Value>(
+        &mut self,
+        path: FieldPath<Model, Value>,
+    ) -> FieldReplacementEffects
     where
         Value: Clone + PartialEq,
     {
@@ -3546,6 +3695,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
 
         if value_matches_baseline
             && !self.field_store.has_reset_relevant_state(&field_identity)
+            && !self.collection_reset_reaches_changed_identity_state(&field_identity)
             && !self
                 .validation_chains
                 .has_field_validation_state_matching(|validator_field| {
@@ -3554,7 +3704,16 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             && !self.submission.has_error_for_field(&field_identity)
         {
             self.clear_submit_errors_for_field(&field_identity);
-            return Vec::new();
+            return FieldReplacementEffects {
+                collections: self
+                    .collections_reached_by(&field_identity)
+                    .into_iter()
+                    .map(|collection| CollectionReplacementEffect {
+                        collection,
+                        displaced_items: Vec::new(),
+                    })
+                    .collect(),
+            };
         }
 
         if !value_matches_baseline {
@@ -3562,7 +3721,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
             *path.get_mut(self.draft.current_mut()) = baseline;
         }
 
-        let dropped_collection_items = self.restore_collection_items_from_baseline(&field_identity);
+        let collection_effects = self.restore_collection_items_from_baseline(&field_identity);
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();
         self.increment_submit_validation_generation();
@@ -3579,7 +3738,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         self.invalidate_pending_async_form_validators();
         self.clear_submit_errors_for_field(&field_identity);
         self.emit_observer_event(FormObserverEvent::FieldReset { field });
-        dropped_collection_items
+        collection_effects
     }
 }
 
@@ -3892,6 +4051,10 @@ impl<Model, Error> FormCore<Model, Error> {
         }
 
         let collection_states = snapshot.collection_identities.into_collection_states()?;
+        self.validate_restored_collection_target_rule_cardinalities(
+            &snapshot.draft,
+            &collection_states,
+        )?;
         let field_versions = snapshot
             .field_versions
             .into_iter()
@@ -3974,6 +4137,45 @@ impl<Model, Error> FormCore<Model, Error> {
         self.submission
             .restore_attempt_count(snapshot.submit_attempts);
         self.increment_submit_validation_generation();
+
+        Ok(())
+    }
+
+    fn validate_restored_collection_target_rule_cardinalities(
+        &self,
+        draft: &FormDraft<Model>,
+        collection_states: &BTreeMap<FieldIdentity, CollectionState>,
+    ) -> Result<(), FormStateRestoreError> {
+        for validator in self.validation_chains.form_values() {
+            for rule in &validator.collection_target_rules {
+                let state = collection_states.get(&rule.collection);
+                let cardinalities = [
+                    (
+                        CollectionIdentitySequence::Baseline,
+                        (rule.collection_len)(draft.baseline()),
+                        state.map_or(0, |state| state.baseline_items.len()),
+                    ),
+                    (
+                        CollectionIdentitySequence::Current,
+                        (rule.collection_len)(draft.current()),
+                        state.map_or(0, |state| state.current_items.len()),
+                    ),
+                ];
+
+                for (sequence, model_items, identity_items) in cardinalities {
+                    if model_items != identity_items {
+                        return Err(
+                            FormStateRestoreError::CollectionIdentityCardinalityMismatch {
+                                collection: rule.collection.clone(),
+                                sequence,
+                                model_items,
+                                identity_items,
+                            },
+                        );
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -5131,7 +5333,33 @@ impl<Model, Error> FormCore<Model, Error> {
             + 'static,
         Model: 'static,
     {
-        self.register_sync_form_validator_for_triggers(source, ValidationTriggers::all(), validator)
+        self.register_sync_form_validator_with_collection_target_rules(
+            source,
+            std::iter::empty(),
+            validator,
+        )
+    }
+
+    /// Registers a synchronous form validator with durable collection target rules for every trigger.
+    pub fn register_sync_form_validator_with_collection_target_rules<Source, Rules, Validator>(
+        &mut self,
+        source: Source,
+        collection_target_rules: Rules,
+        validator: Validator,
+    ) -> ValidatorId
+    where
+        Source: Into<ValidatorSource>,
+        Rules: IntoIterator<Item = CollectionValidationTargetRule<Model>>,
+        Validator: for<'a> Fn(FormValidatorContext<'a, Model>) -> Vec<FormValidationError<Error>>
+            + 'static,
+        Model: 'static,
+    {
+        self.register_sync_form_validator_for_triggers_with_collection_target_rules(
+            source,
+            ValidationTriggers::all(),
+            collection_target_rules,
+            validator,
+        )
     }
 
     /// Registers a synchronous validator for the whole form and trigger set.
@@ -5148,9 +5376,41 @@ impl<Model, Error> FormCore<Model, Error> {
             + 'static,
         Model: 'static,
     {
+        self.register_sync_form_validator_for_triggers_with_collection_target_rules(
+            source,
+            triggers,
+            std::iter::empty(),
+            validator,
+        )
+    }
+
+    /// Registers a synchronous form validator and durable collection target rules for a trigger set.
+    pub fn register_sync_form_validator_for_triggers_with_collection_target_rules<
+        Source,
+        Triggers,
+        Rules,
+        Validator,
+    >(
+        &mut self,
+        source: Source,
+        triggers: Triggers,
+        collection_target_rules: Rules,
+        validator: Validator,
+    ) -> ValidatorId
+    where
+        Source: Into<ValidatorSource>,
+        Triggers: Into<ValidationTriggers>,
+        Rules: IntoIterator<Item = CollectionValidationTargetRule<Model>>,
+        Validator: for<'a> Fn(FormValidatorContext<'a, Model>) -> Vec<FormValidationError<Error>>
+            + 'static,
+        Model: 'static,
+    {
         let id = self.allocate_validator_id();
         let triggers = triggers.into();
         let submit_applicable = triggers.contains(ValidationTrigger::Submit);
+        let collection_target_rules: Vec<_> = collection_target_rules.into_iter().collect();
+
+        self.prepare_collection_validation_target_rules(&collection_target_rules);
 
         self.validation_chains.insert_form_validator(
             id,
@@ -5161,6 +5421,7 @@ impl<Model, Error> FormCore<Model, Error> {
                     validation_lifecycle::SourceKind::Sync,
                 ),
                 validate: Some(Box::new(validator)),
+                collection_target_rules,
             },
         );
         if submit_applicable {
@@ -5193,6 +5454,7 @@ impl<Model, Error> FormCore<Model, Error> {
                     validation_lifecycle::SourceKind::Async,
                 ),
                 validate: None,
+                collection_target_rules: Vec::new(),
             },
         );
         if submit_applicable {
@@ -6814,6 +7076,7 @@ impl<Model, Error> FormCore<Model, Error> {
             self.clear_collection_item_state(collection, item);
         }
         self.ensure_collection_item_validator_states_for_collection(collection);
+        self.increment_submit_validation_generation();
         displaced_items
     }
 
@@ -6912,6 +7175,42 @@ impl<Model, Error> FormCore<Model, Error> {
         self.ensure_collection_state_by_identity(identity, baseline_len, current_len)
     }
 
+    fn prepare_collection_validation_target_rules(
+        &mut self,
+        rules: &[CollectionValidationTargetRule<Model>],
+    ) {
+        for rule in rules {
+            let collection = rule.collection.clone();
+            self.tracked_collection_lengths
+                .entry(collection.clone())
+                .or_insert_with(|| Rc::clone(&rule.collection_len));
+            if self
+                .field_store
+                .collection(&collection)
+                .is_some_and(|state| state.current_replacement_pending)
+            {
+                self.replace_collection_identity_sequence(
+                    &collection,
+                    (rule.collection_len)(self.draft.current()),
+                );
+            }
+            self.ensure_collection_state_by_identity(
+                collection,
+                (rule.collection_len)(self.draft.baseline()),
+                (rule.collection_len)(self.draft.current()),
+            );
+        }
+    }
+
+    fn prepare_all_form_validator_collection_target_rules(&mut self) {
+        let rules: Vec<_> = self
+            .validation_chains
+            .form_values()
+            .flat_map(|validator| validator.collection_target_rules.iter().cloned())
+            .collect();
+        self.prepare_collection_validation_target_rules(&rules);
+    }
+
     /// Registers a collection's identity state by identity, minting its sequences when it holds
     /// none. The single seam through which a **Collection Item Identity** sequence comes into being.
     fn ensure_collection_state_by_identity(
@@ -6948,26 +7247,55 @@ impl<Model, Error> FormCore<Model, Error> {
         }
     }
 
-    /// Restores one tracked collection's item sequence from its baseline sequence and releases the
-    /// item-scoped state of the items that restore dropped, for a single-field reset that clears
-    /// only the field it was given.
+    fn collection_reset_reaches_changed_identity_state(&self, reset: &FieldIdentity) -> bool {
+        self.field_store
+            .collections()
+            .iter()
+            .any(|(collection, state)| {
+                FieldAncestry::contains(reset, collection)
+                    && state.current_items != state.baseline_items
+            })
+    }
+
+    fn collections_reached_by(&self, field: &FieldIdentity) -> Vec<FieldIdentity> {
+        self.field_store
+            .collection_keys()
+            .into_iter()
+            .filter(|collection| FieldAncestry::contains(field, collection))
+            .collect()
+    }
+
+    /// Restores every tracked collection reached by a field reset and releases item-scoped state
+    /// for the items that restore dropped.
     ///
     /// [`Self::reset_field`] is generic over its value type, so a `Vec<Item>` field path reaches it
     /// and restores the vector value while nothing follows it in the collection's identity state.
     /// A field that is not a tracked collection does not match and passes through untouched.
     fn restore_collection_items_from_baseline(
         &mut self,
-        collection: &FieldIdentity,
-    ) -> Vec<CollectionItemIdentity> {
-        let Some(state) = self.field_store.collection_mut(collection) else {
-            return Vec::new();
-        };
+        reset: &FieldIdentity,
+    ) -> FieldReplacementEffects {
+        let collections = self.collections_reached_by(reset);
+        let mut collection_effects = Vec::new();
 
-        let dropped_items = state.restore_baseline_items();
-        for item in dropped_items.iter().copied() {
-            self.clear_collection_item_state(collection, item);
+        for collection in collections {
+            let dropped = self
+                .field_store
+                .collection_mut(&collection)
+                .expect("collection key should have identity state")
+                .restore_baseline_items();
+            for item in dropped.iter().copied() {
+                self.clear_collection_item_state(&collection, item);
+            }
+            collection_effects.push(CollectionReplacementEffect {
+                collection,
+                displaced_items: dropped,
+            });
         }
-        dropped_items
+
+        FieldReplacementEffects {
+            collections: collection_effects,
+        }
     }
 
     fn ensure_collection_item_validator_states_for_collection(
@@ -8262,8 +8590,18 @@ impl<Model, Error> FormCore<Model, Error> {
         id: ValidatorId,
         trigger: ValidationTrigger,
     ) -> Option<ValidationStatus> {
+        let collection_target_rules = self
+            .validation_chains
+            .form_validator(id)?
+            .collection_target_rules
+            .clone();
+        self.prepare_collection_validation_target_rules(&collection_target_rules);
+
         let (errors, retires_submit_evidence) = {
-            let validator = self.validation_chains.form_validator(id)?;
+            let validator = self
+                .validation_chains
+                .form_validator(id)
+                .expect("form validator disappeared during collection preparation");
             if !validator.lifecycle.should_run(trigger) {
                 return None;
             }

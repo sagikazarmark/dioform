@@ -23,9 +23,16 @@ paths are a **Validation Adapter** concern and must not enter the renderer-agnos
 leaves genuinely open is a bare marker, and a marker buys nothing the adapter cannot record on its own
 side of the seam.
 
-The distinction is also recoverable where it is actually decided. `PathMap` maps only to field targets,
-so inside the adapter a resolved form target *is* the unmapped case, and the adapter knows the external
-path that produced it. Nothing needs to travel downstream to reconstruct what the adapter already had.
+The distinction is recoverable where it is actually decided, but a form target is not itself the
+classification. At the time of this decision, an adapter selected a form target either for a genuinely
+whole-model diagnostic or because `PathMap` missed, and the adapter knew which external path produced it.
+Live collection rules later added a third form-scoped outcome: a **Collection Validation Target Resolution
+Failure**. [ADR-0043](0043-resolve-collection-diagnostic-targets-against-current-identities.md) therefore
+classifies the route before attachment as an exact static target, a live rule target, a collection
+resolution failure, or an **Unmapped Diagnostic**. This corrects the narrower equation of “adapter-selected
+form target” with “unmapped” without changing this ADR's decision: nothing needs to travel in
+`ValidationTarget` or stored core state when the adapter can expose ephemeral **Diagnostic Route
+Provenance** while mapping.
 
 ## A registration-time guardrail cannot see the case that bites
 
@@ -45,7 +52,9 @@ whose diagnostics are all whole-model to register an empty map to say so, and wo
 own tests for **Explicit Path Mapping**'s fallback inexpressible without a second opt-out method.
 
 Reporting at validation time has the predicate the guardrail lacks: the paths the library actually
-emitted and the map actually failed to route, for this run, on this **Form Draft**.
+emitted and the classified route selected for this run on this **Form Draft**. `on_unmapped_path` reports
+only a true miss. `on_collection_resolution_failure` separately reports ambiguity or a matched rule whose
+row is missing. Both outcomes preserve the diagnostic at form scope.
 
 ## Consequences
 
@@ -69,6 +78,13 @@ was unavailable exactly where it was needed.
 Core**, which registers whole-model validation through a validator bound that requires no `Send`. No
 existing call site changes, no terminal method signature changes, and the **Facade Crate** is
 untouched.
+
+**Route provenance remains ephemeral.** `DiagnosticView::route_provenance()` is available only while an
+application mapper is converting the external diagnostic. An application may copy it into its own
+**Validation Error**, but the adapter reporters are optional and side-effect-free with respect to
+validation and routing. Builder `configuration_issues()` separately aggregates statically detectable
+ineligible captured-item exact targets and duplicate collection matchers; it neither validates nor makes
+registration fallible.
 
 **The gap this closes is developer diagnosability, not the rendered form.** Error visibility reads the
 **Validation Target** alone, so an application that records every unmapped path still cannot render
