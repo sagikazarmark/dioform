@@ -106,12 +106,16 @@ impl SelectorTransition {
                 );
                 notifications
             }
-            Self::FieldMetadataChanged(field) => vec![
-                SelectorNotification::WholeForm,
-                SelectorNotification::VisibleValidationErrors,
-                SelectorNotification::FieldMetadata(field.clone()),
-                SelectorNotification::VisibleFieldValidationErrors(field),
-            ],
+            Self::FieldMetadataChanged(field) => {
+                let mut notifications = vec![
+                    SelectorNotification::WholeForm,
+                    SelectorNotification::VisibleValidationErrors,
+                    SelectorNotification::FieldMetadata(field.clone()),
+                    SelectorNotification::VisibleFieldValidationErrors(field.clone()),
+                ];
+                extend_visible_validation_ancestry(&mut notifications, tracked_fields, &field);
+                notifications
+            }
             Self::FieldValidationChanged(field) => vec![
                 SelectorNotification::WholeForm,
                 SelectorNotification::Submit,
@@ -292,6 +296,22 @@ fn extend_field_value_ancestry(
             .any(|field| FieldAncestry::relates(field, &tracked))
         {
             notifications.push(SelectorNotification::FieldValue(tracked));
+        }
+    }
+}
+
+/// Wakes visible-error selectors for registered fields that contain the metadata change.
+///
+/// Error Visibility reaches outward from a touched or blurred field, but the metadata selector
+/// itself remains exact. Filtering existing registrations preserves lazy selector registration.
+fn extend_visible_validation_ancestry(
+    notifications: &mut Vec<SelectorNotification>,
+    tracked_fields: impl IntoIterator<Item = FieldIdentity>,
+    changed: &FieldIdentity,
+) {
+    for tracked in tracked_fields {
+        if tracked != *changed && FieldAncestry::contains(&tracked, changed) {
+            notifications.push(SelectorNotification::VisibleFieldValidationErrors(tracked));
         }
     }
 }
@@ -620,6 +640,46 @@ mod tests {
                 SelectorNotification::VisibleValidationErrors,
                 SelectorNotification::FieldMetadata(field.clone()),
                 SelectorNotification::VisibleFieldValidationErrors(field),
+            ]
+        );
+    }
+
+    #[test]
+    fn field_metadata_change_wakes_containing_visible_validation_error_readers() {
+        let mut core = dioform_core::FormCore::<Vec<()>>::new(vec![(), ()]);
+        let path = dioform_core::FieldPath::direct(
+            FieldIdentity::new("invoice.lines"),
+            "invoice.lines",
+            |items| items,
+            |items| items,
+        );
+        let items = core.collection_items(path);
+        let item = items[0].identity();
+        let sibling = items[1].identity();
+        let field = FieldIdentity::collection_item("invoice.lines", item, "description");
+        let item_root = FieldIdentity::collection_item_value("invoice.lines", item);
+        let collection = FieldIdentity::new("invoice.lines");
+        let invoice = FieldIdentity::new("invoice");
+        let descendant = FieldIdentity::collection_item("invoice.lines", item, "description.label");
+        let sibling_root = FieldIdentity::collection_item_value("invoice.lines", sibling);
+
+        assert_eq!(
+            SelectorTransition::FieldMetadataChanged(field.clone()).selector_notifications([
+                item_root.clone(),
+                collection.clone(),
+                invoice.clone(),
+                descendant,
+                sibling_root,
+                field.clone(),
+            ]),
+            vec![
+                SelectorNotification::WholeForm,
+                SelectorNotification::VisibleValidationErrors,
+                SelectorNotification::FieldMetadata(field.clone()),
+                SelectorNotification::VisibleFieldValidationErrors(field),
+                SelectorNotification::VisibleFieldValidationErrors(item_root),
+                SelectorNotification::VisibleFieldValidationErrors(collection),
+                SelectorNotification::VisibleFieldValidationErrors(invoice),
             ]
         );
     }

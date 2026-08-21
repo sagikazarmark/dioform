@@ -122,6 +122,36 @@ lines
 
 The validator result attaches to the logical item child field. If the item moves, the error moves with it. If the item is removed, the item-scoped validator state is cleared without affecting sibling items.
 
+## Item-Root Validation Errors
+
+A `CollectionItemBinding` can present validation errors attached to the logical item's whole-value
+**Field**, including item-value diagnostics routed by a [Validation Adapter](validation-adapters.md).
+Use `field_identity()` for that target, `validation_errors()` for all stored errors there, and
+`visible_validation_errors()` or `visible_validation_errors_for_intent(intent)` for errors allowed
+by the configured **Error Visibility** policy:
+
+```rust
+let item = form
+    .collection(InvoiceForm::fields().lines())
+    .items()
+    .into_iter()
+    .next()
+    .expect("the invoice has a line");
+
+for error in item.visible_validation_errors() {
+    render_row_error(error.error());
+}
+```
+
+These reads are exact to the whole item. They do not include errors attached to descendants such as
+`lines[0].description`; read those from the descendant binding or build an application-owned row
+summary from the form-wide aggregate. Interaction with a descendant may still reveal an item-root
+error under outward **Error Visibility**, without marking the item root itself touched or blurred.
+
+The binding and its `field_identity()` remain usable after reorder or removal. Reorder preserves
+the identity and attached errors. Removal retires the binding's identity and releases its state, so
+stored and visible error reads return an empty list.
+
 ## Unresolved Bindings
 
 A binding is created for one logical **Collection Item Identity**. Nothing stops the application from

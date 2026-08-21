@@ -658,6 +658,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioform-integration-tests"
+version = "0.0.0"
+dependencies = [
+ "dioform",
+ "dioform-garde",
+ "garde",
+]
+
+[[package]]
 name = "dioform-validation-adapter"
 version = "0.2.0"
 dependencies = [

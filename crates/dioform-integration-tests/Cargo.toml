@@ -1,0 +1,12 @@
+[package]
+name = "dioform-integration-tests"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dioform = { workspace = true }
+dioform-garde = { path = "../dioform-garde" }
+garde = { version = "0.23", default-features = false }

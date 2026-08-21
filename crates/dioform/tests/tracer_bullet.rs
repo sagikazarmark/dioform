@@ -6379,6 +6379,233 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
     );
 }
 
+fn invoice_form_with_item_root_errors(
+    visibility: dioform::ErrorVisibilityPolicy,
+) -> FormHandle<InvoiceCollectionForm, &'static str> {
+    let lines = InvoiceCollectionForm::fields().lines();
+    let description = InvoiceCollectionLine::fields().description();
+
+    FormHandle::from_config(
+        FormConfig::new(invoice_collection_form())
+            .validation_mode(ValidationMode::on_submit())
+            .error_visibility_policy(visibility)
+            .collection_item_validator(lines.clone(), "row")
+            .on(ValidationTrigger::Manual)
+            .check_optional(|line, _context| (line.description == "Design").then_some("row_error"))
+            .collection_item_field_validator(lines, description, "description")
+            .on(ValidationTrigger::Manual)
+            .check_optional(|value, _context| (value == "Design").then_some("description_error")),
+    )
+}
+
+#[test]
+fn collection_item_binding_reads_exact_item_root_validation_errors() {
+    let handle = invoice_form_with_item_root_errors(dioform::ErrorVisibilityPolicy::Always);
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let item = lines.items()[0].clone();
+    let description = item.text(InvoiceCollectionLine::fields().description());
+
+    handle.validate_all(ValidationTrigger::Manual);
+
+    assert_eq!(
+        item.field_identity(),
+        FieldIdentity::collection_item_value("lines", item.identity())
+    );
+    assert_eq!(
+        item.validation_errors()
+            .iter()
+            .map(|error| *error.error())
+            .collect::<Vec<_>>(),
+        ["row_error"]
+    );
+    assert_eq!(
+        item.visible_validation_errors()
+            .iter()
+            .map(|error| *error.error())
+            .collect::<Vec<_>>(),
+        ["row_error"]
+    );
+    assert_eq!(
+        description.validation_errors()[0].error(),
+        &"description_error"
+    );
+}
+
+#[test]
+fn collection_item_binding_filters_visible_root_errors_by_submit_intent() {
+    let handle: FormHandle<InvoiceCollectionForm, &'static str> =
+        FormHandle::new_with_error_type(invoice_collection_form());
+    let item = handle
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()[0]
+        .clone();
+    let target = item.field_identity();
+
+    handle.write_advanced(|core| {
+        core.register_sync_form_validator_for_triggers(
+            "publish_row",
+            ValidationTrigger::Submit,
+            move |context| {
+                if context.submit_intent::<SignupSubmitIntent>()
+                    == Some(&SignupSubmitIntent::Publish)
+                {
+                    vec![FormValidationError::field_identity(
+                        target.clone(),
+                        "publish_row_error",
+                    )]
+                } else {
+                    Vec::new()
+                }
+            },
+        );
+    });
+
+    assert_eq!(
+        handle
+            .managed_submit()
+            .intent(SignupSubmitIntent::Publish)
+            .on_submit(managed_submit_event(), |_submitted| {}),
+        SubmitResult::Blocked(SubmitBlocker::ValidationErrors)
+    );
+    assert_eq!(
+        item.visible_validation_errors_for_intent(&SignupSubmitIntent::Publish)[0].error(),
+        &"publish_row_error"
+    );
+    assert!(
+        item.visible_validation_errors_for_intent(&SignupSubmitIntent::SaveDraft)
+            .is_empty()
+    );
+}
+
+struct CollectionItemRootErrorProbe {
+    form: FormHandle<InvoiceCollectionForm, &'static str>,
+    item: CollectionItemBinding<InvoiceCollectionForm, InvoiceCollectionLine, &'static str>,
+    stored: RefCell<Vec<Vec<&'static str>>>,
+    visible: RefCell<Vec<Vec<&'static str>>>,
+}
+
+impl CollectionItemRootErrorProbe {
+    fn new(visibility: dioform::ErrorVisibilityPolicy) -> Self {
+        let form = invoice_form_with_item_root_errors(visibility);
+        let item = form
+            .collection(InvoiceCollectionForm::fields().lines())
+            .items()[0]
+            .clone();
+        form.validate_all(ValidationTrigger::Manual);
+
+        Self {
+            form,
+            item,
+            stored: RefCell::new(Vec::new()),
+            visible: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+fn collection_item_root_error_probe(probe: Rc<CollectionItemRootErrorProbe>) -> Element {
+    probe.stored.borrow_mut().push(
+        probe
+            .item
+            .validation_errors()
+            .iter()
+            .map(|error| *error.error())
+            .collect(),
+    );
+    probe.visible.borrow_mut().push(
+        probe
+            .item
+            .visible_validation_errors()
+            .iter()
+            .map(|error| *error.error())
+            .collect(),
+    );
+
+    VNode::empty()
+}
+
+#[test]
+fn descendant_blur_wakes_an_item_root_visible_error_reader_without_running_validation() {
+    let probe = Rc::new(CollectionItemRootErrorProbe::new(
+        dioform::ErrorVisibilityPolicy::BlurOrSubmit,
+    ));
+    let mut dom = VirtualDom::new_with_props(collection_item_root_error_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.visible.borrow().as_slice(), [Vec::<&str>::new()]);
+
+    probe
+        .item
+        .text(InvoiceCollectionLine::fields().description())
+        .on_blur();
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.visible.borrow().as_slice(),
+        [Vec::<&str>::new(), vec!["row_error"]]
+    );
+    let root_metadata = probe
+        .form
+        .write_advanced(|core| core.field_metadata_by_identity(&probe.item.field_identity()));
+    assert!(!root_metadata.is_touched());
+    assert!(!root_metadata.is_blurred());
+}
+
+#[test]
+fn descendant_touch_wakes_an_item_root_visible_error_reader_without_changing_root_metadata() {
+    let probe = Rc::new(CollectionItemRootErrorProbe::new(
+        dioform::ErrorVisibilityPolicy::TouchedOrSubmit,
+    ));
+    let mut dom = VirtualDom::new_with_props(collection_item_root_error_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    assert_eq!(probe.visible.borrow().as_slice(), [Vec::<&str>::new()]);
+
+    let quantity = probe.item.select_with(
+        InvoiceCollectionLine::fields().quantity(),
+        |value| value.parse::<u32>(),
+        u32::to_string,
+    );
+    assert!(quantity.try_on_change("not-a-number").is_err());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.visible.borrow().as_slice(),
+        [Vec::<&str>::new(), vec!["row_error"]]
+    );
+    let root_metadata = probe
+        .form
+        .write_advanced(|core| core.field_metadata_by_identity(&probe.item.field_identity()));
+    assert!(!root_metadata.is_touched());
+    assert!(!root_metadata.is_blurred());
+}
+
+#[test]
+fn retained_item_root_error_readers_follow_reorder_and_clear_after_removal() {
+    let probe = Rc::new(CollectionItemRootErrorProbe::new(
+        dioform::ErrorVisibilityPolicy::Always,
+    ));
+    let mut dom = VirtualDom::new_with_props(collection_item_root_error_probe, Rc::clone(&probe));
+    let identity = probe.item.field_identity();
+    let lines = probe
+        .form
+        .collection(InvoiceCollectionForm::fields().lines());
+    dom.rebuild_in_place();
+
+    assert!(lines.move_to_index(probe.item.identity(), 1));
+    dom.render_immediate_to_vec();
+    assert_eq!(probe.item.field_identity(), identity);
+    assert_eq!(probe.stored.borrow().last(), Some(&vec!["row_error"]));
+    assert_eq!(probe.visible.borrow().last(), Some(&vec!["row_error"]));
+
+    assert!(lines.remove(probe.item.identity()).is_some());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.item.field_identity(), identity);
+    assert!(!probe.item.is_resolved());
+    assert_eq!(probe.stored.borrow().last(), Some(&Vec::new()));
+    assert_eq!(probe.visible.borrow().last(), Some(&Vec::new()));
+}
+
 #[test]
 fn collection_item_addressing_tracks_one_logical_item_across_public_surfaces() {
     let observer_events = Rc::new(RefCell::new(Vec::new()));

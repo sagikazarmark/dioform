@@ -118,7 +118,11 @@ form.garde_validation()
 
 This rule maps `lines[0].description`, `lines[1].description`, and later rows to the current logical items at those indices on each validation run. For a diagnostic attached to the item value itself, use
 `collection_row_item(matcher, collection)`, for example with
-`GardeCollectionRowMatcher::new(["tags"], std::iter::empty::<&str>())`.
+`GardeCollectionRowMatcher::new(["tags"], std::iter::empty::<&str>())`. The resulting exact
+item-value error is available from the matching ordinary
+[`CollectionItemBinding`](collection-fields.md#item-root-validation-errors) through
+`validation_errors()` and its visible-error variants; descendant errors remain on their own field
+bindings.
 
 ### Routing And Reporting
 

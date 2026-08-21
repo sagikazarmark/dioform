@@ -4176,7 +4176,9 @@ impl<Model, Item, Error> Clone for CollectionBinding<Model, Item, Error> {
 /// Headless access to one logical item inside a collection field.
 ///
 /// The binding retains the item's **Collection Item Identity** and resolves its rendered index live,
-/// so a binding retained across a sibling mutation never reports a position it no longer holds.
+/// so a binding retained across a sibling mutation never reports a position it no longer holds. It
+/// also exposes validation errors attached exactly to the item's whole-value field; descendant
+/// field errors remain available from their own bindings.
 pub struct CollectionItemBinding<Model, Item, Error = String> {
     handle: FormHandle<Model, Error>,
     collection_path: FieldPath<Model, Vec<Item>>,
@@ -5356,6 +5358,56 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     /// Returns this item's logical identity.
     pub const fn identity(&self) -> CollectionItemIdentity {
         self.item
+    }
+
+    /// Returns the whole-item **Field Identity** retained by this binding.
+    ///
+    /// The identity is independent of the rendered index and remains available when the item no
+    /// longer belongs to the collection.
+    pub fn field_identity(&self) -> FieldIdentity {
+        let collection = self.collection_path.identity();
+        let collection = collection
+            .static_path()
+            .expect("collection fields in the first slice must be direct static fields");
+
+        FieldIdentity::collection_item_value(collection, self.identity())
+    }
+
+    /// Returns validation errors attached exactly to this item's whole-value field.
+    ///
+    /// Errors attached to descendant fields are not included. An unresolved binding returns an
+    /// empty list because removal releases the item's scoped validation state.
+    pub fn validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.handle
+            .field_validation_errors_by_identity(&self.field_identity())
+    }
+
+    /// Returns visible validation errors attached exactly to this item's whole-value field.
+    ///
+    /// Visibility can be established by interaction with a descendant field according to the
+    /// configured **Error Visibility** policy, without aggregating descendant errors.
+    pub fn visible_validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.handle
+            .visible_field_validation_errors_by_identity(&self.field_identity())
+    }
+
+    /// Returns visible whole-item validation errors relevant to one submit intent.
+    pub fn visible_validation_errors_for_intent<Intent>(
+        &self,
+        intent: &Intent,
+    ) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Intent: PartialEq + 'static,
+        Error: Clone,
+    {
+        self.handle
+            .visible_field_validation_errors_by_identity_for_intent(&self.field_identity(), intent)
     }
 
     /// Returns this item's current rendered index, or `None` when the item no longer resolves.
@@ -8677,6 +8729,24 @@ impl<Model, Error> FormHandle<Model, Error> {
         let core = self.core.borrow();
 
         core.visible_field_validation_errors_by_identity(field)
+            .into_iter()
+            .map(ValidationErrorSnapshot::from)
+            .collect()
+    }
+
+    fn visible_field_validation_errors_by_identity_for_intent<Intent>(
+        &self,
+        field: &FieldIdentity,
+        intent: &Intent,
+    ) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Intent: PartialEq + 'static,
+        Error: Clone,
+    {
+        self.reactivity.track_visible_field_validation_errors(field);
+        let core = self.core.borrow();
+
+        core.visible_field_validation_errors_by_identity_for_intent(field, intent)
             .into_iter()
             .map(ValidationErrorSnapshot::from)
             .collect()
@@ -12522,6 +12592,11 @@ mod tests {
         phone: String,
     }
 
+    #[derive(Clone, Debug, PartialEq)]
+    struct ContactList {
+        contacts: Vec<Contact>,
+    }
+
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum TestSubmitIntent {
         SaveDraft,
@@ -12556,6 +12631,15 @@ mod tests {
         )
     }
 
+    fn contacts() -> FieldPath<ContactList, Vec<Contact>> {
+        FieldPath::direct(
+            FieldIdentity::new("contacts"),
+            "contacts",
+            |list| &list.contacts,
+            |list| &mut list.contacts,
+        )
+    }
+
     /// Reads every field-scoped **Form Selector** the form exposes for one **Field**.
     fn read_every_field_selector(form: &FormHandle<Contact>, path: FieldPath<Contact, String>) {
         form.field_value(path.clone());
@@ -12583,6 +12667,10 @@ mod tests {
         email_values: RefCell<Vec<String>>,
     }
 
+    struct ContactItemErrorProbe {
+        item: CollectionItemBinding<ContactList, Contact>,
+    }
+
     impl ContactProbe {
         fn new() -> Self {
             Self {
@@ -12597,6 +12685,16 @@ mod tests {
             .email_values
             .borrow_mut()
             .push(probe.form.field_value(email()));
+
+        VNode::empty()
+    }
+
+    fn contact_item_error_selector_probe(probe: Rc<ContactItemErrorProbe>) -> Element {
+        probe.item.validation_errors();
+        probe.item.visible_validation_errors();
+        probe
+            .item
+            .visible_validation_errors_for_intent(&TestSubmitIntent::Publish);
 
         VNode::empty()
     }
@@ -12674,6 +12772,42 @@ mod tests {
         read_every_field_selector(&form, email());
 
         assert_no_registrations(&form, "non-reactive reads");
+    }
+
+    #[test]
+    fn collection_item_error_reads_register_only_exact_item_root_selectors() {
+        let form = FormHandle::new(ContactList {
+            contacts: vec![Contact {
+                email: "ada@example.com".to_owned(),
+                phone: String::new(),
+            }],
+        });
+        let item = form.collection(contacts()).items()[0].clone();
+        let item_root = item.field_identity();
+
+        item.validation_errors();
+        item.visible_validation_errors();
+        item.visible_validation_errors_for_intent(&TestSubmitIntent::Publish);
+        assert!(form.reactivity.fields.borrow().is_empty());
+
+        let probe = Rc::new(ContactItemErrorProbe { item });
+        let mut dom =
+            VirtualDom::new_with_props(contact_item_error_selector_probe, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        let fields = form.reactivity.fields.borrow();
+        assert_eq!(fields.keys().collect::<Vec<_>>(), [&item_root]);
+        let item_reactivity = fields
+            .get(&item_root)
+            .expect("the exact item root should be registered");
+        assert_eq!(item_reactivity.validation_errors.subscriber_count(), 1);
+        assert_eq!(
+            item_reactivity.visible_validation_errors.subscriber_count(),
+            1
+        );
+        assert_eq!(item_reactivity.value.subscriber_count(), 0);
+        assert_eq!(item_reactivity.metadata.subscriber_count(), 0);
+        assert_eq!(item_reactivity.parse_errors.subscriber_count(), 0);
     }
 
     /// The invariant both halves rest on: a subscriber exists only if its registration exists, so
