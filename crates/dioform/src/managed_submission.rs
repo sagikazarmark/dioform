@@ -182,6 +182,23 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
             return SubmitResult::Blocked(blocker);
         }
 
+        // A Submit Attempted listener can retire the token and introduce a parse blocker in the
+        // same turn. Parse blockers outrank the retired token (ADR-0033): they are independently
+        // actionable form defects, while a stale refusal only says "submit again" — which would
+        // arrive at the parse errors anyway. The async waiter re-checks parse the same way.
+        if self.handle.has_parse_blockers() {
+            self.handle.write_core(|core| {
+                core.intent(listener_intent.clone())
+                    .block_submission_with_parse_errors_after_validation()
+            });
+            self.handle.notify_submit_changed();
+            self.handle.dispatch_submit_listeners(
+                SubmitListenerEvent::SubmitBlocked(SubmitBlocker::ParseErrors),
+                listener_intent,
+            );
+            return SubmitResult::Blocked(SubmitBlocker::ParseErrors);
+        }
+
         match self.handle.write_core(|core| {
             core.intent(validation.intent().clone())
                 .begin_submission_after_validation(&validation)
@@ -663,6 +680,12 @@ mod tests {
         events: RefCell<Vec<SubmitListenerEvent>>,
     }
 
+    #[derive(Default)]
+    struct RetiredTokenWithParseBlockerProbe {
+        handle: RefCell<Option<FormHandle<AccountForm, &'static str>>>,
+        events: RefCell<Vec<SubmitListenerEvent>>,
+    }
+
     fn parse_selector_probe(probe: Rc<ParseSelectorProbe>) -> Element {
         probe.handle.parse_errors();
         probe.renders.set(probe.renders.get() + 1);
@@ -694,6 +717,31 @@ mod tests {
                 context
                     .form()
                     .mark_field_touched(AccountForm::fields().age());
+            }
+        });
+
+        probe.handle.borrow_mut().replace(form);
+        VNode::empty()
+    }
+
+    fn retired_token_with_parse_blocker_probe(
+        probe: Rc<RetiredTokenWithParseBlockerProbe>,
+    ) -> Element {
+        let form =
+            crate::use_form_handle(|| FormHandle::new_with_error_type(AccountForm { age: 42 }));
+        let age = use_hook({
+            let form = form.clone();
+            move || form.parsed_text(AccountForm::fields().age())
+        });
+        let listener_probe = Rc::clone(&probe);
+
+        crate::use_submit_listener(form.clone(), move |context| {
+            listener_probe.events.borrow_mut().push(context.event());
+            if context.event() == SubmitListenerEvent::SubmitAttempted {
+                context
+                    .form()
+                    .mark_field_touched(AccountForm::fields().age());
+                age.on_input("not-a-number");
             }
         });
 
@@ -1228,6 +1276,45 @@ mod tests {
         );
         parse_dom.render_immediate_to_vec();
         assert_eq!(parse_probe.renders.get(), 1);
+    }
+
+    // ADR-0033 pins ParseErrors ahead of StaleSubmitValidation in the cell where a Submit
+    // Attempted listener both retires the token and introduces a parse blocker, matching the
+    // async waiter's report for the same end state.
+    #[test]
+    fn synchronous_retired_token_with_parse_blocker_reports_parse_errors() {
+        let probe = Rc::new(RetiredTokenWithParseBlockerProbe::default());
+        let mut dom =
+            VirtualDom::new_with_props(retired_token_with_parse_blocker_probe, Rc::clone(&probe));
+        dom.rebuild_in_place();
+        let handle = probe
+            .handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose its form handle")
+            .clone();
+        let submit_calls = Rc::new(Cell::new(0));
+        let handler_calls = Rc::clone(&submit_calls);
+
+        let result = ManagedSubmission::new(handle.clone()).submit_async((), move |_submitted| {
+            handler_calls.set(handler_calls.get() + 1);
+            async {}
+        });
+
+        assert_eq!(result, SubmitResult::Blocked(SubmitBlocker::ParseErrors));
+        assert_eq!(submit_calls.get(), 0);
+        assert!(handle.has_parse_blockers());
+        assert_eq!(
+            handle.last_submit_status(),
+            Some(SubmitStatus::Blocked(SubmitBlocker::ParseErrors))
+        );
+        assert_eq!(
+            probe.events.borrow().as_slice(),
+            [
+                SubmitListenerEvent::SubmitAttempted,
+                SubmitListenerEvent::SubmitBlocked(SubmitBlocker::ParseErrors),
+            ]
+        );
     }
 
     #[test]

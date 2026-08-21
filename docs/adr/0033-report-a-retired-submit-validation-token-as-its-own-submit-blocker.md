@@ -7,7 +7,8 @@
 A **Submission** refused because the **Submit Validation Token** presented to it no longer describes the
 current **Form Draft** reports `SubmitBlocker::StaleSubmitValidation`, a fifth variant, rather than
 borrowing `ValidationErrors`. The variant is chosen ahead of `PendingValidation` and behind
-`ValidationErrors`. It is an outcome-only blocker: **Submit Availability** can never contain it.
+`ValidationErrors` and `ParseErrors`. It is an outcome-only blocker: **Submit Availability** can
+never contain it.
 
 ## The category was not imprecise, it was false
 
@@ -77,6 +78,16 @@ test changes, against eight for this one. It was declined because the zero-churn
 leaving the common case reporting the wrong thing. Six of those eight tests are *named* for staleness
 while asserting `PendingValidation`; the changed assertions are those tests finally able to say what
 their names always meant.
+
+Staleness is placed **behind** `ParseErrors` for the same reason it yields to `ValidationErrors`:
+a parse blocker is an independently actionable form defect — input the draft cannot even represent —
+that stays true regardless of the edit that retired the token, and "submit again" would only send
+the user through a round trip to arrive at the parse errors anyway. This cell is reachable when a
+**Submit Listener** reacting to the attempt both retires the token and leaves unparseable input.
+Parse state lives in the adapter, so the core refusal site never sees it; each managed path
+re-checks parse blockers after its listeners and waits have run and before reporting a stale
+refusal, which is what keeps the synchronous path and the async waiter reporting the same blocker
+for the same end state.
 
 The funnel cannot express this ordering, because it never sees the token. Staleness is decided at the
 refusal site, which has both, and the funnel keeps its own last-resort arm as a defensive default.
