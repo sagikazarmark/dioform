@@ -55,10 +55,10 @@ structurally static identity.
 A registered rule makes its collection identity state a durable validator dependency. The state is
 prepared before the validation run and before a **Submit Validation Token** is captured, then read without
 mutation while diagnostics are mapped. Coordinated insert, append, remove, move, swap, item replacement,
-clear, reset, containing-field reset, reinitialization, and cardinality-valid full-state restoration all
-produce the identity order for the corresponding draft transition. Item replacement preserves the
-identity of that logical item; reinitialization mints fresh identities; reset restores baseline
-identities.
+clear, reset, containing-field reset, reinitialization, and full `FormStateSnapshot` restoration that
+satisfies every registered rule's cardinality checks all produce the identity order for the corresponding
+draft transition. Item replacement preserves the identity of that logical item; reinitialization mints
+fresh identities; reset restores baseline identities.
 
 A **Collection-Affecting Field Replacement** replaces every current logical item in each tracked
 collection it reaches. Dioform clears state belonging to the displaced current identities and mints a
@@ -77,11 +77,15 @@ is not required to compute a synchronous target correctly.
 
 This decision covers the synchronous first-party adapters and collection shapes the current identity
 model can represent: direct or named-struct-composed collections with an item-value or static-descendant
-target. Collections nested inside collection items remain deferred. Standalone collection-identity
-restoration remains unsupported until it coordinates draft cardinality, item-scoped state, and submit
-proof. Future async collection targeting must capture the identity sequences atomically with its owned
-**Form Snapshot** rather than resolve a later live order. Item-root binding selectors are a separate
-presentation convenience; their absence does not change where a row-level diagnostic belongs.
+target. Collections nested inside collection items remain deferred. Persisted collection identities are
+adopted only through full `FormStateSnapshot` restoration, where the **Form Draft** and identity state
+move together. Identity-only restoration is not a supported lifecycle operation: cardinality can
+prove shape but not that equal-length rows retain the same logical correspondence. A future partial
+collection-state restoration interface would require a separate decision and must carry collection
+values and identities together. Future async collection targeting must capture the identity sequences
+atomically with its owned **Form Snapshot** rather than resolve a later live order. Item-root binding
+selectors are a separate presentation convenience; their absence does not change where a row-level
+diagnostic belongs.
 
 ## Rejected alternatives
 
@@ -92,4 +96,8 @@ identity relationship this decision must keep live. Collection-first routing was
 silently defeats durable exact overrides; blanket overlap rejection was rejected because future indices
 can create overlaps that did not exist at registration. Documentation-only treatment was rejected
 because the current behavior creates unreachable, submission-blocking field errors rather than merely
-offering limited presentation.
+offering limited presentation. Checked identity-only restoration was rejected because structural and
+cardinality validation cannot prove logical correspondence: adopting an equal-length sequence over
+different rows would make retained bindings address different logical items. Fully paired partial
+collection-state restoration remains a possible future enhancement only if a concrete use case justifies
+a second restoration surface beside full `FormStateSnapshot` restoration.

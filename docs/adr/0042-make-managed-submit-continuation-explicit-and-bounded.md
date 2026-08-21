@@ -38,10 +38,10 @@ move, swap, or clear. A successful same-value replacement remains eligible becau
 replacement APIs do not promise equality-aware assignment.
 
 The state-clearing semantics of `reset_field` make it ineligible even when it also changes a value.
-Full reset, reinitialization, state restoration, collection-identity restoration, **File Selection**
-changes, standalone validator-visible metadata changes, submit-applicable validator registration or
-removal, and independent validation-evidence changes are also ineligible. A window containing both an
-eligible and an ineligible retirement does not continue.
+Full reset, reinitialization, state restoration, **File Selection** changes, standalone
+validator-visible metadata changes, submit-applicable validator registration or removal, and
+independent validation-evidence changes are also ineligible. A window containing both an eligible and
+an ineligible retirement does not continue.
 
 Update origin cannot decide eligibility. A programmatic write may be a benign normalizer or an
 unrelated background replacement, while a listener write may be a direct consequence of user input.
