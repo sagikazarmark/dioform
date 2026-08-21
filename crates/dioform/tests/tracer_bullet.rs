@@ -9431,6 +9431,47 @@ fn dioxus_collection_swap_preserves_item_identity_and_state() {
 }
 
 #[test]
+fn dioxus_collection_reorder_preserves_item_identity_and_state() {
+    let handle = invoice_form_with_reserved_description();
+    let lines = handle.collection(InvoiceCollectionForm::fields().lines());
+    let description = InvoiceCollectionLine::fields().description();
+
+    let items = lines.items();
+    let first_id = items[0].identity(); // the "Design" line, which carries the reserved error
+    let second_id = items[1].identity(); // the "Build" line, no error
+
+    // A non-permutation is refused without mutating.
+    assert!(!lines.reorder(&[first_id]));
+    assert!(!lines.reorder(&[first_id, first_id]));
+    // Supplying the current order is a no-op that reports success.
+    assert!(lines.reorder(&[first_id, second_id]));
+
+    // Rearrange into the reversed order.
+    assert!(lines.reorder(&[second_id, first_id]));
+
+    let reordered = lines.items();
+    // Values rearranged...
+    assert_eq!(reordered[0].text(description.clone()).value(), "Build");
+    assert_eq!(reordered[1].text(description.clone()).value(), "Design");
+    // ...but each item keeps its logical identity, and item-scoped state follows it.
+    assert_eq!(reordered[0].identity(), second_id);
+    assert_eq!(reordered[1].identity(), first_id);
+    assert_eq!(
+        reordered[1]
+            .text(description.clone())
+            .validation_errors()
+            .len(),
+        1
+    );
+    assert!(
+        reordered[0]
+            .text(description)
+            .validation_errors()
+            .is_empty()
+    );
+}
+
+#[test]
 fn dioxus_collection_replace_is_in_place_and_keeps_identity() {
     let handle = invoice_form_with_reserved_description();
     let lines = handle.collection(InvoiceCollectionForm::fields().lines());

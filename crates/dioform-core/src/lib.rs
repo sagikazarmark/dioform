@@ -2739,6 +2739,16 @@ pub enum FormObserverEvent {
         /// Whether the change came from application code or user interaction.
         origin: FieldUpdateOrigin,
     },
+    /// The collection's logical items were rearranged into a caller-supplied order.
+    #[non_exhaustive]
+    CollectionItemsReordered {
+        /// The collection field that changed.
+        collection: FieldIdentity,
+        /// The logical identities in their new order.
+        order: Vec<CollectionItemIdentity>,
+        /// Whether the change came from application code or user interaction.
+        origin: FieldUpdateOrigin,
+    },
     /// One logical item's value was replaced in place, keeping its identity.
     #[non_exhaustive]
     CollectionItemReplaced {
@@ -4806,6 +4816,43 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         self.with_eligible_submit_continuation_root(move |core| {
             core.swap_collection_items_with_origin(path, a, b, FieldUpdateOrigin::User)
+        })
+    }
+
+    /// Rearranges the collection's items into a caller-supplied identity order through the
+    /// programmatic update path.
+    ///
+    /// `order` must list each current **Collection Item Identity** exactly once. Every item keeps
+    /// its identity, so item-scoped metadata, validation, parse state, and dirty tracking follow
+    /// the reordered items — unlike replacing the whole `Vec` through `set_field`, which retires
+    /// every identity. Returns `false` without mutating when `order` is not a permutation of the
+    /// collection's current identities, and `true` without mutating when `order` already matches
+    /// the current order.
+    pub fn reorder_collection_items<Item: 'static>(
+        &mut self,
+        path: FieldPath<Model, Vec<Item>>,
+        order: &[CollectionItemIdentity],
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.reorder_collection_items_with_origin(path, order, FieldUpdateOrigin::Programmatic)
+        })
+    }
+
+    /// Rearranges the collection's items into a caller-supplied identity order through the user
+    /// update path.
+    pub fn reorder_user_collection_items<Item: 'static>(
+        &mut self,
+        path: FieldPath<Model, Vec<Item>>,
+        order: &[CollectionItemIdentity],
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.reorder_collection_items_with_origin(path, order, FieldUpdateOrigin::User)
         })
     }
 
@@ -7715,6 +7762,71 @@ impl<Model, Error> FormCore<Model, Error> {
             collection,
             first,
             second,
+            origin,
+        });
+
+        true
+    }
+
+    fn reorder_collection_items_with_origin<Item: 'static>(
+        &mut self,
+        path: FieldPath<Model, Vec<Item>>,
+        order: &[CollectionItemIdentity],
+        origin: FieldUpdateOrigin,
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        let collection = path.identity();
+        self.ensure_collection_state(&path);
+        let current = self
+            .field_store
+            .collection(&collection)
+            .expect("collection state should exist before item reorder")
+            .current_items
+            .clone();
+
+        if order.len() != current.len() {
+            return false;
+        }
+
+        // Identities are unique within a collection, so a duplicate in `order` resolves to an
+        // already-claimed source and fails the permutation check.
+        let mut sources = Vec::with_capacity(order.len());
+        let mut claimed = vec![false; current.len()];
+        for item in order {
+            let Some(from) = current.iter().position(|candidate| candidate == item) else {
+                return false;
+            };
+            if claimed[from] {
+                return false;
+            }
+            claimed[from] = true;
+            sources.push(from);
+        }
+
+        if sources.iter().enumerate().all(|(to, from)| to == *from) {
+            return true;
+        }
+
+        {
+            let items = path.get_mut(self.draft.current_mut());
+            let mut slots: Vec<Option<Item>> =
+                std::mem::take(items).into_iter().map(Some).collect();
+            *items = sources
+                .iter()
+                .map(|&from| slots[from].take().expect("reorder sources are unique"))
+                .collect();
+        }
+        let state = self
+            .field_store
+            .collection_mut(&collection)
+            .expect("collection state should exist before item reorder");
+        state.current_items = order.to_vec();
+        self.after_collection_mutation(&collection, origin);
+        self.emit_observer_event(FormObserverEvent::CollectionItemsReordered {
+            collection,
+            order: order.to_vec(),
             origin,
         });
 

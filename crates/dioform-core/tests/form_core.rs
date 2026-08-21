@@ -1491,6 +1491,81 @@ fn collection_item_identity_follows_reorder_with_metadata_and_errors() {
 }
 
 #[test]
+fn reordering_collection_items_by_identity_keeps_item_state_with_the_items() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let review = form.push_collection_item(lines_path(), line("Review"));
+    let items: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let (design, build) = (items[0], items[1]);
+    let build_description = line_field_identity(build, "description");
+
+    form.set_user_collection_item_field(
+        lines_path(),
+        build,
+        line_description_path(),
+        "Build v2".to_owned(),
+    );
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&events);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+
+    assert!(form.reorder_user_collection_items(lines_path(), &[review, build, design]));
+
+    let reordered: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(reordered, vec![review, build, design]);
+    assert_eq!(form.snapshot().lines[0].description, "Review");
+    assert_eq!(form.snapshot().lines[1].description, "Build v2");
+    assert_eq!(form.snapshot().lines[2].description, "Design");
+    assert!(form.is_field_identity_touched(&build_description));
+    assert!(matches!(
+        events.borrow().as_slice(),
+        [FormObserverEvent::CollectionItemsReordered {
+            order,
+            origin: FieldUpdateOrigin::User,
+            ..
+        }] if *order == vec![review, build, design]
+    ));
+}
+
+#[test]
+fn reordering_collection_items_refuses_a_non_permutation_without_mutating() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let items: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let (design, build) = (items[0], items[1]);
+    let retired = form.push_collection_item(lines_path(), line("Retired"));
+    form.remove_collection_item(lines_path(), retired)
+        .expect("the appended row should be removable");
+
+    assert!(!form.reorder_collection_items(lines_path(), &[build]));
+    assert!(!form.reorder_collection_items(lines_path(), &[build, design, build]));
+    assert!(!form.reorder_collection_items(lines_path(), &[build, build]));
+    assert!(!form.reorder_collection_items(lines_path(), &[build, retired]));
+    assert!(form.reorder_collection_items(lines_path(), &[design, build]));
+
+    let unchanged: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(unchanged, vec![design, build]);
+    assert_eq!(form.snapshot().lines[0].description, "Design");
+    assert!(!form.is_dirty());
+}
+
+#[test]
 fn nested_collection_paths_keep_static_path_names_and_logical_item_identity() {
     let mut form = FormCore::new(invoice_page());
     let lines = nested_lines_path();

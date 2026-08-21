@@ -252,6 +252,10 @@ not mark it touched), matching `append` / `insert` / `remove` / `move_to_index`:
   Identity**, so item-scoped metadata, validation errors, parse blockers, and dirty state follow the
   moved items rather than the index. Returns `false` if either index is out of bounds or the two
   indices are equal (a no-op).
+- `reorder(order)`: rearrange every item at once into a caller-supplied identity order — the natural
+  spelling for "sort the rows". `order` must list each current **Collection Item Identity** exactly
+  once; every item keeps its identity, so item-scoped state follows the rows to their new positions.
+  Returns `false` without mutating when `order` is not a permutation of the current identities.
 - `replace(index, item)`: replace one item's value **in place**. This is deliberately identity
   *preserving*: the existing item keeps its **Collection Item Identity** and its item-scoped metadata
   and validation attachment, so a replace reads as "this same row now holds a new value," not as a
@@ -267,14 +271,32 @@ let lines = form.collection(InvoiceForm::fields().lines());
 lines.swap(0, 1); // exchange the first two rows, identities intact
 // in-place value replacement, keeping this row's Collection Item Identity
 lines.replace(0, InvoiceLine { description: "Deploy".to_owned(), quantity: 5 });
+
+// sort the rows while every row keeps its identity and item-scoped state
+let mut rows: Vec<_> = lines.items().into_iter().zip(lines.value()).collect();
+rows.sort_by_key(|(_, line)| line.quantity);
+let order: Vec<_> = rows.iter().map(|(item, _)| item.identity()).collect();
+lines.reorder(&order);
+
 lines.clear(); // remove every row
 ```
 
 Rendered index-based **Field Names** update after each operation, while **Field Identity** /
 **Collection Item Identity** keyed state stays attached to the logical item. Each operation emits the
-matching **Form Observer** transition (`CollectionItemsSwapped`, `CollectionItemReplaced`,
-`CollectionCleared`) and integrates with **Reset** and **Reinitialization** through the existing form
-lifecycle.
+matching **Form Observer** transition (`CollectionItemsSwapped`, `CollectionItemsReordered`,
+`CollectionItemReplaced`, `CollectionCleared`) and integrates with **Reset** and **Reinitialization**
+through the existing form lifecycle.
+
+**Writing the whole `Vec<Item>` through `set_field` is not one of these operations.** A generic
+whole-collection replacement carries no positional or value matching, so the reconciliation decided
+in [ADR-0043](adr/0043-resolve-collection-diagnostic-targets-against-current-identities.md) retires
+**every** identity the collection has issued and numbers the new rows above them — the same
+identity outcome as `reinitialize`, scoped to one collection. Every row remounts under a fresh
+`key()`, and item-scoped metadata, validation errors, parse state, focus, and scroll are released,
+even when the new `Vec` is the old one rearranged. This is deliberate: without matching, carrying
+identities across positionally would silently attach one row's state to a different logical item.
+Reach for the per-item operations above — `reorder` for sorting — whenever the rows should survive
+the update.
 
 ## Resolving One Item by Identity
 

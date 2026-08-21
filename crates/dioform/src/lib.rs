@@ -4816,6 +4816,26 @@ impl<Model: 'static, Item: 'static, Error> CollectionBinding<Model, Item, Error>
             .swap_user_collection_items(self.path.clone(), a, b)
     }
 
+    /// Rearranges items into a caller-supplied identity order programmatically; each item keeps
+    /// its logical identity.
+    ///
+    /// `order` must list each current **Collection Item Identity** exactly once. Item-scoped
+    /// metadata, validation, parse state, and dirty tracking follow the reordered items — unlike
+    /// replacing the whole `Vec` through `set_field`, which retires every identity. Returns
+    /// `false` without mutating when `order` is not a permutation of the collection's current
+    /// identities.
+    pub fn reorder_programmatic(&self, order: &[CollectionItemIdentity]) -> bool {
+        self.handle
+            .reorder_collection_items(self.path.clone(), order)
+    }
+
+    /// Rearranges items into a caller-supplied identity order because of user interaction; each
+    /// item keeps its logical identity.
+    pub fn reorder(&self, order: &[CollectionItemIdentity]) -> bool {
+        self.handle
+            .reorder_user_collection_items(self.path.clone(), order)
+    }
+
     /// Replaces the item value at one position programmatically, keeping that item's logical identity.
     ///
     /// This is an in-place value replacement: the existing **Collection Item Identity** and its
@@ -8256,6 +8276,50 @@ impl<Model, Error> FormHandle<Model, Error> {
             );
         }
         swapped
+    }
+
+    fn reorder_collection_items<Item: 'static>(
+        &self,
+        path: FieldPath<Model, Vec<Item>>,
+        order: &[CollectionItemIdentity],
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        let collection = path.identity();
+        let field_name = path.field_name().to_owned();
+        let reordered = self.write_core(|core| core.reorder_collection_items(path, order));
+        if reordered {
+            self.notify_collection_changed(collection.clone());
+            self.dispatch_value_replacement_listeners(
+                collection,
+                field_name,
+                FieldUpdateOrigin::Programmatic,
+            );
+        }
+        reordered
+    }
+
+    fn reorder_user_collection_items<Item: 'static>(
+        &self,
+        path: FieldPath<Model, Vec<Item>>,
+        order: &[CollectionItemIdentity],
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        let collection = path.identity();
+        let field_name = path.field_name().to_owned();
+        let reordered = self.write_core(|core| core.reorder_user_collection_items(path, order));
+        if reordered {
+            self.notify_collection_user_changed(collection.clone());
+            self.dispatch_value_replacement_listeners(
+                collection,
+                field_name,
+                FieldUpdateOrigin::User,
+            );
+        }
+        reordered
     }
 
     fn replace_collection_item<Item: 'static>(
