@@ -73,7 +73,7 @@ Routing uses this order:
 1. An eligible structurally static exact `ValidatorPathMap` entry wins.
 2. A captured-item exact entry is ignored as unsafe.
 3. Exactly one matching collection rule resolves the emitted row index live.
-4. Ambiguous rules or a missing current row preserve the diagnostic on the form.
+4. Ambiguous rules or one unresolved target preserve the diagnostic on the form.
 5. A true miss also preserves the diagnostic on the form.
 
 A custom mapper can inspect `ValidatorDiagnostic::route_provenance()` to retain
@@ -99,7 +99,7 @@ builder.register(map_diagnostic);
 
 `configuration_issues()` aggregates ineligible exact `PathMap` targets and
 duplicate structural collection matchers. Registration stays infallible;
-runtime ambiguity and missing rows fail closed to the form. Neither reporter
+runtime ambiguity and unresolved targets fail closed to the form. Neither reporter
 requires `Send`, and each runs once per applicable diagnostic.
 
 Collection rules support one structural list index and a static item descendant.

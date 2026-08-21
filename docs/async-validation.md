@@ -22,6 +22,8 @@ The **Dioxus Adapter** keeps runtime execution outside the lifecycle slice. It r
 
 **Form Snapshot** is an owned copy of form values captured when async validation or submission starts. Async field validators receive both the owned field value and the owned form snapshot. They never borrow the live **Form Draft** across an await point.
 
+**Async Validation Addressing Snapshot** is the private pairing used only by a rules-aware async form validator. At actual run start, the **Form Core** captures the model-only **Form Snapshot** and the current **Collection Item Identity** sequence for each distinct collection named by that validator's registered **Collection Validation Target Rules**. Empty collections are captured as empty sequences; baseline identities, allocation counters, metadata, errors, and unrelated collections are excluded. `FormSnapshot` remains model-only, and `AsyncValidatorContext::into_form_snapshot()` intentionally discards collection-addressing capability.
+
 **Stale Validation Result** is a result from an older async run. If the field value, form version, validator run, reset, or reinitialization makes a run no longer current, completion returns `None` and stored validation state is not overwritten.
 
 **Form Cleanup** is the Dioxus adapter lifecycle step that deactivates a handle when its component instance is gone. Late async validation or submission results are ignored after cleanup; the library does not depend on hard cancellation of already-spawned futures.
@@ -65,6 +67,42 @@ When the future resolves with no errors, the source becomes `Valid`. When it res
 
 The tracer-bullet test `dioxus_adapter_async_field_validation_updates_reactive_selectors` is the executable example for immediate async field validation. It demonstrates `Pending`, a later `Invalid` result, visible errors after blur, `can_submit` changing to `false`, and ARIA invalid state. The same API path returns `Valid` when the validator future resolves with an empty error list.
 
+## Async Collection Diagnostic Routing
+
+Async form validators that map external collection-row diagnostics opt in by registering typed rules and using the context-aware terminal:
+
+```rust
+use dioform::advanced::CollectionValidationTargetRule;
+
+let description_rule = CollectionValidationTargetRule::descendant(
+    InvoiceForm::fields().lines(),
+    InvoiceLine::fields().description(),
+)?;
+
+form.async_validator("external invoice")
+    .collection_target_rule(description_rule.clone())
+    .on(ValidationTrigger::Manual)
+    .check_with_context(move |context| {
+        let description_rule = description_rule.clone();
+
+        async move {
+            external_validate(context.value()).await
+                .into_iter()
+                .map(|diagnostic| {
+                    let target = context
+                        .resolve_collection_target(&description_rule, diagnostic.row_index())
+                        .unwrap_or_else(ValidationTarget::form);
+                    FormValidationError::for_target(target, diagnostic.into_error())
+                })
+                .collect::<Vec<_>>()
+        }
+    });
+```
+
+The same `.collection_target_rule(...)` step is available on `FormConfig::async_form_validator(...)`. Registration prepares each referenced collection before validation and before submit-validation proof can rely on it. Existing rules-free builders remain the zero-rule path and perform no collection-addressing capture.
+
+Resolution authorizes the nominal collection-plus-descendant shape registered with that validator. An independently reconstructed equivalent rule resolves, but another descendant does not. Resolution uses only registration-owned captured data and never invokes the query rule's model accessor after the async boundary. Unauthorized shapes, unavailable capture, inconsistent cardinality, and out-of-range rows all return `None` so adapters preserve the diagnostic at form scope.
+
 ## Debounced Value-Change Validation
 
 Use a debounced validator for value-change checks that should wait for user input to settle. The Dioxus adapter provides `debounce_duration(Duration::from_millis(...))` as the default timer helper. It is a runtime-neutral delay future, not a hard dependency on a Dioxus-owned timer type. The lower-level `.debounce(...)` API still accepts any future factory, so applications can choose a custom timer implementation when needed.
@@ -94,7 +132,7 @@ Only value-change validation is debounced. Submit-triggered validation starts im
 
 The form's **Validation Mode** decides when value-change validation runs automatically. `ValidationMode::on_change()` runs change validation from the first value change. `ValidationMode::submit_then_revalidate()` waits until a submit attempt has happened, then runs change validation and blur validation automatically. Explicit calls such as `validate_field` and submit-triggered validation do not depend on the mode.
 
-If a second value change schedules a newer debounced run before the first delay completes, the first delayed run is stale and never starts validation. The latest run captures a fresh **Form Snapshot** after its delay finishes. The core tests `debounced_async_field_validation_marks_pending_until_latest_value_starts` and `debounced_async_form_validation_marks_pending_until_latest_snapshot_starts` cover the field and form state-machine behavior. The Dioxus tests `dioxus_adapter_debounced_value_change_async_validation_updates_reactive_selectors` and `dioxus_adapter_debounced_value_change_async_form_validation_updates_reactive_selectors` cover the adapter/runtime behavior.
+If a second value change schedules a newer debounced run before the first delay completes, the first delayed run is stale and never starts validation. Scheduling captures neither model values nor collection identities. After the latest delay finishes, one **Form Core** operation atomically captures its fresh **Form Snapshot** and any registered collection identity sequences. Submit flush uses the same run-start capture rule rather than the earlier scheduling state. The core tests `debounced_async_field_validation_marks_pending_until_latest_value_starts`, `debounced_async_form_validation_marks_pending_until_latest_snapshot_starts`, and `async_collection_target_rules_capture_at_debounce_wake_and_submit_flush` cover these state-machine behaviors. The Dioxus tests `dioxus_adapter_debounced_value_change_async_validation_updates_reactive_selectors` and `dioxus_adapter_debounced_value_change_async_form_validation_updates_reactive_selectors` cover adapter/runtime behavior.
 
 The [`demo/`](../demo) Async validation page demonstrates the ergonomic builder APIs with a debounced async field validator for username availability and a debounced async form validator for invite-code availability.
 
@@ -163,6 +201,8 @@ The tracer-bullet tests `dioxus_managed_async_submit_flushes_debounced_validatio
 ## Stale Results And Cleanup
 
 Async validators are protected by run IDs and field or form versions. Editing a field after an async field run starts marks that source `Stale`, clears errors for that source, and prevents the old result from replacing newer state. Because async field validators receive the whole **Form Snapshot**, any draft edit can stale pending or completed async field validation; this is intentionally conservative and avoids a validation dependency graph. Reset and reinitialization invalidate pending async runs and debounced delayed runs in the same way.
+
+A rules-aware async form run continues to resolve diagnostics against its owned model-and-identity pair even if insertion, removal, reordering, replacement, reset, reinitialization, or full state restoration later changes the live collection. Those same lifecycle changes make normal completion stale, so no target or error from the old run enters current **Form Core** validation state. Application-owned side effects already performed by validator, mapper, or reporter code are outside that freshness transaction and are not rolled back.
 
 ```rust
 let availability = core.register_async_field_validator_for_triggers(

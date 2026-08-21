@@ -243,7 +243,7 @@ fn ambiguity_and_true_misses_use_their_separate_reporters() {
 }
 
 #[test]
-fn one_matching_rule_with_a_missing_row_reports_missing_row_not_unmapped() {
+fn one_matching_rule_with_an_unresolved_target_reports_resolution_failure_not_unmapped() {
     let failures = Rc::new(RefCell::new(Vec::new()));
     let failures_for_adapter = Rc::clone(&failures);
     let unmapped_count = Rc::new(RefCell::new(0));
@@ -276,7 +276,7 @@ fn one_matching_rule_with_a_missing_row_reports_missing_row_not_unmapped() {
         failures.borrow().as_slice(),
         [(
             "lines[4].quantity".to_owned(),
-            CollectionValidationTargetResolutionFailure::MissingRow,
+            CollectionValidationTargetResolutionFailure::UnresolvedTarget,
         )]
     );
     assert!(form.validation_errors()[0].target().is_form());

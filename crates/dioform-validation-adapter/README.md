@@ -6,15 +6,17 @@ validation adapters.
 A **validation adapter** maps an external validation library's diagnostics into a
 form's shared **validation error** type. Every adapter needs the same routing
 plumbing: an exact map from an external diagnostic path to a typed validation
-target, adapter-neutral classification of exact and live collection candidates,
+target, adapter-neutral classification of exact and collection-rule candidates,
 and a borrowed diagnostic view carrying ephemeral route provenance. This crate
 owns those pieces so each first-party adapter
 ([`dioform-garde`](https://crates.io/crates/dioform-garde),
 [`dioform-validator`](https://crates.io/crates/dioform-validator), and any
 future adapter) does not re-derive them.
 
-This is an infrastructure crate for building adapters. Application code depends on
-a concrete adapter instead.
+This is an infrastructure crate for building adapters. Synchronous adapters can resolve rules through
+`FormValidatorContext`; genuine async adapters can combine the **Form Core**'s rules-aware async registration and
+`AsyncValidatorContext` resolution with this crate's same `route_diagnostic` classifier. Application
+code normally depends on a concrete adapter instead.
 
 ## License
 

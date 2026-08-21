@@ -130,10 +130,10 @@ Routing has this precedence for every diagnostic:
 
 1. One eligible exact static mapping wins, even if a collection rule also matches.
 2. A captured collection-item exact mapping is ineligible and cannot win. Exactly one matching collection rule resolves its emitted row index against the current **Collection Item Identity** order.
-3. More than one matching rule produces `CollectionValidationTargetResolutionFailure::AmbiguousMatchingRules { match_count }`. One matching rule whose row is absent produces `CollectionValidationTargetResolutionFailure::MissingRow`.
+3. More than one matching rule produces `CollectionValidationTargetResolutionFailure::AmbiguousMatchingRules { match_count }`. One matching rule that cannot resolve an authorized target produces `CollectionValidationTargetResolutionFailure::UnresolvedTarget`.
 4. No eligible exact mapping and no matching collection rule is an **Unmapped Diagnostic**.
 
-An ineligible exact mapping can therefore fall through to a live rule, or become an **Unmapped Diagnostic** if no rule matches. Ambiguity, a missing row, and a true miss all preserve the diagnostic at form scope with `ValidationTarget::form()`; none drops it, guesses correspondence, or targets a retired identity. Under the default **Error Visibility** policy, a form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**.
+An ineligible exact mapping can therefore fall through to a collection rule, or become an **Unmapped Diagnostic** if no rule matches. Ambiguity, an unresolved target, and a true miss all preserve the diagnostic at form scope with `ValidationTarget::form()`; none drops it, guesses correspondence, or targets a retired identity. Under the default **Error Visibility** policy, a form-scoped error is invisible before a submit attempt but still blocks **Submit Availability**.
 
 The mapper can inspect `diagnostic.route_provenance()`, which first-party adapters populate with one of `DiagnosticRouteProvenance::ExactStaticTarget`, `CollectionValidationTargetRule`, `CollectionValidationTargetResolutionFailure(...)`, or `UnmappedDiagnostic`. This **Diagnostic Route Provenance** exists only in the `GardeDiagnostic` passed to the mapper. Copy it into the application's **Validation Error** if it must survive mapping; it is not stored in `ValidationTarget` or core validation state. `diagnostic.target().is_form()` alone does not distinguish a collection resolution failure, an unmapped path, or a genuinely whole-model diagnostic.
 
@@ -367,7 +367,7 @@ form.validator_validation()
     .register_string_errors();
 ```
 
-`on_unmapped_path` runs only for **Unmapped Diagnostics**. `on_collection_resolution_failure` runs only for `AmbiguousMatchingRules` or `MissingRow`; it receives `&CollectionValidationTargetResolutionFailure`. Each optional callback runs once per applicable diagnostic in flattened order, so duplicate diagnostics at one path produce duplicate reports. Neither requires `Send` or changes validation and routing. `configuration_issues()` aggregates ineligible exact targets and duplicate `ValidatorCollectionPath` matchers before registration, just as on the `garde` builder.
+`on_unmapped_path` runs only for **Unmapped Diagnostics**. `on_collection_resolution_failure` runs only for `AmbiguousMatchingRules` or `UnresolvedTarget`; it receives `&CollectionValidationTargetResolutionFailure`. Each optional callback runs once per applicable diagnostic in flattened order, so duplicate diagnostics at one path produce duplicate reports. Neither requires `Send` or changes validation and routing. `configuration_issues()` aggregates ineligible exact targets and duplicate `ValidatorCollectionPath` matchers before registration, just as on the `garde` builder.
 
 ## Context-Aware Validator Validation
 
@@ -416,7 +416,9 @@ The prepared order follows all coordinated collection transitions:
 
 The per-collection counter never rewinds, so generic replacement does not reuse retired identities; baseline identities remain reserved so reset can restore them. These semantics, including submit-validation currency, are specified in [ADR-0043](adr/0043-resolve-collection-diagnostic-targets-against-current-identities.md).
 
-The shipped rules are synchronous-only and support direct or named-struct-composed `Vec<Item>` collection paths. A rule can target the item value (`CollectionValidationTargetRule::item`) or one static descendant (`CollectionValidationTargetRule::descendant`). Collections nested inside collection items are not representable by the current identity model and are unsupported; future async routing must capture identity sequences with its owned **Form Snapshot**.
+The first-party `garde` and `validator` adapters remain synchronous. The **Form Core** also supports rules-aware async form validators through `register_async_form_validator_for_triggers_with_collection_target_rules` and `AsyncValidatorContext::resolve_collection_target`; the **Facade Crate** carries the same rules through configured and live async form-validator builders. At actual run start, the **Form Core** atomically captures the model and only the registered collections' current identity sequences. Debounce scheduling captures nothing, while timer wake and submit flush capture then-current state. `FormSnapshot` remains model-only, and stale completion is rejected normally even though adapter-side effects already performed are not rolled back.
+
+Both synchronous and asynchronous rules support direct or named-struct-composed `Vec<Item>` collection paths. A rule can target the item value (`CollectionValidationTargetRule::item`) or one static descendant (`CollectionValidationTargetRule::descendant`). Collections nested inside collection items are not representable by the current identity model and are unsupported.
 
 `FieldPath::direct(identity, field_name, get, get_mut)` is a semantic trust boundary. Rule constructors reject identities that visibly capture a runtime **Collection Item Identity**, and `PathMap` marks such exact mappings ineligible, but Dioform cannot prove that manually supplied accessors truthfully implement the structurally static identity supplied by the application. Derived or honestly composed static paths preserve the routing guarantees; a lying `FieldPath::direct` can violate them.
 
@@ -449,7 +451,9 @@ The supported seam is public data and routing functions rather than a public ada
 `CollectionValidationTargetResolutionFailure`, `DiagnosticView`, `route_diagnostic`, and the
 configuration issue types from `dioform-validation-adapter`; `CollectionValidationTargetRule<Model>`
 and `register_sync_form_validator_with_collection_target_rules` /
-`register_sync_form_validator_for_triggers_with_collection_target_rules` come from **Form Core**. A
+`register_sync_form_validator_for_triggers_with_collection_target_rules`,
+`register_async_form_validator_for_triggers_with_collection_target_rules`, and
+`AsyncValidatorContext::resolve_collection_target` come from **Form Core**. A
 third-party adapter:
 
 - depends on `dioform-core`, `dioform-validation-adapter`, and the external library only:
@@ -461,6 +465,9 @@ third-party adapter:
   `register_sync_form_validator_for_triggers_with_collection_target_rules`, resolves them through
   `CollectionValidationTargetRule::resolve`, and passes the resulting candidates to
   `route_diagnostic` so precedence and fallback classification match first-party adapters;
+- for genuine async execution, registers the same finite rule set with
+  `register_async_form_validator_for_triggers_with_collection_target_rules`, resolves matched row
+  indices through that run's `AsyncValidatorContext`, and never consults live identities after await;
 - hands each diagnostic to the application mapper as a
   `DiagnosticView::from_route(path, error, route)` and constructs the shared **Validation Error**
   through `FormValidationError::for_target`;

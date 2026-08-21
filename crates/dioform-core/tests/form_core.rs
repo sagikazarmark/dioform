@@ -251,6 +251,54 @@ fn line_identities(form: &mut FormCore<InvoiceForm>) -> Vec<CollectionItemIdenti
         .collect()
 }
 
+fn assert_async_validation_addressing_snapshot_survives_live_change<State>(
+    prepare: impl FnOnce(&mut FormCore<InvoiceForm, &'static str>) -> State,
+    change: impl FnOnce(&mut FormCore<InvoiceForm, &'static str>, &[CollectionItemIdentity], State),
+) {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+        .expect("a static item descendant should be supported");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "external rows",
+        ValidationTrigger::Manual,
+        [rule.clone()],
+    );
+    let state = prepare(&mut form);
+    let validated_items: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+
+    change(&mut form, &validated_items, state);
+
+    let target = run
+        .validator_context()
+        .resolve_collection_target(&rule, 0)
+        .expect("the validated first row should remain addressable by the run");
+    assert_eq!(
+        target,
+        ValidationTarget::field_identity(FieldIdentity::collection_item(
+            "lines",
+            validated_items[0],
+            "description",
+        ))
+    );
+    assert_eq!(
+        form.complete_async_form_validation(
+            validator,
+            &run,
+            [FormValidationError::for_target(target, "old diagnostic")],
+        ),
+        None
+    );
+    assert!(form.validation_errors().is_empty());
+}
+
 #[test]
 fn collection_validation_target_rules_prepare_and_resolve_item_and_descendant_targets() {
     let mut form: FormCore<InvoiceForm, &'static str> =
@@ -694,6 +742,424 @@ fn deferred_collection_replacement_preparation_retires_submit_validation_proof()
         form.begin_submission_after_validation(&validation),
         SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
     );
+}
+
+#[test]
+fn async_collection_target_rules_prepare_and_resolve_against_the_async_validation_addressing_snapshot()
+ {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let registered_rule =
+        CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+            .expect("a static item descendant should be supported");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "external rows",
+        ValidationTrigger::Manual,
+        [registered_rule],
+    );
+    let initial = form.collection_items(lines_path());
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+
+    assert!(form.move_collection_item_to_index(lines_path(), initial[1].identity(), 0));
+
+    let equivalent_rule =
+        CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+            .expect("an equivalent rule should be supported");
+    let target = run
+        .validator_context()
+        .resolve_collection_target(&equivalent_rule, 0)
+        .expect("the first validated row should resolve from the run snapshot");
+    assert_eq!(
+        target,
+        ValidationTarget::field_identity(FieldIdentity::collection_item(
+            "lines",
+            initial[0].identity(),
+            "description",
+        ))
+    );
+    let unauthorized_rule =
+        CollectionValidationTargetRule::descendant(lines_path(), line_quantity_path())
+            .expect("another static descendant should be supported");
+    assert!(
+        run.validator_context()
+            .resolve_collection_target(&unauthorized_rule, 0)
+            .is_none()
+    );
+    assert_eq!(
+        form.complete_async_form_validation(
+            validator,
+            &run,
+            [FormValidationError::for_target(target, "old diagnostic")],
+        ),
+        None
+    );
+    assert!(form.validation_errors().is_empty());
+}
+
+#[test]
+fn async_validation_addressing_snapshot_survives_every_live_collection_identity_transition() {
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, _, ()| {
+            form.insert_collection_item(lines_path(), 0, line("Inserted"))
+                .expect("the insertion index should be valid");
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, items, ()| {
+            form.remove_collection_item(lines_path(), items[0])
+                .expect("the validated row should still be live before removal");
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, items, ()| {
+            assert!(form.move_collection_item_to_index(lines_path(), items[1], 0));
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, _, ()| {
+            assert!(form.swap_collection_items(lines_path(), 0, 1));
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, _, ()| {
+            assert!(form.replace_collection_item(lines_path(), 0, line("Replacement")));
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, _, ()| {
+            form.set_field(lines_path(), vec![line("Generic replacement")]);
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, _, ()| {
+            form.reinitialize(InvoiceForm {
+                lines: vec![line("Reinitialized")],
+            });
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |form| {
+            form.insert_collection_item(lines_path(), 0, line("Reset away"))
+                .expect("the insertion index should be valid");
+        },
+        |form, _, _| form.reset(),
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |form| {
+            let restore = form.state_snapshot();
+            form.set_field(lines_path(), vec![line("Restored away")]);
+            restore
+        },
+        |form, _, restore| {
+            form.restore_state_snapshot(restore)
+                .expect("the paired draft and identities should restore");
+        },
+    );
+    assert_async_validation_addressing_snapshot_survives_live_change(
+        |_| (),
+        |form, items, ()| {
+            assert!(form.move_collection_item_to_index(lines_path(), items[1], 0));
+            assert!(form.move_collection_item_to_index(lines_path(), items[0], 0));
+        },
+    );
+}
+
+#[test]
+fn rules_free_async_form_validation_captures_no_collection_addressing() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let validator =
+        form.register_async_form_validator_for_triggers("account", ValidationTrigger::Manual);
+    assert!(form.collection_identity_state().collections().is_empty());
+
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+
+    assert!(
+        run.validator_context()
+            .resolve_collection_target(&rule, 0)
+            .is_none()
+    );
+    assert!(form.collection_identity_state().collections().is_empty());
+}
+
+#[test]
+fn async_collection_target_resolution_uses_registered_shapes_without_query_accessors() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let registered_rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "external rows",
+        ValidationTrigger::Manual,
+        [registered_rule],
+    );
+    let expected = form.collection_items(lines_path())[0].identity();
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+    let query_path: FieldPath<InvoiceForm, Vec<InvoiceLine>> = FieldPath::direct(
+        FieldIdentity::new("lines"),
+        "lines",
+        |_: &InvoiceForm| panic!("async resolution must not read the query accessor"),
+        |_: &mut InvoiceForm| panic!("async resolution must not read the query accessor"),
+    );
+    let query_rule = CollectionValidationTargetRule::item(query_path)
+        .expect("an equivalent nominal shape should be supported");
+
+    assert_eq!(
+        run.validator_context()
+            .resolve_collection_target(&query_rule, 0),
+        Some(ValidationTarget::field_identity(
+            FieldIdentity::collection_item_value("lines", expected),
+        ))
+    );
+}
+
+#[test]
+fn async_collection_target_resolution_fails_closed_on_registered_cardinality_disagreement() {
+    let mut form: FormCore<CollectionPage, &'static str> =
+        FormCore::new_with_error_type(CollectionPage {
+            invoice: invoice_form(),
+            archived: vec![line("Archived")],
+        });
+    let collection = collection_page_lines_path();
+    let dishonest_collection = FieldPath::direct(
+        collection.identity(),
+        "invoice.lines",
+        |model: &CollectionPage| &model.archived,
+        |model: &mut CollectionPage| &mut model.archived,
+    );
+    let registered_rule = CollectionValidationTargetRule::item(collection.clone())
+        .expect("a composed static collection path should be supported");
+    let disagreeing_rule = CollectionValidationTargetRule::item(dishonest_collection)
+        .expect("the nominal collection identity is static");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "external rows",
+        ValidationTrigger::Manual,
+        [registered_rule, disagreeing_rule],
+    );
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+    let query_rule = CollectionValidationTargetRule::item(collection)
+        .expect("the query shape should be supported");
+
+    assert!(
+        run.validator_context()
+            .resolve_collection_target(&query_rule, 0)
+            .is_none()
+    );
+}
+
+#[test]
+fn async_collection_target_rule_preparation_retires_submit_validation_proof() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let validation = form.submit_validation_snapshot();
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+
+    form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "manual external rows",
+        ValidationTrigger::Manual,
+        [rule],
+    );
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn async_collection_target_rules_capture_at_debounce_wake_and_submit_flush() {
+    let rule = CollectionValidationTargetRule::descendant(lines_path(), line_description_path())
+        .expect("a static item descendant should be supported");
+    let triggers = ValidationTriggers::new([ValidationTrigger::Change, ValidationTrigger::Submit]);
+
+    let mut wake_form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let wake_validator = wake_form
+        .register_async_form_validator_for_triggers_with_collection_target_rules(
+            "wake rows",
+            triggers.clone(),
+            [rule.clone()],
+        );
+    let wake_items = wake_form.collection_items(lines_path());
+    assert!(wake_form.move_collection_item_to_index(lines_path(), wake_items[1].identity(), 0));
+    let scheduled = wake_form
+        .schedule_debounced_async_form_validation(wake_validator, ValidationTrigger::Change)
+        .expect("the debounce should schedule without starting a run");
+    let wake_run = wake_form
+        .begin_debounced_async_form_validation(wake_validator, &scheduled)
+        .expect("the delayed run should start at timer wake");
+    assert_eq!(
+        wake_run
+            .validator_context()
+            .resolve_collection_target(&rule, 0),
+        Some(ValidationTarget::field_identity(
+            FieldIdentity::collection_item("lines", wake_items[1].identity(), "description"),
+        ))
+    );
+
+    let mut flush_form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let flush_validator = flush_form
+        .register_async_form_validator_for_triggers_with_collection_target_rules(
+            "flush rows",
+            triggers,
+            [rule.clone()],
+        );
+    let flush_items = flush_form.collection_items(lines_path());
+    assert!(flush_form.move_collection_item_to_index(lines_path(), flush_items[1].identity(), 0,));
+    let scheduled = flush_form
+        .schedule_debounced_async_form_validation(flush_validator, ValidationTrigger::Change)
+        .expect("the value-change debounce should schedule");
+    let flush_run = flush_form
+        .flush_debounced_async_form_validation_for_trigger(
+            flush_validator,
+            &scheduled,
+            ValidationTrigger::Submit,
+        )
+        .expect("submit should flush the delayed run");
+    assert_eq!(flush_run.trigger(), ValidationTrigger::Submit);
+    assert_eq!(
+        flush_run
+            .validator_context()
+            .resolve_collection_target(&rule, 0),
+        Some(ValidationTarget::field_identity(
+            FieldIdentity::collection_item("lines", flush_items[1].identity(), "description"),
+        ))
+    );
+}
+
+#[test]
+fn async_collection_target_capture_distinguishes_empty_from_unregistered_collections() {
+    let mut form: FormCore<CollectionPage, &'static str> =
+        FormCore::new_with_error_type(CollectionPage {
+            invoice: InvoiceForm { lines: Vec::new() },
+            archived: vec![line("Archived")],
+        });
+    let empty_rule = CollectionValidationTargetRule::item(collection_page_lines_path())
+        .expect("a composed static collection path should be supported");
+    let unrelated_rule = CollectionValidationTargetRule::item(archived_lines_path())
+        .expect("an unrelated static collection path should be supported");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "empty rows",
+        ValidationTrigger::Manual,
+        [empty_rule.clone()],
+    );
+    let identity_state = form.collection_identity_state();
+    assert_eq!(identity_state.collections().len(), 1);
+    assert_eq!(
+        identity_state.collections()[0].collection(),
+        collection_page_lines_path().identity()
+    );
+    assert!(identity_state.collections()[0].current_items().is_empty());
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+    let context = run.validator_context();
+
+    assert!(context.resolve_collection_target(&empty_rule, 0).is_none());
+    assert!(
+        context
+            .resolve_collection_target(&unrelated_rule, 0)
+            .is_none()
+    );
+}
+
+#[test]
+fn async_collection_addressing_capture_is_read_only_and_not_observable_on_the_run_token() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let validator = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "manual rows",
+        ValidationTrigger::Manual,
+        [rule],
+    );
+    let submit_validation = form.submit_validation_snapshot();
+    let identities_before = form.collection_identity_state();
+    let run = form
+        .begin_async_form_validation(validator, ValidationTrigger::Manual)
+        .expect("the async validator should start");
+
+    assert_eq!(form.collection_identity_state(), identities_before);
+    assert_eq!(run, run.clone());
+    assert!(!format!("{run:?}").contains("collection_addressing"));
+    assert_eq!(
+        form.complete_async_form_validation(
+            validator,
+            &run,
+            Vec::<FormValidationError<&str>>::new(),
+        ),
+        Some(ValidationStatus::Valid)
+    );
+    assert!(matches!(
+        form.begin_submission_after_validation(&submit_validation),
+        SubmitAttempt::Started(_)
+    ));
+}
+
+#[test]
+fn async_validation_addressing_snapshot_is_isolated_from_later_validator_topology_changes() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let rule = CollectionValidationTargetRule::item(lines_path())
+        .expect("a direct collection path should be supported");
+    let first = form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "first rows",
+        ValidationTrigger::Manual,
+        [rule.clone()],
+    );
+    let expected = form.collection_items(lines_path())[0].identity();
+    let run = form
+        .begin_async_form_validation(first, ValidationTrigger::Manual)
+        .expect("the first async validator should start");
+
+    form.register_async_form_validator_for_triggers_with_collection_target_rules(
+        "second rows",
+        ValidationTrigger::Manual,
+        [rule.clone()],
+    );
+    assert_eq!(
+        run.validator_context().resolve_collection_target(&rule, 0),
+        Some(ValidationTarget::field_identity(
+            FieldIdentity::collection_item_value("lines", expected),
+        ))
+    );
+
+    assert!(form.unregister_form_validator_by_id(first));
+    assert_eq!(
+        run.validator_context().resolve_collection_target(&rule, 0),
+        Some(ValidationTarget::field_identity(
+            FieldIdentity::collection_item_value("lines", expected),
+        ))
+    );
+    assert_eq!(
+        form.complete_async_form_validation(
+            first,
+            &run,
+            [FormValidationError::form("must not apply")],
+        ),
+        None
+    );
+    assert!(form.validation_errors().is_empty());
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

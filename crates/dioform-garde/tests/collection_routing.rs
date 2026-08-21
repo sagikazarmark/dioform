@@ -280,7 +280,7 @@ fn configuration_issues_aggregate_ineligible_exact_targets_and_duplicate_matcher
 }
 
 #[test]
-fn missing_rows_and_true_misses_use_separate_reporters_once_per_diagnostic() {
+fn unresolved_targets_and_true_misses_use_separate_reporters_once_per_diagnostic() {
     let collection_failures = Rc::new(RefCell::new(Vec::new()));
     let failures_for_reporter = Rc::clone(&collection_failures);
     let unmapped = Rc::new(RefCell::new(Vec::new()));
@@ -313,7 +313,7 @@ fn missing_rows_and_true_misses_use_separate_reporters_once_per_diagnostic() {
     );
     assert_eq!(
         collection_failures.borrow()[0].1,
-        dioform_garde::CollectionValidationTargetResolutionFailure::MissingRow
+        dioform_garde::CollectionValidationTargetResolutionFailure::UnresolvedTarget
     );
     assert_eq!(
         unmapped.borrow().as_slice(),

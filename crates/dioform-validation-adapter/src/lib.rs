@@ -33,15 +33,15 @@ pub enum ExactPathLookup {
 pub enum DiagnosticRouteProvenance {
     /// An eligible exact mapping selected a structurally static field target.
     ExactStaticTarget,
-    /// Exactly one adapter-matched collection rule resolved a live target.
+    /// Exactly one adapter-matched collection rule resolved a target for this validation run.
     CollectionValidationTargetRule,
-    /// Collection-rule matching could not select one current field target.
+    /// Collection-rule matching could not select one field target for this validation run.
     CollectionValidationTargetResolutionFailure(CollectionValidationTargetResolutionFailure),
     /// No eligible exact mapping or collection rule matched the diagnostic.
     UnmappedDiagnostic,
 }
 
-/// Why adapter-matched collection rules could not select one current field target.
+/// Why adapter-matched collection rules could not select one field target for this validation run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CollectionValidationTargetResolutionFailure {
     /// More than one collection rule matched the same external diagnostic.
@@ -49,8 +49,8 @@ pub enum CollectionValidationTargetResolutionFailure {
         /// The number of rules that matched.
         match_count: usize,
     },
-    /// One matching rule could not resolve the emitted row index to a current item.
-    MissingRow,
+    /// One matching rule could not resolve an authorized target for the emitted row index.
+    UnresolvedTarget,
 }
 
 /// The classified routing result for one external diagnostic.
@@ -79,8 +79,8 @@ impl DiagnosticRoute {
 
 /// Classifies one external diagnostic route without depending on adapter-specific path syntax.
 ///
-/// Each collection candidate denotes one adapter-matched collection rule. `Some` carries the live
-/// target resolved for its row; `None` denotes a matched rule whose row is currently missing.
+/// Each collection candidate denotes one adapter-matched collection rule. `Some` carries its
+/// resolved target; `None` denotes a matched rule that could not resolve an authorized target.
 pub fn route_diagnostic(
     exact: ExactPathLookup,
     collection_candidates: impl IntoIterator<Item = Option<ValidationTarget>>,
@@ -101,7 +101,7 @@ pub fn route_diagnostic(
         [None] => DiagnosticRoute {
             target: ValidationTarget::form(),
             provenance: DiagnosticRouteProvenance::CollectionValidationTargetResolutionFailure(
-                CollectionValidationTargetResolutionFailure::MissingRow,
+                CollectionValidationTargetResolutionFailure::UnresolvedTarget,
             ),
         },
         [_, _, ..] => DiagnosticRoute {

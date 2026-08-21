@@ -251,10 +251,10 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
         self
     }
 
-    /// Reports each collection diagnostic that could not select one current field target.
+    /// Reports each collection diagnostic that could not select one field target for its run.
     ///
-    /// The reporter runs once per diagnostic for ambiguous matching rules or a matched rule whose
-    /// row is missing. It does not run for true unmapped paths and cannot alter routing. The
+    /// The reporter runs once per diagnostic for ambiguous matching rules or a matched rule with an
+    /// unresolved target. It does not run for true unmapped paths and cannot alter routing. The
     /// reporter does not need to implement `Send`.
     pub fn on_collection_resolution_failure<Reporter>(mut self, reporter: Reporter) -> Self
     where

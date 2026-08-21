@@ -14,9 +14,9 @@ question rather than reversing it.
 The per-adapter pipeline has three parts. Two are shared and public: exact-path and classified route
 handling through `PathMap<Model>`, `ExactPathLookup`, `DiagnosticRoute`,
 `DiagnosticRouteProvenance`, `CollectionValidationTargetResolutionFailure`, `route_diagnostic`, and
-`DiagnosticView<'a, Path, Err>` in the support crate; and typed live row resolution through
-`CollectionValidationTargetRule<Model>` plus the rules-aware synchronous form-validator registration
-methods in **Form Core**. `FormValidationError::for_target` performs final attachment. The third part
+`DiagnosticView<'a, Path, Err>` in the support crate; and typed run-paired row resolution through
+`CollectionValidationTargetRule<Model>` plus rules-aware synchronous registration and rules-aware async
+registration/context resolution in **Form Core**. `FormValidationError::for_target` performs final attachment. The third part
 (matching one external path grammar, running the external validator, and
 iterating its diagnostics) is library-specific by construction, and it is the part a trait would have
 to absorb to deliver "implement one trait, get an adapter."
@@ -61,6 +61,9 @@ on `dioform-core` + `dioform-validation-adapter` + its library, owns its externa
   `register_sync_form_validator_with_collection_target_rules` counterpart);
 - resolves matched row indices with `CollectionValidationTargetRule::resolve` and combines exact and
   live candidates through `route_diagnostic`;
+- or, for genuine async execution, registers rules through
+  `register_async_form_validator_for_triggers_with_collection_target_rules` and resolves through the
+  run-owned `AsyncValidatorContext` before combining candidates through `route_diagnostic`;
 - passes `DiagnosticView::from_route` to its mapper, reports provenance classes if requested, and attaches
   the mapped value through `FormValidationError::for_target`.
 

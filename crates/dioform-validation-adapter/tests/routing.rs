@@ -90,14 +90,14 @@ fn multiple_collection_candidates_fail_to_form_as_ambiguous() {
 }
 
 #[test]
-fn matched_collection_candidate_with_a_missing_row_fails_to_form() {
+fn matched_collection_candidate_with_an_unresolved_target_fails_to_form() {
     let route = route_diagnostic(ExactPathLookup::Missing, [None]);
 
     assert_eq!(route.target(), ValidationTarget::form());
     assert_eq!(
         route.provenance(),
         &DiagnosticRouteProvenance::CollectionValidationTargetResolutionFailure(
-            CollectionValidationTargetResolutionFailure::MissingRow,
+            CollectionValidationTargetResolutionFailure::UnresolvedTarget,
         )
     );
 }

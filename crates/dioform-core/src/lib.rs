@@ -6,7 +6,9 @@
 //!
 //! Async and debounced validation cross the runtime boundary through explicit work-token APIs. The
 //! core decides when a validator is pending, skipped, stale, valid, or invalid; adapters execute the
-//! returned work from owned [`FormSnapshot`] values and complete it back into the core.
+//! returned work from owned [`FormSnapshot`] values and complete it back into the core. Rules-aware
+//! async form validators privately pair that model snapshot with only the registered collection
+//! identity sequences needed to resolve external row diagnostics.
 
 use std::{
     any::Any,
@@ -1150,9 +1152,13 @@ impl SubmitIntentSnapshot {
 }
 
 /// Owned information supplied to asynchronous validators.
+///
+/// Form validators registered with collection target rules can resolve those rules through
+/// [`Self::resolve_collection_target`]. Converting this context into a [`FormSnapshot`] deliberately
+/// discards that addressing capability and returns only the captured model.
 #[derive(Clone)]
 pub struct AsyncValidatorContext<Model> {
-    form: FormSnapshot<Model>,
+    validation: CapturedAsyncValidation<Model>,
     source: ValidatorSource,
     trigger: ValidationTrigger,
     submit_intent: Option<SubmitIntentSnapshot>,
@@ -1160,13 +1166,13 @@ pub struct AsyncValidatorContext<Model> {
 
 impl<Model> AsyncValidatorContext<Model> {
     fn new(
-        form: FormSnapshot<Model>,
+        validation: CapturedAsyncValidation<Model>,
         source: ValidatorSource,
         trigger: ValidationTrigger,
         submit_intent: Option<SubmitIntentSnapshot>,
     ) -> Self {
         Self {
-            form,
+            validation,
             source,
             trigger,
             submit_intent,
@@ -1175,17 +1181,17 @@ impl<Model> AsyncValidatorContext<Model> {
 
     /// Returns the owned form snapshot captured for this validation run.
     pub const fn form_snapshot(&self) -> &FormSnapshot<Model> {
-        &self.form
+        &self.validation.form
     }
 
     /// Consumes this context and returns the owned form snapshot.
     pub fn into_form_snapshot(self) -> FormSnapshot<Model> {
-        self.form
+        self.validation.form
     }
 
     /// Returns the captured form model value.
     pub fn value(&self) -> &Model {
-        self.form.value()
+        self.validation.form.value()
     }
 
     /// Returns the validator source for this validation run.
@@ -1204,6 +1210,21 @@ impl<Model> AsyncValidatorContext<Model> {
         Intent: 'static,
     {
         self.submit_intent.as_ref()?.get()
+    }
+
+    /// Resolves a registered collection-row rule against this validation run's captured addressing.
+    ///
+    /// Resolution fails closed when the rule shape was not registered, captured cardinality was
+    /// inconsistent, or `row_index` is outside the model validated by this run.
+    pub fn resolve_collection_target(
+        &self,
+        rule: &CollectionValidationTargetRule<Model>,
+        row_index: usize,
+    ) -> Option<ValidationTarget> {
+        self.validation
+            .collection_addressing
+            .as_ref()?
+            .resolve(rule, row_index)
     }
 }
 
@@ -1264,9 +1285,12 @@ pub struct DebouncedAsyncFormValidation {
 }
 
 /// An owned form-validation snapshot captured before async work leaves the form core.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Its private collection addressing payload does not participate in public equality or debug
+/// output; those remain based on the same observable run fields as rules-free validation.
+#[derive(Clone)]
 pub struct AsyncFormValidation<Model> {
-    form: FormSnapshot<Model>,
+    validation: CapturedAsyncValidation<Model>,
     validator_id: ValidatorId,
     source: ValidatorSource,
     trigger: ValidationTrigger,
@@ -1315,7 +1339,7 @@ impl<Model, Value> AsyncFieldValidation<Model, Value> {
         Model: Clone,
     {
         AsyncValidatorContext::new(
-            self.form.clone(),
+            CapturedAsyncValidation::model_only(self.form.clone()),
             self.source.clone(),
             self.trigger,
             self.submit_intent.clone(),
@@ -1421,7 +1445,7 @@ impl DebouncedAsyncFormValidation {
 impl<Model> AsyncFormValidation<Model> {
     /// Returns the owned form snapshot captured for this validation run.
     pub fn form_snapshot(&self) -> &FormSnapshot<Model> {
-        &self.form
+        &self.validation.form
     }
 
     /// Returns owned validator context for this async validation run.
@@ -1430,7 +1454,7 @@ impl<Model> AsyncFormValidation<Model> {
         Model: Clone,
     {
         AsyncValidatorContext::new(
-            self.form.clone(),
+            self.validation.clone(),
             self.source.clone(),
             self.trigger,
             self.submit_intent.clone(),
@@ -1470,6 +1494,35 @@ impl<Model> AsyncFormValidation<Model> {
         }
     }
 }
+
+impl<Model: fmt::Debug> fmt::Debug for AsyncFormValidation<Model> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AsyncFormValidation")
+            .field("form", &self.validation.form)
+            .field("validator_id", &self.validator_id)
+            .field("source", &self.source)
+            .field("trigger", &self.trigger)
+            .field("submit_intent", &self.submit_intent)
+            .field("form_version", &self.form_version)
+            .field("run_id", &self.run_id)
+            .finish()
+    }
+}
+
+impl<Model: PartialEq> PartialEq for AsyncFormValidation<Model> {
+    fn eq(&self, other: &Self) -> bool {
+        self.validation.form == other.validation.form
+            && self.validator_id == other.validator_id
+            && self.source == other.source
+            && self.trigger == other.trigger
+            && self.submit_intent == other.submit_intent
+            && self.form_version == other.form_version
+            && self.run_id == other.run_id
+    }
+}
+
+impl<Model: Eq> Eq for AsyncFormValidation<Model> {}
 
 impl<Model: fmt::Debug, Intent: fmt::Debug> fmt::Debug for SubmissionSnapshot<Model, Intent> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1824,12 +1877,14 @@ pub enum CollectionValidationTargetRuleError {
     UnsupportedDescendantIdentity { identity: FieldIdentity },
 }
 
-/// A typed, type-erased rule for resolving an external collection row to its current field target.
+/// A typed, type-erased rule for resolving an external collection row to its field target.
 ///
 /// Validation adapters own their external path syntax and use this rule only after extracting one
-/// row index. Resolution is paired with the [`FormValidatorContext`] for the validation run and
-/// fails closed when the row or its prepared identity order is unavailable or inconsistent with
-/// that run's **Form Draft**.
+/// row index. Synchronous resolution uses [`Self::resolve`] with the paired
+/// [`FormValidatorContext`]. Rules-aware async form validators use
+/// [`AsyncValidatorContext::resolve_collection_target`] against the private model-and-identity
+/// snapshot captured when that run starts. Both paths fail closed when addressing is unavailable,
+/// unauthorized, or inconsistent with the model being validated.
 pub struct CollectionValidationTargetRule<Model> {
     collection: FieldIdentity,
     descendant: Rc<str>,
@@ -1935,6 +1990,65 @@ impl<Model> CollectionValidationTargetRule<Model> {
                 Rc::clone(&self.descendant),
             ),
         ))
+    }
+
+    fn shape(&self) -> CollectionValidationTargetShape {
+        CollectionValidationTargetShape {
+            collection: self.collection.clone(),
+            descendant: Rc::clone(&self.descendant),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CollectionValidationTargetShape {
+    collection: FieldIdentity,
+    descendant: Rc<str>,
+}
+
+#[derive(Clone)]
+struct CapturedCollectionAddressing {
+    collections: BTreeMap<FieldIdentity, Option<Rc<[CollectionItemIdentity]>>>,
+    coherent_shapes: BTreeMap<CollectionValidationTargetShape, bool>,
+}
+
+impl CapturedCollectionAddressing {
+    fn resolve<Model>(
+        &self,
+        rule: &CollectionValidationTargetRule<Model>,
+        row_index: usize,
+    ) -> Option<ValidationTarget> {
+        let shape = rule.shape();
+        if self.coherent_shapes.get(&shape) != Some(&true) {
+            return None;
+        }
+
+        let items = self.collections.get(&shape.collection)?.as_ref()?;
+        let item = *items.get(row_index)?;
+        let collection = shape.collection.as_static_path()?;
+
+        Some(ValidationTarget::field_identity(
+            CollectionItemFieldAddress::identity_from_static_segments(
+                collection,
+                item,
+                shape.descendant,
+            ),
+        ))
+    }
+}
+
+#[derive(Clone)]
+struct CapturedAsyncValidation<Model> {
+    form: FormSnapshot<Model>,
+    collection_addressing: Option<CapturedCollectionAddressing>,
+}
+
+impl<Model> CapturedAsyncValidation<Model> {
+    fn model_only(form: FormSnapshot<Model>) -> Self {
+        Self {
+            form,
+            collection_addressing: None,
+        }
     }
 }
 
@@ -5425,9 +5539,35 @@ impl<Model, Error> FormCore<Model, Error> {
         Source: Into<ValidatorSource>,
         Triggers: Into<ValidationTriggers>,
     {
+        self.register_async_form_validator_for_triggers_with_collection_target_rules(
+            source,
+            triggers,
+            std::iter::empty(),
+        )
+    }
+
+    /// Registers an asynchronous form validator and durable collection target rules for a trigger set.
+    pub fn register_async_form_validator_for_triggers_with_collection_target_rules<
+        Source,
+        Triggers,
+        Rules,
+    >(
+        &mut self,
+        source: Source,
+        triggers: Triggers,
+        collection_target_rules: Rules,
+    ) -> ValidatorId
+    where
+        Source: Into<ValidatorSource>,
+        Triggers: Into<ValidationTriggers>,
+        Rules: IntoIterator<Item = CollectionValidationTargetRule<Model>>,
+    {
         let id = self.allocate_validator_id();
         let triggers = triggers.into();
         let submit_applicable = triggers.contains(ValidationTrigger::Submit);
+        let collection_target_rules: Vec<_> = collection_target_rules.into_iter().collect();
+
+        self.prepare_collection_validation_target_rules(&collection_target_rules);
 
         self.validation_chains.insert_form_validator(
             id,
@@ -5438,7 +5578,7 @@ impl<Model, Error> FormCore<Model, Error> {
                     validation_lifecycle::SourceKind::Async,
                 ),
                 validate: None,
-                collection_target_rules: Vec::new(),
+                collection_target_rules,
             },
         );
         if submit_applicable {
@@ -6206,7 +6346,8 @@ impl<Model, Error> FormCore<Model, Error> {
             .lifecycle
             .submit_evidence_will_be_superseded_by(trigger);
 
-        let form = self.draft.current().clone();
+        let collection_target_rules = validator.collection_target_rules.clone();
+        let validation = self.capture_async_form_validation(&collection_target_rules);
         let form_version = self.form_version;
         let submit_intent = self.submit_intent_for_trigger(trigger);
         if retires_submit_evidence {
@@ -6226,7 +6367,7 @@ impl<Model, Error> FormCore<Model, Error> {
         self.emit_lifecycle_observer_event(ValidationTarget::Form, outcome);
 
         Some(AsyncFormValidation {
-            form: FormSnapshot::new(form),
+            validation,
             validator_id: id,
             source,
             trigger,
@@ -6324,7 +6465,8 @@ impl<Model, Error> FormCore<Model, Error> {
             return None;
         }
 
-        let form = self.draft.current().clone();
+        let collection_target_rules = validator.collection_target_rules.clone();
+        let validation = self.capture_async_form_validation(&collection_target_rules);
         let form_version = self.form_version;
         let (run_id, outcome) = {
             let validator = self
@@ -6339,7 +6481,7 @@ impl<Model, Error> FormCore<Model, Error> {
         self.emit_lifecycle_observer_event(scheduled_run.target.clone(), outcome);
 
         Some(AsyncFormValidation {
-            form: FormSnapshot::new(form),
+            validation,
             validator_id: id,
             source: scheduled.source.clone(),
             trigger: scheduled_run.trigger,
@@ -7184,6 +7326,58 @@ impl<Model, Error> FormCore<Model, Error> {
                 (rule.collection_len)(self.draft.current()),
             );
         }
+    }
+
+    fn capture_async_form_validation(
+        &self,
+        rules: &[CollectionValidationTargetRule<Model>],
+    ) -> CapturedAsyncValidation<Model>
+    where
+        Model: Clone,
+    {
+        let form = FormSnapshot::new(self.draft.current().clone());
+        let collection_addressing = self.capture_collection_addressing(rules, form.value());
+
+        CapturedAsyncValidation {
+            form,
+            collection_addressing,
+        }
+    }
+
+    fn capture_collection_addressing(
+        &self,
+        rules: &[CollectionValidationTargetRule<Model>],
+        form: &Model,
+    ) -> Option<CapturedCollectionAddressing> {
+        if rules.is_empty() {
+            return None;
+        }
+
+        let mut collections: BTreeMap<FieldIdentity, Option<Rc<[CollectionItemIdentity]>>> =
+            BTreeMap::new();
+        let mut coherent_shapes = BTreeMap::new();
+
+        for rule in rules {
+            let items = collections
+                .entry(rule.collection.clone())
+                .or_insert_with(|| {
+                    self.field_store
+                        .collection(&rule.collection)
+                        .map(|state| Rc::from(state.current_items.clone()))
+                });
+            let coherent = items
+                .as_ref()
+                .is_some_and(|items| items.len() == (rule.collection_len)(form));
+            coherent_shapes
+                .entry(rule.shape())
+                .and_modify(|shape_coherent| *shape_coherent &= coherent)
+                .or_insert(coherent);
+        }
+
+        Some(CapturedCollectionAddressing {
+            collections,
+            coherent_shapes,
+        })
     }
 
     fn prepare_all_form_validator_collection_target_rules(&mut self) {

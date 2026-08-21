@@ -12,8 +12,8 @@ use std::{
 #[cfg(feature = "serde")]
 use dioform::advanced::FormStateRestoreError;
 use dioform::advanced::{
-    CollectionItemIdentity, FieldIdentity, FieldUpdateOrigin, FormCore, FormObserverEvent,
-    SubmitAttempt, ValidatorId,
+    CollectionItemIdentity, CollectionValidationTargetRule, FieldIdentity, FieldUpdateOrigin,
+    FormCore, FormObserverEvent, SubmitAttempt, ValidatorId,
 };
 use dioform::{
     CollectionBinding, CollectionCheckboxBinding, CollectionItemBinding,
@@ -12469,6 +12469,245 @@ fn dioxus_targeted_validation_apis_start_registered_async_validators() {
         probe.captured_form.borrow().as_deref(),
         Some("targeted@example.com")
     );
+}
+
+#[derive(Default)]
+struct AsyncCollectionTargetProbe {
+    resolved: RefCell<Option<FieldIdentity>>,
+    expected: RefCell<Option<FieldIdentity>>,
+}
+
+fn async_collection_target_probe(probe: Rc<AsyncCollectionTargetProbe>) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<InvoiceCollectionForm, &'static str> =
+                FormHandle::new_with_error_type(invoice_collection_form());
+            let lines = InvoiceCollectionForm::fields().lines();
+            let rule = CollectionValidationTargetRule::descendant(
+                lines.clone(),
+                InvoiceCollectionLine::fields().description(),
+            )
+            .expect("derived collection paths should support async targeting");
+            let resolved_probe = Rc::clone(&probe);
+            let validation_rule = rule.clone();
+
+            form.async_validator("external rows")
+                .collection_target_rule(rule)
+                .on(ValidationTrigger::Manual)
+                .check_with_context(move |context| {
+                    resolved_probe.resolved.borrow_mut().replace(
+                        context
+                            .resolve_collection_target(&validation_rule, 0)
+                            .expect("the validated first row should resolve")
+                            .as_field()
+                            .expect("the rule should produce a field target")
+                            .clone(),
+                    );
+
+                    async { Vec::<FormValidationError<&'static str>>::new() }
+                });
+
+            let expected_item = form.collection(lines).items()[0].identity();
+            probe
+                .expected
+                .borrow_mut()
+                .replace(FieldIdentity::collection_item(
+                    "lines",
+                    expected_item,
+                    "description",
+                ));
+
+            form
+        }
+    });
+
+    use_hook(move || form.validate_form(ValidationTrigger::Manual));
+    VNode::empty()
+}
+
+#[test]
+fn live_dioxus_async_form_validator_resolves_registered_collection_rules() {
+    let probe = Rc::new(AsyncCollectionTargetProbe::default());
+    let mut dom = VirtualDom::new_with_props(async_collection_target_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    assert_eq!(*probe.resolved.borrow(), *probe.expected.borrow());
+}
+
+fn configured_async_collection_target_probe(probe: Rc<AsyncCollectionTargetProbe>) -> Element {
+    let lines = InvoiceCollectionForm::fields().lines();
+    let rule = CollectionValidationTargetRule::descendant(
+        lines.clone(),
+        InvoiceCollectionLine::fields().description(),
+    )
+    .expect("derived collection paths should support async targeting");
+    let validation_rule = rule.clone();
+    let resolved_probe = Rc::clone(&probe);
+    let form = use_form_config(
+        FormConfig::new(invoice_collection_form())
+            .async_form_validator("configured external rows")
+            .collection_target_rule(rule)
+            .on(ValidationTrigger::Manual)
+            .check_with_context(move |context| {
+                resolved_probe.resolved.borrow_mut().replace(
+                    context
+                        .resolve_collection_target(&validation_rule, 0)
+                        .expect("the configured first row should resolve")
+                        .as_field()
+                        .expect("the rule should produce a field target")
+                        .clone(),
+                );
+
+                async { Vec::<FormValidationError<String>>::new() }
+            }),
+    );
+    let expected_item = form.collection(lines).items()[0].identity();
+    probe
+        .expected
+        .borrow_mut()
+        .replace(FieldIdentity::collection_item(
+            "lines",
+            expected_item,
+            "description",
+        ));
+
+    use_hook(move || form.validate_form(ValidationTrigger::Manual));
+    VNode::empty()
+}
+
+#[test]
+fn configured_dioxus_async_form_validator_resolves_registered_collection_rules() {
+    let probe = Rc::new(AsyncCollectionTargetProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(configured_async_collection_target_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    assert_eq!(*probe.resolved.borrow(), *probe.expected.borrow());
+}
+
+#[derive(Default)]
+struct DebouncedAsyncCollectionTargetProbe {
+    delay: AsyncGate<()>,
+    resolved: RefCell<Option<FieldIdentity>>,
+    expected: RefCell<Option<FieldIdentity>>,
+    trigger: RefCell<Option<ValidationTrigger>>,
+    handle: RefCell<Option<FormHandle<InvoiceCollectionForm, &'static str>>>,
+}
+
+fn debounced_async_collection_target_probe(
+    probe: Rc<DebouncedAsyncCollectionTargetProbe>,
+) -> Element {
+    let form = use_form_handle({
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let form: FormHandle<InvoiceCollectionForm, &'static str> =
+                FormHandle::new_with_error_type(invoice_collection_form())
+                    .with_validation_mode(ValidationMode::on_change());
+            let lines = InvoiceCollectionForm::fields().lines();
+            let rule = CollectionValidationTargetRule::descendant(
+                lines,
+                InvoiceCollectionLine::fields().description(),
+            )
+            .expect("derived collection paths should support async targeting");
+            let validation_rule = rule.clone();
+            let delay = probe.delay.clone();
+            let resolved_probe = Rc::clone(&probe);
+
+            form.async_validator("debounced external rows")
+                .collection_target_rule(rule)
+                .on(ValidationTriggers::new([
+                    ValidationTrigger::Change,
+                    ValidationTrigger::Submit,
+                ]))
+                .debounce(move || delay.future())
+                .check_with_context(move |context| {
+                    resolved_probe.resolved.borrow_mut().replace(
+                        context
+                            .resolve_collection_target(&validation_rule, 0)
+                            .expect("the first row at run start should resolve")
+                            .as_field()
+                            .expect("the rule should produce a field target")
+                            .clone(),
+                    );
+                    resolved_probe
+                        .trigger
+                        .borrow_mut()
+                        .replace(context.trigger());
+
+                    async { Vec::<FormValidationError<&'static str>>::new() }
+                });
+
+            form
+        }
+    });
+    let lines = InvoiceCollectionForm::fields().lines();
+    let items = form.collection(lines.clone()).items();
+
+    use_hook({
+        let form = form.clone();
+        let probe = Rc::clone(&probe);
+
+        move || {
+            probe
+                .expected
+                .borrow_mut()
+                .replace(FieldIdentity::collection_item(
+                    "lines",
+                    items[1].identity(),
+                    "description",
+                ));
+            assert!(form.collection(lines).move_to_index(items[1].identity(), 0));
+            form.validate_form(ValidationTrigger::Change);
+        }
+    });
+    probe.handle.borrow_mut().replace(form);
+    VNode::empty()
+}
+
+#[test]
+fn live_dioxus_async_collection_rules_capture_at_debounce_wake() {
+    let probe = Rc::new(DebouncedAsyncCollectionTargetProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(debounced_async_collection_target_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    assert!(probe.resolved.borrow().is_none());
+
+    probe.delay.complete(());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(*probe.resolved.borrow(), *probe.expected.borrow());
+    assert_eq!(*probe.trigger.borrow(), Some(ValidationTrigger::Change));
+}
+
+#[test]
+fn live_dioxus_async_collection_rules_capture_at_submit_flush() {
+    let probe = Rc::new(DebouncedAsyncCollectionTargetProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(debounced_async_collection_target_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("the probe should expose its form handle")
+        .clone();
+    assert_eq!(
+        handle.submit(|_submitted| {}),
+        SubmitResult::Blocked(SubmitBlocker::PendingValidation)
+    );
+    assert!(probe.resolved.borrow().is_none());
+
+    dom.render_immediate_to_vec();
+
+    assert_eq!(*probe.resolved.borrow(), *probe.expected.borrow());
+    assert_eq!(*probe.trigger.borrow(), Some(ValidationTrigger::Submit));
 }
 
 #[test]

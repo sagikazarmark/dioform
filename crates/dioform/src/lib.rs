@@ -40,8 +40,9 @@ pub mod __private {
 
 use dioform_core::{
     __private::{CollectionItemFieldAddress, FieldAncestry, validator_selection_reaches},
-    AsyncValidatorContext, CollectionIdentityState, FormCore, FormStateRestoreError,
-    FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot, ValidationStatusView, ValidatorId,
+    AsyncValidatorContext, CollectionIdentityState, CollectionValidationTargetRule, FormCore,
+    FormStateRestoreError, FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot,
+    ValidationStatusView, ValidatorId,
 };
 pub use dioform_core::{
     CollectionItemIdentity, ErrorVisibilityPolicy, FieldGroup, FieldIdentity, FieldMetadata,
@@ -100,11 +101,12 @@ pub mod advanced {
         AsyncFieldValidation, AsyncFormValidation, AsyncValidatorContext,
         COLLECTION_IDENTITY_SERIALIZATION_VERSION, CollectionIdentitySequence,
         CollectionIdentitySnapshot, CollectionIdentityState, CollectionItem,
-        CollectionItemIdentity, DebouncedAsyncFieldValidation, DebouncedAsyncFormValidation,
-        FORM_STATE_SERIALIZATION_VERSION, FieldIdentity, FieldUpdateOrigin, FormCore, FormDraft,
-        FormObserverEvent, FormObserverField, FormObserverValue, FormStateRestoreError,
-        FormStateSnapshot, SubmitAttempt, SubmitValidationSnapshot, ValidationStatusView,
-        ValidatorId,
+        CollectionItemIdentity, CollectionValidationTargetRule,
+        CollectionValidationTargetRuleError, DebouncedAsyncFieldValidation,
+        DebouncedAsyncFormValidation, FORM_STATE_SERIALIZATION_VERSION, FieldIdentity,
+        FieldUpdateOrigin, FormCore, FormDraft, FormObserverEvent, FormObserverField,
+        FormObserverValue, FormStateRestoreError, FormStateSnapshot, SubmitAttempt,
+        SubmitValidationSnapshot, ValidationStatusView, ValidatorId,
     };
 
     pub use crate::{
@@ -1111,6 +1113,7 @@ pub struct ConfiguredAsyncFormValidatorBuilder<Model, Error = String> {
     source: ValidatorSource,
     triggers: ValidationTriggers,
     debounce: Option<Rc<DelayFactoryFn>>,
+    collection_target_rules: Vec<CollectionValidationTargetRule<Model>>,
 }
 
 impl<Model: Clone, Error> Clone for FormConfig<Model, Error> {
@@ -1251,6 +1254,7 @@ impl<Model, Error> FormConfig<Model, Error> {
             source: source.into(),
             triggers: ValidationTriggers::all(),
             debounce: None,
+            collection_target_rules: Vec::new(),
         }
     }
 
@@ -1472,6 +1476,12 @@ impl<Model, Error> ConfiguredAsyncFormValidatorBuilder<Model, Error> {
         self
     }
 
+    /// Adds a typed collection-row target rule available to this validator's async context.
+    pub fn collection_target_rule(mut self, rule: CollectionValidationTargetRule<Model>) -> Self {
+        self.collection_target_rules.push(rule);
+        self
+    }
+
     /// Adds this asynchronous form validator to the form configuration.
     pub fn check<Validator, Fut, Errors>(self, validator: Validator) -> FormConfig<Model, Error>
     where
@@ -1499,6 +1509,7 @@ impl<Model, Error> ConfiguredAsyncFormValidatorBuilder<Model, Error> {
         let source = self.source;
         let triggers = self.triggers;
         let debounce = self.debounce;
+        let collection_target_rules = self.collection_target_rules;
         let validator: Rc<FormAsyncValidatorFn<Model, Error>> = Rc::new(move |context| {
             let future = validator(context);
 
@@ -1512,6 +1523,7 @@ impl<Model, Error> ConfiguredAsyncFormValidatorBuilder<Model, Error> {
                 source.clone(),
                 triggers.clone(),
                 debounce.clone(),
+                collection_target_rules.clone(),
                 move |context| validator(context),
             );
         });
@@ -4316,6 +4328,7 @@ pub struct AsyncFormValidatorBuilder<Model, Error = String> {
     source: ValidatorSource,
     triggers: ValidationTriggers,
     debounce: Option<Rc<DelayFactoryFn>>,
+    collection_target_rules: Vec<CollectionValidationTargetRule<Model>>,
 }
 
 /// Builder for registering an asynchronous file-selection validator.
@@ -5717,6 +5730,12 @@ impl<Model, Error> AsyncFormValidatorBuilder<Model, Error> {
         self
     }
 
+    /// Adds a typed collection-row target rule available to this validator's async context.
+    pub fn collection_target_rule(mut self, rule: CollectionValidationTargetRule<Model>) -> Self {
+        self.collection_target_rules.push(rule);
+        self
+    }
+
     /// Registers this asynchronous form validator.
     ///
     /// The validator receives an owned form snapshot and may return a non-`Send` future. Late stale
@@ -5746,6 +5765,7 @@ impl<Model, Error> AsyncFormValidatorBuilder<Model, Error> {
             self.source,
             self.triggers,
             self.debounce,
+            self.collection_target_rules,
             validator,
         )
     }
@@ -7038,6 +7058,7 @@ impl<Model, Error> FormHandle<Model, Error> {
             source: source.into(),
             triggers: ValidationTriggers::all(),
             debounce: None,
+            collection_target_rules: Vec::new(),
         }
     }
 
@@ -7359,6 +7380,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         source: ValidatorSource,
         triggers: ValidationTriggers,
         debounce: Option<Rc<DelayFactoryFn>>,
+        collection_target_rules: Vec<CollectionValidationTargetRule<Model>>,
         validator: Validator,
     ) -> ValidatorId
     where
@@ -7368,8 +7390,13 @@ impl<Model, Error> FormHandle<Model, Error> {
         Fut: Future<Output = Errors> + 'static,
         Errors: IntoIterator<Item = FormValidationError<Error>> + 'static,
     {
-        let id = self
-            .write_core(|core| core.register_async_form_validator_for_triggers(source, triggers));
+        let id = self.write_core(|core| {
+            core.register_async_form_validator_for_triggers_with_collection_target_rules(
+                source,
+                triggers,
+                collection_target_rules,
+            )
+        });
         let validator: Rc<FormAsyncValidatorFn<Model, Error>> = Rc::new(move |context| {
             let future = validator(context);
             Box::pin(async move { future.await.into_iter().collect() })

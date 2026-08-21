@@ -22,9 +22,12 @@ widens this seam without moving external syntax into the core. **Form Core** own
 `CollectionValidationTargetRule<Model>`, `CollectionValidationTargetRule::item`,
 `CollectionValidationTargetRule::descendant`, `CollectionValidationTargetRule::resolve`, and
 `register_sync_form_validator_for_triggers_with_collection_target_rules` and
-`register_sync_form_validator_with_collection_target_rules`. The support crate owns `ExactPathLookup`, `DiagnosticRoute`,
+`register_sync_form_validator_with_collection_target_rules`. [ADR-0045](0045-capture-async-collection-addressing-at-run-start.md)
+extends the same typed seam with `register_async_form_validator_for_triggers_with_collection_target_rules`
+and `AsyncValidatorContext::resolve_collection_target`, while keeping the addressing snapshot private
+and `FormSnapshot` model-only. The support crate owns `ExactPathLookup`, `DiagnosticRoute`,
 `DiagnosticRouteProvenance`, `CollectionValidationTargetResolutionFailure`, and `route_diagnostic` so
-first- and third-party adapters share exact-static precedence, live-rule classification, and form-scoped
+first- and third-party adapters share exact-static precedence, rule-result classification, and form-scoped
 fallbacks. Each adapter still owns how its **External Diagnostic Path** structurally matches one rule.
 
 Each adapter also keeps its library-specific diagnostic iteration (`garde`'s flat `report.iter()` versus

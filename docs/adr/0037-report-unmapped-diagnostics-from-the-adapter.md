@@ -53,8 +53,8 @@ own tests for **Explicit Path Mapping**'s fallback inexpressible without a secon
 
 Reporting at validation time has the predicate the guardrail lacks: the paths the library actually
 emitted and the classified route selected for this run on this **Form Draft**. `on_unmapped_path` reports
-only a true miss. `on_collection_resolution_failure` separately reports ambiguity or a matched rule whose
-row is missing. Both outcomes preserve the diagnostic at form scope.
+only a true miss. `on_collection_resolution_failure` separately reports ambiguity or a matched rule that
+could not resolve an authorized target. Both outcomes preserve the diagnostic at form scope.
 
 ## Consequences
 

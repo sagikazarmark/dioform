@@ -69,8 +69,8 @@ registration call to inspect those entries together with duplicate collection
 matchers; registration itself remains infallible.
 
 Custom mappers can inspect `GardeDiagnostic::route_provenance()`. True misses
-invoke only `on_unmapped_path`. Ambiguous matching rules or a matched row with no
-current identity fail closed to the form and optionally invoke
+invoke only `on_unmapped_path`. Ambiguous matching rules or a matched rule with an
+unresolved target fail closed to the form and optionally invoke
 `on_collection_resolution_failure`; both reporters run once per diagnostic in
 Garde report order and do not require `Send`.
 

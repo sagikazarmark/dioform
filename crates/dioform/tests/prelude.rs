@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use dioform::advanced::ValidatorId;
+use dioform::advanced::{CollectionValidationTargetRule, FieldIdentity, ValidatorId};
 use dioform::prelude::*;
 
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
@@ -129,6 +129,60 @@ fn collection_binding_exposes_collection_field_state() {
     assert!(topics.is_dirty());
     assert_eq!(topics.value(), vec!["rust".to_owned()]);
     assert_eq!(topics.items().len(), 1);
+}
+
+#[test]
+fn live_async_form_validator_transports_collection_target_rules_to_core_runs() {
+    let form: FormHandle<PreludeSignupForm, &'static str> =
+        FormHandle::new_with_error_type(PreludeSignupForm {
+            email: String::new(),
+            accepts_terms: false,
+            topics: vec!["rust".to_owned()],
+        });
+    let topics = PreludeSignupForm::fields().topics();
+    let rule = CollectionValidationTargetRule::item(topics.clone())
+        .expect("a static collection path should be supported");
+    let validator = form
+        .async_validator("topic diagnostics")
+        .collection_target_rule(rule.clone())
+        .on(ValidationTrigger::Manual)
+        .check_with_context(|_context| async { Vec::<FormValidationError<&'static str>>::new() });
+    let expected = form.collection(topics).items()[0].identity();
+    let run = form
+        .write_advanced(|core| {
+            core.begin_async_form_validation(validator, ValidationTrigger::Manual)
+        })
+        .expect("the registered async validator should start");
+
+    assert_eq!(
+        run.validator_context()
+            .resolve_collection_target(&rule, 0)
+            .expect("the registered rule should resolve")
+            .as_field(),
+        Some(&FieldIdentity::collection_item_value("topics", expected))
+    );
+}
+
+#[test]
+fn configured_async_form_validator_clones_collection_target_rules_for_each_handle() {
+    let topics = PreludeSignupForm::fields().topics();
+    let rule = CollectionValidationTargetRule::item(topics)
+        .expect("a static collection path should be supported");
+    let config: FormConfig<PreludeSignupForm, &'static str> = FormConfig::new(PreludeSignupForm {
+        email: String::new(),
+        accepts_terms: false,
+        topics: vec!["rust".to_owned()],
+    })
+    .async_form_validator("topic diagnostics")
+    .collection_target_rule(rule)
+    .on(ValidationTrigger::Manual)
+    .check_with_context(|_context| async { Vec::<FormValidationError<&'static str>>::new() });
+
+    let first = FormHandle::from_config(config.clone());
+    let second = FormHandle::from_config(config);
+
+    assert_eq!(first.collection_identity_state().collections().len(), 1);
+    assert_eq!(second.collection_identity_state().collections().len(), 1);
 }
 
 #[test]

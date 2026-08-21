@@ -30,9 +30,10 @@ outcome remain public for third-party adapters. This extends the data-and-regist
 
 For one external diagnostic, an eligible exact mapping to a structurally static field wins. An exact
 mapping that captures a **Collection Item Identity** is ineligible and never attaches an error to that
-captured identity. Otherwise, exactly one matching collection rule resolves its row index live. Multiple
-matching collection rules or a matched rule whose row has no current identity are a **Collection
-Validation Target Resolution Failure**. No eligible exact mapping and no collection-rule match is an
+captured identity. Otherwise, exactly one matching collection rule resolves its row index against the
+addressing paired with that validation run. Multiple matching collection rules or one matched rule that
+cannot resolve an authorized target are a **Collection Validation Target Resolution Failure**. No
+eligible exact mapping and no collection-rule match is an
 **Unmapped Diagnostic**.
 
 Every fallback preserves the diagnostic at form scope. Dioform never drops it, guesses correspondence,
