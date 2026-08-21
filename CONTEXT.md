@@ -131,7 +131,7 @@ The rule that a **Validation Adapter** attaches an **External Validation Diagnos
 _Avoid_: Field name matching, string path map, implicit binding, path inference
 
 **Collection Validation Target Rule**:
-A durable typed **Explicit Path Mapping** rule that resolves one external collection-row index during a validation run to the current item's or one static descendant's **Validation Target**; each adapter owns how its external path matches the rule.
+A durable typed **Explicit Path Mapping** rule that resolves one external collection-row index during a validation run to the current item's or one static descendant's **Validation Target**. Synchronous resolution uses the paired draft and identity order in the validator context; asynchronous resolution uses the run's **Async Validation Addressing Snapshot**. Each adapter owns how its external path matches the rule.
 _Avoid_: Static row target, mutable path map, wildcard field name
 
 **Unmapped Diagnostic**:
@@ -139,7 +139,7 @@ An **External Validation Diagnostic** whose **External Diagnostic Path** matched
 _Avoid_: Unknown diagnostic, dropped diagnostic, unmatched path, unrouted error
 
 **Collection Validation Target Resolution Failure**:
-A failure to produce one current field target for an **External Validation Diagnostic** that matched a **Collection Validation Target Rule**, because its row index did not resolve or multiple rules claimed it. The diagnostic resolves to the form and is reported separately from an **Unmapped Diagnostic**.
+A failure to produce one field target for an **External Validation Diagnostic** that matched a **Collection Validation Target Rule**, because one matched rule could not produce an authorized target from the validation run's paired addressing state or multiple rules claimed the diagnostic. The diagnostic resolves to the form and is reported separately from an **Unmapped Diagnostic**.
 _Avoid_: Unmapped diagnostic, stale validation result, unresolved binding
 
 **Diagnostic Route Provenance**:
@@ -289,6 +289,10 @@ _Avoid_: Form mutation API
 **Form Snapshot**:
 An owned view of form values captured at a point in time for async validation, a **Submission Snapshot**, or application reads.
 _Avoid_: Live draft reference
+
+**Async Validation Addressing Snapshot**:
+The private, run-owned pairing of the **Form Snapshot** for one async form validator with only the current **Collection Item Identity** sequences selected by that validator's registered **Collection Validation Target Rule** shapes. It is captured atomically when the run actually starts, including after a debounce delay or during a submit flush, so diagnostics produced after an await resolve against the same logical rows as the model that was validated. It is validator-runtime data, not a public addressing map or serialized form state.
+_Avoid_: Form snapshot, form state snapshot, live collection identity state, public addressing map
 
 **In-Flight Submission**:
 A **Submission** whose submit lifecycle has been accepted and has not yet completed, including submit-relevant async validation waiting and application submit behavior. Its **Submit Intent** identifies which intent is currently in flight for application-facing state, and application submit behavior uses a **Submission Snapshot** rather than the live **Form Draft**.

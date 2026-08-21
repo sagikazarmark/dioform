@@ -82,8 +82,9 @@ adopted only through full `FormStateSnapshot` restoration, where the **Form Draf
 move together. Identity-only restoration is not a supported lifecycle operation: cardinality can
 prove shape but not that equal-length rows retain the same logical correspondence. A future partial
 collection-state restoration interface would require a separate decision and must carry collection
-values and identities together. Future async collection targeting must capture the identity sequences
-atomically with its owned **Form Snapshot** rather than resolve a later live order. Item-root binding
+values and identities together. Async collection targeting follows
+[ADR-0045](0045-capture-async-collection-addressing-at-run-start.md): it captures the identity sequences
+atomically with its owned **Form Snapshot** rather than resolving a later live order. Item-root binding
 selectors are a separate presentation convenience; their absence does not change where a row-level
 diagnostic belongs.
 
