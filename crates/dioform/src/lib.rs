@@ -69,12 +69,12 @@ pub mod prelude {
         FormConfig, FormContext, FormData, FormHandle, FormIdNamespace, FormListenerContext,
         FormListenerEvent, FormSnapshot, FormValidationError, FormValidatorContext,
         IntentFormHandle, IntentProgressiveSubmitBinding, IntentSubmitBinding, LastSubmitStatus,
-        MultiSelectBinding, MultiSelectItem, MultiSelectOptionBinding, NumericInputValue,
-        ParseError, ParsedTextBinding, ProgressiveSubmitBinding, ProgressiveSubmitResult,
-        RadioGroupBinding, RenderedSelectBinding, SelectBinding, SelectedFile,
-        SelectedFileMetadata, SerializedFileData, SubmissionSnapshot, SubmitAvailability,
-        SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerContext, SubmitListenerEvent,
-        SubmitResult, SubmitStatus, SyncCollectionItemFieldValidatorBuilder,
+        ManagedSubmitContinuation, MultiSelectBinding, MultiSelectItem, MultiSelectOptionBinding,
+        NumericInputValue, ParseError, ParsedTextBinding, ProgressiveSubmitBinding,
+        ProgressiveSubmitResult, RadioGroupBinding, RenderedSelectBinding, SelectBinding,
+        SelectedFile, SelectedFileMetadata, SerializedFileData, SubmissionSnapshot,
+        SubmitAvailability, SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerContext,
+        SubmitListenerEvent, SubmitResult, SubmitStatus, SyncCollectionItemFieldValidatorBuilder,
         SyncFieldValidatorBuilder, SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder,
         TextBinding, TextareaBinding, ValidationErrorSnapshot, ValidationErrorView, ValidationMode,
         ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
@@ -2377,7 +2377,11 @@ mod field_binding {
             self.read_value(|current| current == value, false)
         }
 
-        pub(super) fn set_programmatic(&self, value: Value) {
+        pub(super) fn set_programmatic(&self, value: Value)
+        where
+            Model: 'static,
+            Item: 'static,
+        {
             self.handle.set_collection_item_field(
                 self.collection_path.clone(),
                 self.item,
@@ -2386,7 +2390,11 @@ mod field_binding {
             );
         }
 
-        pub(super) fn set_user(&self, value: Value) {
+        pub(super) fn set_user(&self, value: Value)
+        where
+            Model: 'static,
+            Item: 'static,
+        {
             self.handle.set_user_collection_item_field(
                 self.collection_path.clone(),
                 self.item,
@@ -2421,7 +2429,7 @@ mod field_binding {
         }
     }
 
-    impl<Model, Item, Value, Error> TypedFieldBinding<Value>
+    impl<Model: 'static, Item: 'static, Value, Error> TypedFieldBinding<Value>
         for CollectionFieldBindingCore<Model, Item, Value, Error>
     {
         fn field_identity(&self) -> FieldIdentity {
@@ -4637,7 +4645,7 @@ impl<Model, Item, Value, Error> SyncCollectionItemFieldValidatorBuilder<Model, I
     }
 }
 
-impl<Model, Item, Error> CollectionBinding<Model, Item, Error> {
+impl<Model: 'static, Item: 'static, Error> CollectionBinding<Model, Item, Error> {
     /// Starts configuring a synchronous validator template for one child field on every item.
     pub fn item_field_validator<Value, Source>(
         &self,
@@ -4822,7 +4830,7 @@ impl<Model, Item, Error> CollectionBinding<Model, Item, Error> {
     }
 }
 
-impl<Model, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
+impl<Model: 'static, Value: 'static, Error> MultiSelectBinding<Model, Value, Error> {
     /// Starts configuring a synchronous validator template for every current and future selected value.
     pub fn item_validator<Source>(
         &self,
@@ -5225,7 +5233,7 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
     }
 }
 
-impl<Model, Value: 'static, Error> MultiSelectOptionBinding<Model, Value, Error> {
+impl<Model: 'static, Value: 'static, Error> MultiSelectOptionBinding<Model, Value, Error> {
     /// Returns the rendered field name shared by options in this multi-select field.
     pub fn name(&self) -> &str {
         self.multi_select.name()
@@ -5738,7 +5746,7 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     /// Restores the form to its baseline value and clears interaction and validation state.
     pub fn reset(&self) {
         self.adapter.cancel_validation_tasks();
-        self.adapter.finish_managed_async_submission();
+        self.adapter.invalidate_managed_async_submission();
         self.clear_active_submit_intent();
         self.advance_submit_generation();
         self.write_core(FormCore::reset);
@@ -5808,7 +5816,7 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     /// Explicitly replaces the form baseline and current draft, clearing interaction and validation state.
     pub fn reinitialize(&self, initial: Model) {
         self.adapter.cancel_validation_tasks();
-        self.adapter.finish_managed_async_submission();
+        self.adapter.invalidate_managed_async_submission();
         self.clear_active_submit_intent();
         self.advance_submit_generation();
         self.write_core(|core| core.reinitialize(initial));
@@ -5841,6 +5849,14 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     {
         let listener_intent = intent.clone();
         let mut capture_payload = Some(capture_payload);
+
+        if self.adapter.has_managed_async_submission() {
+            let blocker = self
+                .write_core(|core| core.intent(intent).block_duplicate_submission())
+                .expect_blocker();
+            self.notify_and_dispatch_submit_blocked(blocker, listener_intent);
+            return (SubmitAttempt::Blocked(blocker), None);
+        }
 
         if self.has_parse_blockers() {
             let blocker = self
@@ -6090,7 +6106,23 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        self.submit_async_managed_intent((), submit)
+        self.submit_async_managed_with_continuation(ManagedSubmitContinuation::Strict, submit)
+    }
+
+    /// Starts an asynchronous managed submit with request-scoped continuation behavior.
+    pub fn submit_async_managed_with_continuation<Submit, Fut, Outcome>(
+        &self,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Submit: FnOnce(SubmissionSnapshot<Model>) -> Fut + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        self.submit_async_managed_intent_with_continuation((), continuation, submit)
     }
 
     /// Starts an asynchronous managed submit with a submit-time file-selection snapshot.
@@ -6108,7 +6140,26 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        self.submit_async_managed_intent_with_files((), submit)
+        self.submit_async_managed_with_files_and_continuation(
+            ManagedSubmitContinuation::Strict,
+            submit,
+        )
+    }
+
+    /// Starts a file-aware managed submit with request-scoped continuation behavior.
+    pub fn submit_async_managed_with_files_and_continuation<Submit, Fut, Outcome>(
+        &self,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Submit: FnOnce(SubmissionSnapshot<Model>, FileSubmissionSnapshot<Model>) -> Fut + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        self.submit_async_managed_intent_with_files_and_continuation((), continuation, submit)
     }
 
     fn submit_async_managed_intent<Intent, Submit, Fut, Outcome>(
@@ -6124,7 +6175,32 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        ManagedSubmission::new(self.clone()).submit_async(intent, submit)
+        self.submit_async_managed_intent_with_continuation(
+            intent,
+            ManagedSubmitContinuation::Strict,
+            submit,
+        )
+    }
+
+    fn submit_async_managed_intent_with_continuation<Intent, Submit, Fut, Outcome>(
+        &self,
+        intent: Intent,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Intent: Clone + PartialEq + 'static,
+        Submit: FnOnce(SubmissionSnapshot<Model, Intent>) -> Fut + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        ManagedSubmission::new(self.clone()).submit_async_with_continuation(
+            intent,
+            continuation,
+            submit,
+        )
     }
 
     fn submit_async_managed_intent_with_files<Intent, Submit, Fut, Outcome>(
@@ -6141,7 +6217,33 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        ManagedSubmission::new(self.clone()).submit_async_with_files(intent, submit)
+        self.submit_async_managed_intent_with_files_and_continuation(
+            intent,
+            ManagedSubmitContinuation::Strict,
+            submit,
+        )
+    }
+
+    fn submit_async_managed_intent_with_files_and_continuation<Intent, Submit, Fut, Outcome>(
+        &self,
+        intent: Intent,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Intent: Clone + PartialEq + 'static,
+        Submit: FnOnce(SubmissionSnapshot<Model, Intent>, FileSubmissionSnapshot<Model>) -> Fut
+            + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        ManagedSubmission::new(self.clone()).submit_async_with_files_and_continuation(
+            intent,
+            continuation,
+            submit,
+        )
     }
 
     /// Creates a Dioxus-managed submit binding.
@@ -6151,6 +6253,7 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     pub fn managed_submit(&self) -> SubmitBinding<Model, Error> {
         SubmitBinding {
             handle: self.clone(),
+            continuation: ManagedSubmitContinuation::Strict,
         }
     }
 
@@ -6288,6 +6391,27 @@ impl<Model: Clone, Intent, Error> IntentFormHandle<Model, Intent, Error> {
             .submit_async_managed_intent(self.intent.clone(), submit)
     }
 
+    /// Starts a managed asynchronous submit with request-scoped continuation behavior.
+    pub fn submit_async_managed_with_continuation<Submit, Fut, Outcome>(
+        &self,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Intent: Clone + PartialEq + 'static,
+        Submit: FnOnce(SubmissionSnapshot<Model, Intent>) -> Fut + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        self.handle.submit_async_managed_intent_with_continuation(
+            self.intent.clone(),
+            continuation,
+            submit,
+        )
+    }
+
     /// Starts a file-aware managed asynchronous submit for this submit intent.
     pub fn submit_async_managed_with_files<Submit, Fut, Outcome>(
         &self,
@@ -6304,6 +6428,29 @@ impl<Model: Clone, Intent, Error> IntentFormHandle<Model, Intent, Error> {
     {
         self.handle
             .submit_async_managed_intent_with_files(self.intent.clone(), submit)
+    }
+
+    /// Starts a file-aware managed submit with request-scoped continuation behavior.
+    pub fn submit_async_managed_with_files_and_continuation<Submit, Fut, Outcome>(
+        &self,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Intent: Clone + PartialEq + 'static,
+        Submit: FnOnce(SubmissionSnapshot<Model, Intent>, FileSubmissionSnapshot<Model>) -> Fut
+            + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        self.handle
+            .submit_async_managed_intent_with_files_and_continuation(
+                self.intent.clone(),
+                continuation,
+                submit,
+            )
     }
 
     /// Records a submit attempt and runs submit-triggered validators for this intent.
@@ -6880,7 +7027,7 @@ impl<Model, Error> FormHandle<Model, Error> {
 
         if result.is_ok() {
             self.adapter.cancel_validation_tasks();
-            self.adapter.finish_managed_async_submission();
+            self.adapter.invalidate_managed_async_submission();
             self.clear_active_submit_intent();
             self.advance_submit_generation();
             self.adapter.clear_parse_errors();
@@ -7769,10 +7916,13 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.collection_item_index(path, item).is_some()
     }
 
-    fn collection_items<Item>(
+    fn collection_items<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
-    ) -> Vec<CollectionItemBinding<Model, Item, Error>> {
+    ) -> Vec<CollectionItemBinding<Model, Item, Error>>
+    where
+        Model: 'static,
+    {
         self.reactivity.track_field_value(&path.identity());
         self.write_core(|core| core.collection_items(path.clone()))
             .into_iter()
@@ -7805,11 +7955,14 @@ impl<Model, Error> FormHandle<Model, Error> {
         })
     }
 
-    fn push_collection_item<Item>(
+    fn push_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: Item,
-    ) -> CollectionItemIdentity {
+    ) -> CollectionItemIdentity
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let identity = self.write_core(|core| core.push_collection_item(path, item));
@@ -7822,11 +7975,14 @@ impl<Model, Error> FormHandle<Model, Error> {
         identity
     }
 
-    fn push_user_collection_item<Item>(
+    fn push_user_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: Item,
-    ) -> CollectionItemIdentity {
+    ) -> CollectionItemIdentity
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let identity = self.write_core(|core| core.push_user_collection_item(path, item));
@@ -7835,12 +7991,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         identity
     }
 
-    fn insert_collection_item<Item>(
+    fn insert_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> Option<CollectionItemIdentity> {
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let identity = self.write_core(|core| core.insert_collection_item(path, index, item));
@@ -7855,12 +8014,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         identity
     }
 
-    fn insert_user_collection_item<Item>(
+    fn insert_user_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> Option<CollectionItemIdentity> {
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let identity = self.write_core(|core| core.insert_user_collection_item(path, index, item));
@@ -7875,11 +8037,14 @@ impl<Model, Error> FormHandle<Model, Error> {
         identity
     }
 
-    fn remove_collection_item<Item>(
+    fn remove_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
-    ) -> Option<Item> {
+    ) -> Option<Item>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let removed = self.write_core(|core| core.remove_collection_item(path, item));
@@ -7899,11 +8064,14 @@ impl<Model, Error> FormHandle<Model, Error> {
         removed
     }
 
-    fn remove_user_collection_item<Item>(
+    fn remove_user_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
-    ) -> Option<Item> {
+    ) -> Option<Item>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let removed = self.write_core(|core| core.remove_user_collection_item(path, item));
@@ -7923,12 +8091,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         removed
     }
 
-    fn move_collection_item_to_index<Item>(
+    fn move_collection_item_to_index<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         index: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let moved = self.write_core(|core| core.move_collection_item_to_index(path, item, index));
@@ -7943,12 +8114,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         moved
     }
 
-    fn move_user_collection_item_to_index<Item>(
+    fn move_user_collection_item_to_index<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         index: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let moved =
@@ -7964,12 +8138,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         moved
     }
 
-    fn swap_collection_items<Item>(
+    fn swap_collection_items<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         a: usize,
         b: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let swapped = self.write_core(|core| core.swap_collection_items(path, a, b));
@@ -7984,12 +8161,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         swapped
     }
 
-    fn swap_user_collection_items<Item>(
+    fn swap_user_collection_items<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         a: usize,
         b: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let swapped = self.write_core(|core| core.swap_user_collection_items(path, a, b));
@@ -8004,12 +8184,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         swapped
     }
 
-    fn replace_collection_item<Item>(
+    fn replace_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let replaced = self.write_core(|core| core.replace_collection_item(path, index, item));
@@ -8024,12 +8207,15 @@ impl<Model, Error> FormHandle<Model, Error> {
         replaced
     }
 
-    fn replace_user_collection_item<Item>(
+    fn replace_user_collection_item<Item: 'static>(
         &self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let replaced = self.write_core(|core| core.replace_user_collection_item(path, index, item));
@@ -8044,7 +8230,10 @@ impl<Model, Error> FormHandle<Model, Error> {
         replaced
     }
 
-    fn clear_collection_items<Item>(&self, path: FieldPath<Model, Vec<Item>>) -> bool {
+    fn clear_collection_items<Item: 'static>(&self, path: FieldPath<Model, Vec<Item>>) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let cleared = self.write_core(|core| core.clear_collection_items(path));
@@ -8067,7 +8256,10 @@ impl<Model, Error> FormHandle<Model, Error> {
         true
     }
 
-    fn clear_user_collection_items<Item>(&self, path: FieldPath<Model, Vec<Item>>) -> bool {
+    fn clear_user_collection_items<Item: 'static>(&self, path: FieldPath<Model, Vec<Item>>) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let field_name = path.field_name().to_owned();
         let cleared = self.write_core(|core| core.clear_user_collection_items(path));
@@ -8116,13 +8308,16 @@ impl<Model, Error> FormHandle<Model, Error> {
         ))
     }
 
-    fn set_collection_item_field<Item, Value>(
+    fn set_collection_item_field<Item: 'static, Value>(
         &self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
         value: Value,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection_identity = collection.identity();
         let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
         let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
@@ -8140,13 +8335,16 @@ impl<Model, Error> FormHandle<Model, Error> {
         updated
     }
 
-    fn set_user_collection_item_field<Item, Value>(
+    fn set_user_collection_item_field<Item: 'static, Value>(
         &self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
         value: Value,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection_identity = collection.identity();
         let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
         let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
@@ -8175,6 +8373,7 @@ impl<Model, Error> FormHandle<Model, Error> {
             .write_core(|core| core.mark_collection_item_field_touched(collection, item, field));
         if touched {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity));
+            self.adapter.wake_validation_waiters();
         }
         touched
     }
@@ -8203,6 +8402,7 @@ impl<Model, Error> FormHandle<Model, Error> {
                 );
                 self.notify_validation_changed();
             }
+            self.adapter.wake_validation_waiters();
             self.dispatch_form_blur_listeners(
                 identity.clone(),
                 field_name
@@ -8226,6 +8426,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         });
         if blurred {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
+            self.adapter.wake_validation_waiters();
             self.dispatch_form_blur_listeners(
                 identity.clone(),
                 field_name
@@ -8251,6 +8452,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         });
         if touched {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity));
+            self.adapter.wake_validation_waiters();
         }
         touched
     }
@@ -9574,10 +9776,21 @@ impl<Model, Error> FormHandle<Model, Error> {
             self.notify_selectors(transition);
         }
 
+        let extends_eligible_replacement =
+            matches!(&dispatch, FieldMutationDispatch::ValueReplacement(_));
+        if extends_eligible_replacement {
+            self.core
+                .borrow_mut()
+                .begin_eligible_submit_continuation_follow_up();
+        }
         if validates {
             self.start_runtime_async_validation_for_field_event(field.clone(), trigger);
         }
-
+        if extends_eligible_replacement {
+            self.core
+                .borrow_mut()
+                .end_eligible_submit_continuation_follow_up();
+        }
         // Every field mutation notifies validation subscribers, whether or not it ran validation:
         // value writes clear submit errors and invalidate async validators, and blur flips the
         // blurred/touched metadata that gates blur- and touch-scoped error visibility, so any
@@ -9598,11 +9811,14 @@ impl<Model, Error> FormHandle<Model, Error> {
     pub fn set_field<Value>(&self, path: FieldPath<Model, Value>, value: Value) {
         let field = path.identity();
         let field_name = path.field_name().to_owned();
-        let validates_on_change = self.write_core(|core| {
-            core.set_field(path, value);
-            core.validation_mode()
-                .should_validate_on_change(core.submit_attempt_count())
+        let (effects, validates_on_change) = self.write_core(|core| {
+            let effects = core.set_field_with_effects(path, value);
+            let validates = core
+                .validation_mode()
+                .should_validate_on_change(core.submit_attempt_count());
+            (effects, validates)
         });
+        self.apply_collection_replacement_effects(effects, FieldUpdateOrigin::Programmatic);
 
         self.apply_field_mutation(
             FieldMutation {
@@ -9620,11 +9836,14 @@ impl<Model, Error> FormHandle<Model, Error> {
     pub fn set_user_field<Value>(&self, path: FieldPath<Model, Value>, value: Value) {
         let field = path.identity();
         let field_name = path.field_name().to_owned();
-        let validates_on_change = self.write_core(|core| {
-            core.set_user_field(path, value);
-            core.validation_mode()
-                .should_validate_on_change(core.submit_attempt_count())
+        let (effects, validates_on_change) = self.write_core(|core| {
+            let effects = core.set_user_field_with_effects(path, value);
+            let validates = core
+                .validation_mode()
+                .should_validate_on_change(core.submit_attempt_count());
+            (effects, validates)
         });
+        self.apply_collection_replacement_effects(effects, FieldUpdateOrigin::User);
 
         self.apply_field_mutation(
             FieldMutation {
@@ -9646,6 +9865,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         let field = path.identity();
         self.write_core(|core| core.mark_field_touched(path));
         self.notify_selectors(SelectorTransition::FieldMetadataChanged(field));
+        self.adapter.wake_validation_waiters();
     }
 
     fn mark_field_blurred_without_validation<Value>(&self, path: FieldPath<Model, Value>) {
@@ -9792,6 +10012,20 @@ impl<Model, Error> FormHandle<Model, Error> {
             .unregister_collection_item_parse_bindings(collection, item)
         {
             self.notify_selectors(SelectorTransition::ParseChanged(field));
+        }
+    }
+
+    fn apply_collection_replacement_effects(
+        &self,
+        effects: dioform_core::FieldReplacementEffects,
+        origin: FieldUpdateOrigin,
+    ) {
+        for effect in effects.into_collections() {
+            let (collection, displaced_items) = effect.into_parts();
+            for item in displaced_items.iter().copied() {
+                self.unregister_collection_item_parse_bindings(collection.clone(), item);
+            }
+            self.notify_collection_items_removed(collection, displaced_items, origin);
         }
     }
 
@@ -10109,6 +10343,7 @@ impl<Model, Error> FileSelectionBinding<Model, Error> {
         });
         self.handle
             .notify_selectors(SelectorTransition::FieldMetadataChanged(field.clone()));
+        self.handle.adapter.wake_validation_waiters();
 
         if validates_on_blur {
             self.handle
@@ -10182,7 +10417,7 @@ impl<Model, Item, Error> Clone for CollectionTextBinding<Model, Item, Error> {
     }
 }
 
-impl<Model, Item, Error> CollectionTextBinding<Model, Item, Error> {
+impl<Model: 'static, Item: 'static, Error> CollectionTextBinding<Model, Item, Error> {
     /// Returns the rendered input name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -10294,7 +10529,7 @@ impl<Model, Item, Error> Clone for CollectionCheckboxBinding<Model, Item, Error>
     }
 }
 
-impl<Model, Item, Error> CollectionCheckboxBinding<Model, Item, Error> {
+impl<Model: 'static, Item: 'static, Error> CollectionCheckboxBinding<Model, Item, Error> {
     /// Returns the rendered checkbox name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -10409,7 +10644,9 @@ impl<Model, Item, Value, Error> Clone for CollectionSelectBinding<Model, Item, V
     }
 }
 
-impl<Model, Item, Value, Error> CollectionSelectBinding<Model, Item, Value, Error> {
+impl<Model: 'static, Item: 'static, Value, Error>
+    CollectionSelectBinding<Model, Item, Value, Error>
+{
     /// Returns the rendered select name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -10548,7 +10785,9 @@ impl<Model, Item, Value, Error> Clone
     }
 }
 
-impl<Model, Item, Value, Error> CollectionRenderedSelectBinding<Model, Item, Value, Error> {
+impl<Model: 'static, Item: 'static, Value, Error>
+    CollectionRenderedSelectBinding<Model, Item, Value, Error>
+{
     /// Returns the rendered select name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -10712,7 +10951,9 @@ impl<Model, Item, Value, Error> Clone for CollectionRadioGroupBinding<Model, Ite
     }
 }
 
-impl<Model, Item, Value, Error> CollectionRadioGroupBinding<Model, Item, Value, Error> {
+impl<Model: 'static, Item: 'static, Value, Error>
+    CollectionRadioGroupBinding<Model, Item, Value, Error>
+{
     /// Returns the rendered radio group name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -10851,7 +11092,9 @@ impl<Model, Item, Value, Error> Clone for CollectionParsedTextBinding<Model, Ite
     }
 }
 
-impl<Model, Item, Value, Error> CollectionParsedTextBinding<Model, Item, Value, Error> {
+impl<Model: 'static, Item: 'static, Value, Error>
+    CollectionParsedTextBinding<Model, Item, Value, Error>
+{
     /// Returns the rendered input name derived from the item's live index, or `None` when the
     /// item no longer resolves.
     pub fn name(&self) -> Option<String> {
@@ -11763,6 +12006,18 @@ impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
 /// Dioxus-managed submit behavior for a form.
 pub struct SubmitBinding<Model, Error = String> {
     handle: FormHandle<Model, Error>,
+    continuation: ManagedSubmitContinuation,
+}
+
+/// Request-scoped handling of a retired token during managed asynchronous submission.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ManagedSubmitContinuation {
+    /// End the request when its submit-validation proof is retired.
+    #[default]
+    Strict,
+    /// Run at most one additional full submit-validation cycle after eligible draft operations.
+    RevalidateOnce,
 }
 
 /// Browser-owned POST submit attributes for a form.
@@ -11801,6 +12056,7 @@ impl<Model, Error> Clone for SubmitBinding<Model, Error> {
     fn clone(&self) -> Self {
         Self {
             handle: self.handle.clone(),
+            continuation: self.continuation,
         }
     }
 }
@@ -11859,6 +12115,12 @@ fn block_browser_submit_event<EventData: ?Sized + 'static>(event: &Event<EventDa
 }
 
 impl<Model, Error> SubmitBinding<Model, Error> {
+    /// Selects request-scoped continuation for this binding's managed asynchronous methods.
+    pub fn with_continuation(mut self, continuation: ManagedSubmitContinuation) -> Self {
+        self.continuation = continuation;
+        self
+    }
+
     /// Scopes this submit binding to one explicit submit intent.
     pub fn intent<Intent>(&self, intent: Intent) -> IntentSubmitBinding<Model, Intent, Error> {
         IntentSubmitBinding {
@@ -11929,7 +12191,8 @@ impl<Model: Clone, Error> SubmitBinding<Model, Error> {
         Error: 'static,
     {
         manage_submit_event(&event);
-        self.handle.submit_async_managed(submit)
+        self.handle
+            .submit_async_managed_with_continuation(self.continuation, submit)
     }
 
     /// Applies a Dioxus `onsubmit` event and starts a file-aware managed async submit lifecycle.
@@ -11949,7 +12212,8 @@ impl<Model: Clone, Error> SubmitBinding<Model, Error> {
         Error: 'static,
     {
         manage_submit_event(&event);
-        self.handle.submit_async_managed_with_files(submit)
+        self.handle
+            .submit_async_managed_with_files_and_continuation(self.continuation, submit)
     }
 
     /// Returns whether there are no current known submit blockers.
@@ -12118,6 +12382,12 @@ impl<Model: Clone, Intent, Error> IntentProgressiveSubmitBinding<Model, Intent, 
 }
 
 impl<Model, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
+    /// Selects request-scoped continuation for this binding's managed asynchronous methods.
+    pub fn with_continuation(mut self, continuation: ManagedSubmitContinuation) -> Self {
+        self.submit = self.submit.with_continuation(continuation);
+        self
+    }
+
     /// Returns the underlying submit binding.
     pub const fn submit_binding(&self) -> &SubmitBinding<Model, Error> {
         &self.submit
@@ -12205,7 +12475,11 @@ impl<Model: Clone, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
         manage_submit_event(&event);
         self.submit
             .handle
-            .submit_async_managed_intent(self.intent.clone(), submit)
+            .submit_async_managed_intent_with_continuation(
+                self.intent.clone(),
+                self.submit.continuation,
+                submit,
+            )
     }
 
     /// Applies a Dioxus `onsubmit` event and starts a file-aware managed async submit with this intent.
@@ -12226,7 +12500,11 @@ impl<Model: Clone, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
         manage_submit_event(&event);
         self.submit
             .handle
-            .submit_async_managed_intent_with_files(self.intent.clone(), submit)
+            .submit_async_managed_intent_with_files_and_continuation(
+                self.intent.clone(),
+                self.submit.continuation,
+                submit,
+            )
     }
 }
 

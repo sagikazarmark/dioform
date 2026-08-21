@@ -28,6 +28,9 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct TaskId(u64);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ManagedSubmissionRequestId(u64);
+
 /// The seam between the adapter's async-validation lifecycle and the underlying task executor.
 ///
 /// The adapter allocates a [`TaskId`], threads it through so completion and cancellation reference
@@ -148,7 +151,10 @@ impl AdapterRuntime {
         self.state.borrow().is_active()
     }
 
-    pub(super) fn begin_managed_async_submission<Intent>(&self, intent: Intent) -> bool
+    pub(super) fn begin_managed_async_submission<Intent>(
+        &self,
+        intent: Intent,
+    ) -> Option<ManagedSubmissionRequestId>
     where
         Intent: 'static,
     {
@@ -157,8 +163,33 @@ impl AdapterRuntime {
             .begin_managed_async_submission(Rc::new(intent))
     }
 
-    pub(super) fn finish_managed_async_submission(&self) {
-        self.state.borrow_mut().finish_managed_async_submission();
+    pub(super) fn finish_managed_async_submission(
+        &self,
+        request_id: ManagedSubmissionRequestId,
+    ) -> bool {
+        self.state
+            .borrow_mut()
+            .finish_managed_async_submission(request_id)
+    }
+
+    pub(super) fn invalidate_managed_async_submission(&self) -> bool {
+        let invalidated = self
+            .state
+            .borrow_mut()
+            .invalidate_managed_async_submission();
+        if invalidated {
+            self.state.borrow_mut().wake_validation_waiters();
+        }
+        invalidated
+    }
+
+    pub(super) fn managed_async_submission_is_current(
+        &self,
+        request_id: ManagedSubmissionRequestId,
+    ) -> bool {
+        self.state
+            .borrow()
+            .managed_async_submission_is_current(request_id)
     }
 
     pub(super) fn has_managed_async_submission(&self) -> bool {
@@ -369,18 +400,25 @@ impl AdapterRuntime {
 
 struct AdapterState {
     active: bool,
-    managed_async_submission_intent: Option<Rc<dyn Any>>,
+    managed_async_submission: Option<ManagedAsyncSubmissionWindow>,
+    next_managed_submission_request_id: u64,
     next_task_id: u64,
     validation_tasks: Vec<ValidationTaskRegistration>,
     validation_waiters: Vec<Rc<ValidationWaiterState>>,
     debounced_validations: Vec<Weak<DebouncedValidationState>>,
 }
 
+struct ManagedAsyncSubmissionWindow {
+    request_id: ManagedSubmissionRequestId,
+    intent: Rc<dyn Any>,
+}
+
 impl Default for AdapterState {
     fn default() -> Self {
         Self {
             active: true,
-            managed_async_submission_intent: None,
+            managed_async_submission: None,
+            next_managed_submission_request_id: 0,
             next_task_id: 0,
             validation_tasks: Vec::new(),
             validation_waiters: Vec::new(),
@@ -554,6 +592,7 @@ impl Future for ValidationChangeFuture {
 impl AdapterState {
     pub(super) fn deactivate(&mut self) -> Vec<TaskId> {
         self.active = false;
+        self.invalidate_managed_async_submission();
         let cancelled = self.cancel_validation_tasks();
         self.wake_validation_waiters();
         cancelled
@@ -563,25 +602,56 @@ impl AdapterState {
         self.active
     }
 
-    pub(super) fn begin_managed_async_submission(&mut self, intent: Rc<dyn Any>) -> bool {
-        if self.managed_async_submission_intent.is_some() {
+    pub(super) fn begin_managed_async_submission(
+        &mut self,
+        intent: Rc<dyn Any>,
+    ) -> Option<ManagedSubmissionRequestId> {
+        if self.managed_async_submission.is_some() {
+            return None;
+        }
+
+        let request_id = ManagedSubmissionRequestId(self.next_managed_submission_request_id);
+        self.next_managed_submission_request_id = self
+            .next_managed_submission_request_id
+            .checked_add(1)
+            .expect("managed submission request identity counter exhausted");
+        self.managed_async_submission = Some(ManagedAsyncSubmissionWindow { request_id, intent });
+        Some(request_id)
+    }
+
+    pub(super) fn finish_managed_async_submission(
+        &mut self,
+        request_id: ManagedSubmissionRequestId,
+    ) -> bool {
+        if !self.managed_async_submission_is_current(request_id) {
             return false;
         }
 
-        self.managed_async_submission_intent = Some(intent);
+        self.managed_async_submission = None;
         true
     }
 
-    pub(super) fn finish_managed_async_submission(&mut self) {
-        self.managed_async_submission_intent = None;
+    pub(super) fn invalidate_managed_async_submission(&mut self) -> bool {
+        self.managed_async_submission.take().is_some()
+    }
+
+    pub(super) fn managed_async_submission_is_current(
+        &self,
+        request_id: ManagedSubmissionRequestId,
+    ) -> bool {
+        self.managed_async_submission
+            .as_ref()
+            .is_some_and(|submission| submission.request_id == request_id)
     }
 
     pub(super) fn has_managed_async_submission(&self) -> bool {
-        self.managed_async_submission_intent.is_some()
+        self.managed_async_submission.is_some()
     }
 
     pub(super) fn managed_async_submission_intent(&self) -> Option<&dyn Any> {
-        self.managed_async_submission_intent.as_deref()
+        self.managed_async_submission
+            .as_ref()
+            .map(|submission| submission.intent.as_ref())
     }
 
     pub(super) fn register_debounced_validation(
@@ -998,5 +1068,26 @@ mod tests {
 
         assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(()));
         assert!(adapter.borrow().validation_waiters.is_empty());
+    }
+
+    #[test]
+    fn managed_submission_request_identity_prevents_same_intent_aba_clear() {
+        let runtime = AdapterRuntime::default();
+        let first = runtime
+            .begin_managed_async_submission("publish")
+            .expect("first request should own the window");
+
+        assert!(runtime.finish_managed_async_submission(first));
+
+        let second = runtime
+            .begin_managed_async_submission("publish")
+            .expect("second request should own the window");
+        assert_ne!(first, second);
+        assert!(!runtime.finish_managed_async_submission(first));
+        assert!(runtime.managed_async_submission_is_current(second));
+        assert_eq!(
+            runtime.managed_async_submission_intent::<&'static str>(),
+            Some("publish")
+        );
     }
 }

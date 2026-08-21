@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     future::Future,
     pin::Pin,
     rc::Rc,
@@ -7,7 +7,8 @@ use std::{
 };
 
 use dioform::{
-    Form, FormHandle, SubmitBlocker, SubmitError, SubmitResult, SubmitStatus, ValidationTarget,
+    Form, FormConfig, FormHandle, ManagedSubmitContinuation, SubmitBlocker, SubmitError,
+    SubmitResult, SubmitStatus, ValidationTarget, ValidationTrigger,
 };
 use dioform_fullstack::{
     IntentSubmitBindingFullstackExt, ServerSubmitOutcome, SubmitBindingFullstackExt,
@@ -152,6 +153,14 @@ struct StaleFieldErrorProbe {
     gate: AsyncGate<Result<ServerSubmitOutcome<SignupRejection>, &'static str>>,
     handle: RefCell<Option<FormHandle<SignupForm, SignupError>>>,
     submitted_email: RefCell<Option<String>>,
+}
+
+#[derive(Default)]
+struct ContinuationFullstackSubmitProbe {
+    validation: AsyncGate<Vec<SignupError>>,
+    handle: RefCell<Option<FormHandle<SignupForm, SignupError>>>,
+    submitted_email: RefCell<Option<String>>,
+    validation_calls: Cell<u32>,
 }
 
 fn fullstack_submit_rejection_probe(probe: Rc<FullstackSubmitProbe>) -> Element {
@@ -398,6 +407,60 @@ fn stale_field_error_probe(probe: Rc<StaleFieldErrorProbe>) -> Element {
                 },
                 |_failure| SubmitError::form(SignupError::TransportUnavailable).into(),
             );
+        }
+    });
+
+    probe.handle.borrow_mut().replace(form);
+    VNode::empty()
+}
+
+fn continuation_fullstack_submit_probe(probe: Rc<ContinuationFullstackSubmitProbe>) -> Element {
+    let validation = probe.validation.clone();
+    let validation_probe = Rc::clone(&probe);
+    let form = dioform::use_form_config(
+        FormConfig::<SignupForm, SignupError>::new(SignupForm {
+            email: "ada@example.com".to_owned(),
+        })
+        .async_field_validator(SignupForm::fields().email(), "availability")
+        .on(ValidationTrigger::Submit)
+        .check(move |_value, _snapshot| {
+            validation_probe
+                .validation_calls
+                .set(validation_probe.validation_calls.get() + 1);
+            validation.future()
+        }),
+    );
+
+    use_hook({
+        let form = form.clone();
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let submitted_probe = Rc::clone(&probe);
+            form.managed_submit()
+                .with_continuation(ManagedSubmitContinuation::RevalidateOnce)
+                .on_submit_server_fn(
+                    managed_submit_event(),
+                    move |submitted| {
+                        submitted_probe
+                            .submitted_email
+                            .borrow_mut()
+                            .replace(submitted.value().email.clone());
+                        async move {
+                            Ok::<_, &'static str>(
+                                ServerSubmitOutcome::<SignupRejection>::accepted(),
+                            )
+                        }
+                    },
+                    |_rejection| {
+                        SubmitError::field(
+                            SignupForm::fields().email(),
+                            SignupError::EmailTaken,
+                        )
+                        .into()
+                    },
+                    |_failure| SubmitError::form(SignupError::TransportUnavailable).into(),
+                );
         }
     });
 
@@ -664,4 +727,35 @@ fn fullstack_submit_blocks_duplicate_submission_while_in_flight() {
         handle.last_submit_status(),
         Some(SubmitStatus::Blocked(SubmitBlocker::InFlightSubmission))
     );
+}
+
+#[test]
+fn fullstack_submit_binding_preserves_managed_continuation_policy() {
+    let probe = Rc::new(ContinuationFullstackSubmitProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(continuation_fullstack_submit_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("grace@example.com");
+    dom.render_immediate_to_vec();
+    probe.validation.complete(Vec::new());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(
+        probe.submitted_email.borrow().as_deref(),
+        Some("grace@example.com")
+    );
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(handle.last_submit_status(), Some(SubmitStatus::Succeeded));
 }

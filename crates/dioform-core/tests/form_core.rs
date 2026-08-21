@@ -146,6 +146,12 @@ struct InvoicePage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct CollectionPage {
+    invoice: InvoiceForm,
+    archived: Vec<InvoiceLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct InvoiceLine {
     description: String,
     quantity: u32,
@@ -171,6 +177,28 @@ fn invoice_path() -> FieldPath<InvoicePage, InvoiceForm> {
 
 fn nested_lines_path() -> FieldPath<InvoicePage, Vec<InvoiceLine>> {
     invoice_path().join(lines_path())
+}
+
+fn collection_page_invoice_path() -> FieldPath<CollectionPage, InvoiceForm> {
+    FieldPath::direct(
+        FieldIdentity::new("invoice"),
+        "invoice",
+        |model: &CollectionPage| &model.invoice,
+        |model: &mut CollectionPage| &mut model.invoice,
+    )
+}
+
+fn collection_page_lines_path() -> FieldPath<CollectionPage, Vec<InvoiceLine>> {
+    collection_page_invoice_path().join(lines_path())
+}
+
+fn archived_lines_path() -> FieldPath<CollectionPage, Vec<InvoiceLine>> {
+    FieldPath::direct(
+        FieldIdentity::new("archived"),
+        "archived",
+        |model: &CollectionPage| &model.archived,
+        |model: &mut CollectionPage| &mut model.archived,
+    )
 }
 
 fn line_description_path() -> FieldPath<InvoiceLine, String> {
@@ -661,7 +689,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
     );
 
     let snapshot = source.state_snapshot();
-    assert_eq!(snapshot.version(), 4);
+    assert_eq!(snapshot.version(), 5);
     let identity_state = snapshot.collection_identity_state();
     let lines_state = identity_state
         .collections()
@@ -669,7 +697,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
         .find(|state| state.collection() == lines.identity())
         .expect("lines collection identity should be serialized");
 
-    assert_eq!(identity_state.version(), 1);
+    assert_eq!(identity_state.version(), 2);
     assert_eq!(lines_state.baseline_items(), &[removed, kept]);
     assert_eq!(lines_state.current_items(), &[kept, inserted]);
     assert_eq!(lines_state.next_item_identity(), 3);
@@ -1241,10 +1269,11 @@ fn replacing_a_collection_item_clears_that_rows_verdicts_only() {
 }
 
 #[test]
-fn replacing_a_collection_field_clears_its_kept_row_verdicts() {
+fn replacing_a_collection_field_mints_fresh_rows_and_clears_displaced_state() {
     let mut form: FormCore<InvoiceForm, &'static str> =
         FormCore::new_with_error_type(invoice_form());
-    let first = form.collection_items(lines_path())[0].identity();
+    let original = form.collection_items(lines_path());
+    let first = original[0].identity();
     let first_quantity = line_field_identity(first, "quantity");
     form.register_sync_collection_item_field_validator_for_triggers(
         lines_path(),
@@ -1257,10 +1286,181 @@ fn replacing_a_collection_field_clears_its_kept_row_verdicts() {
 
     form.set_field(lines_path(), invoice_form().lines);
 
+    let replacement = form.collection_items(lines_path());
+    assert_eq!(replacement.len(), original.len());
+    assert!(
+        replacement
+            .iter()
+            .all(|item| original.iter().all(|old| old.identity() != item.identity()))
+    );
+    assert!(
+        form.field_validation_statuses_by_identity(&first_quantity)
+            .is_empty()
+    );
+    let replacement_quantity = line_field_identity(replacement[0].identity(), "quantity");
     assert_eq!(
-        form.field_validation_statuses_by_identity(&first_quantity)[0].status(),
+        form.field_validation_statuses_by_identity(&replacement_quantity)[0].status(),
         ValidationStatus::Unknown
     );
+}
+
+#[test]
+fn replacing_a_restored_collection_before_its_first_read_mints_fresh_rows() {
+    let mut source: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let original: Vec<_> = source
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let snapshot = source.state_snapshot();
+    let mut restored: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    restored
+        .restore_state_snapshot(snapshot)
+        .expect("snapshot should restore");
+
+    restored.set_field(lines_path(), invoice_form().lines);
+
+    assert!(original.iter().all(|item| {
+        restored
+            .collection_item_index(lines_path(), *item)
+            .is_none()
+    }));
+    let replacement_snapshot = restored.state_snapshot();
+    let mut round_tripped: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    round_tripped
+        .restore_state_snapshot(replacement_snapshot)
+        .expect("replacement snapshot should restore");
+    assert!(original.iter().all(|item| {
+        round_tripped
+            .collection_item_index(lines_path(), *item)
+            .is_none()
+    }));
+    let round_tripped_replacement: Vec<_> = round_tripped
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(round_tripped_replacement.len(), original.len());
+    assert!(
+        round_tripped_replacement
+            .iter()
+            .all(|item| !original.contains(item))
+    );
+
+    let replacement: Vec<_> = restored
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(replacement.len(), original.len());
+    assert!(replacement.iter().all(|item| !original.contains(item)));
+}
+
+#[test]
+fn generic_collection_replacement_preserves_counter_and_baseline_contracts() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let baseline: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let transient = form.push_collection_item(lines_path(), line("Transient"));
+    assert!(
+        form.remove_collection_item(lines_path(), transient)
+            .is_some()
+    );
+    let high_water = *baseline
+        .iter()
+        .chain(std::iter::once(&transient))
+        .max()
+        .expect("the collection has issued identities");
+    let validation = form.submit_validation_snapshot();
+
+    form.set_field(lines_path(), invoice_form().lines);
+
+    let equal_length: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert!(equal_length.iter().all(|item| *item > high_water));
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+
+    form.set_field(lines_path(), vec![line("Short")]);
+    let shorter: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(shorter.len(), 1);
+    assert!(shorter.iter().all(|item| !equal_length.contains(item)));
+
+    form.set_field(lines_path(), vec![line("One"), line("Two"), line("Three")]);
+    let longer: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(longer.len(), 3);
+    assert!(longer.iter().all(|item| !shorter.contains(item)));
+    let replacement_high_water = *longer.iter().max().expect("replacement rows exist");
+
+    form.reset();
+
+    let reset: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(reset, baseline);
+    assert!(form.push_collection_item(lines_path(), line("After reset")) > replacement_high_water);
+}
+
+#[test]
+fn containing_field_replacement_reconciles_descendant_collections_only() {
+    let mut form: FormCore<CollectionPage, &'static str> =
+        FormCore::new_with_error_type(CollectionPage {
+            invoice: invoice_form(),
+            archived: vec![line("Archived")],
+        });
+    let current: Vec<_> = form
+        .collection_items(collection_page_lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let archived: Vec<_> = form
+        .collection_items(archived_lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+
+    form.set_field(
+        collection_page_invoice_path(),
+        InvoiceForm {
+            lines: vec![line("Replacement")],
+        },
+    );
+
+    let replacement: Vec<_> = form
+        .collection_items(collection_page_lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let unchanged: Vec<_> = form
+        .collection_items(archived_lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    assert_eq!(replacement.len(), 1);
+    assert!(replacement.iter().all(|item| !current.contains(item)));
+    assert_eq!(unchanged, archived);
 }
 
 #[test]
@@ -5488,7 +5688,7 @@ fn change_validation_on_an_item_child_field_reruns_when_a_containing_field_is_wr
     let mut form: FormCore<NestedPage, &'static str> =
         FormCore::new_with_error_type(nested_page_with_one_line())
             .with_validation_mode(ValidationMode::on_change());
-    let item = form.collection_items(nested_invoice_lines_path())[0].identity();
+    let original_item = form.collection_items(nested_invoice_lines_path())[0].identity();
 
     form.register_sync_collection_item_field_validator_for_triggers(
         nested_invoice_lines_path(),
@@ -5512,10 +5712,21 @@ fn change_validation_on_an_item_child_field_reruns_when_a_containing_field_is_wr
         },
     );
 
+    let empty_item = form.collection_items(nested_invoice_lines_path())[0].identity();
+    assert_ne!(empty_item, original_item);
+    assert!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(
+            original_item,
+            "customer.name"
+        ))
+        .is_empty()
+    );
     assert_eq!(
-        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
-            [0]
-        .error(),
+        form.field_validation_errors_by_identity(&line_field_identity_for(
+            empty_item,
+            "customer.name"
+        ))[0]
+            .error(),
         &"name_required"
     );
 
@@ -5529,9 +5740,21 @@ fn change_validation_on_an_item_child_field_reruns_when_a_containing_field_is_wr
         },
     );
 
+    let named_item = form.collection_items(nested_invoice_lines_path())[0].identity();
+    assert_ne!(named_item, empty_item);
     assert!(
-        form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
-            .is_empty()
+        form.field_validation_errors_by_identity(&line_field_identity_for(
+            empty_item,
+            "customer.name"
+        ))
+        .is_empty()
+    );
+    assert!(
+        form.field_validation_errors_by_identity(&line_field_identity_for(
+            named_item,
+            "customer.name"
+        ))
+        .is_empty()
     );
 }
 
@@ -7376,6 +7599,241 @@ fn submit_requires_submit_triggered_async_form_validation_after_manual_success()
         .expect("submit form validation should replace manual result");
 
     assert_eq!(submit_run.trigger(), ValidationTrigger::Submit);
+}
+
+#[test]
+fn submit_validation_token_retires_when_validator_visible_metadata_changes() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "untouched",
+        ValidationTrigger::Submit,
+        |_value, context| {
+            context
+                .field_metadata()
+                .is_touched()
+                .then_some("already_touched")
+                .into_iter()
+                .collect()
+        },
+    );
+    let validation = form.submit_validation_snapshot();
+
+    assert!(form.validate_for_submit());
+    form.mark_field_touched(name_path());
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn submit_validation_token_retires_when_manual_validation_supersedes_its_evidence() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTriggers::new([ValidationTrigger::Manual, ValidationTrigger::Submit]),
+        |_value, _context| Vec::new(),
+    );
+    let validation = form.submit_validation_snapshot();
+    assert!(form.validate_for_submit());
+
+    form.validate_field(name_path(), ValidationTrigger::Manual);
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn retired_submit_validation_token_outranks_superseding_manual_async_work() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    let availability = form.register_async_field_validator_for_triggers(
+        name_path(),
+        "availability",
+        ValidationTriggers::new([ValidationTrigger::Manual, ValidationTrigger::Submit]),
+    );
+    let validation = form.submit_validation_snapshot();
+    assert!(!form.validate_for_submit());
+    let submit_run = form
+        .begin_async_field_validation(name_path(), availability, ValidationTrigger::Submit)
+        .expect("submit validation should start");
+    assert_eq!(
+        form.complete_async_field_validation(
+            name_path(),
+            availability,
+            &submit_run,
+            Vec::<&str>::new(),
+        ),
+        Some(ValidationStatus::Valid)
+    );
+
+    form.begin_async_field_validation(name_path(), availability, ValidationTrigger::Manual)
+        .expect("manual validation should supersede submit evidence");
+
+    assert_eq!(
+        form.begin_submission_after_validation(&validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+}
+
+#[test]
+fn managed_submit_continuation_distinguishes_eligible_and_ineligible_retirement() {
+    let initial = ContactForm {
+        name: "Ada".to_owned(),
+    };
+
+    let mut eligible: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(initial.clone());
+    let before_write = eligible.submit_validation_snapshot();
+    eligible.set_field(name_path(), "Grace".to_owned());
+    let after_write = eligible.submit_validation_snapshot();
+    assert!(before_write.permits_managed_submit_continuation(&after_write));
+
+    let mut ineligible: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(initial.clone());
+    let before_touch = ineligible.submit_validation_snapshot();
+    ineligible.mark_field_touched(name_path());
+    let after_touch = ineligible.submit_validation_snapshot();
+    assert!(!before_touch.permits_managed_submit_continuation(&after_touch));
+
+    let mut mixed: FormCore<ContactForm, &'static str> = FormCore::new_with_error_type(initial);
+    let before_mixed = mixed.submit_validation_snapshot();
+    mixed.set_field(name_path(), "Grace".to_owned());
+    mixed.mark_field_touched(name_path());
+    let after_mixed = mixed.submit_validation_snapshot();
+    assert!(!before_mixed.permits_managed_submit_continuation(&after_mixed));
+}
+
+#[test]
+fn managed_submit_continuation_accepts_successful_collection_operations() {
+    let mut form = FormCore::new(invoice_form());
+    let items = line_identities(&mut form);
+
+    let before_item_field = form.submit_validation_snapshot();
+    assert!(form.set_user_collection_item_field(
+        lines_path(),
+        items[0],
+        line_description_path(),
+        "Architecture".to_owned(),
+    ));
+    let after_item_field = form.submit_validation_snapshot();
+    assert!(before_item_field.permits_managed_submit_continuation(&after_item_field));
+
+    let before_item = form.submit_validation_snapshot();
+    assert!(form.replace_collection_item(lines_path(), 0, line("Review")));
+    let after_item = form.submit_validation_snapshot();
+    assert!(before_item.permits_managed_submit_continuation(&after_item));
+
+    let before_insert = form.submit_validation_snapshot();
+    let inserted = form
+        .insert_user_collection_item(lines_path(), 1, line("Ship"))
+        .expect("insertion should succeed");
+    let after_insert = form.submit_validation_snapshot();
+    assert!(before_insert.permits_managed_submit_continuation(&after_insert));
+
+    let before_move = form.submit_validation_snapshot();
+    assert!(form.move_collection_item_to_index(lines_path(), inserted, 0));
+    let after_move = form.submit_validation_snapshot();
+    assert!(before_move.permits_managed_submit_continuation(&after_move));
+
+    let before_swap = form.submit_validation_snapshot();
+    assert!(form.swap_user_collection_items(lines_path(), 0, 1));
+    let after_swap = form.submit_validation_snapshot();
+    assert!(before_swap.permits_managed_submit_continuation(&after_swap));
+
+    let before_remove = form.submit_validation_snapshot();
+    assert!(
+        form.remove_collection_item(lines_path(), inserted)
+            .is_some()
+    );
+    let after_remove = form.submit_validation_snapshot();
+    assert!(before_remove.permits_managed_submit_continuation(&after_remove));
+
+    let before_clear = form.submit_validation_snapshot();
+    assert!(!form.clear_user_collection_items(lines_path()).is_empty());
+    let after_clear = form.submit_validation_snapshot();
+    assert!(before_clear.permits_managed_submit_continuation(&after_clear));
+}
+
+#[test]
+fn managed_submit_continuation_validation_stays_within_one_submit_attempt() {
+    let validation_runs = Rc::new(Cell::new(0));
+    let validation_runs_for_validator = Rc::clone(&validation_runs);
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: "Ada".to_owned(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTrigger::Submit,
+        move |_value, _context| {
+            validation_runs_for_validator.set(validation_runs_for_validator.get() + 1);
+            Vec::new()
+        },
+    );
+    assert!(form.validate_for_submit());
+    let validation = form.submit_validation_snapshot();
+
+    assert!(form.intent(()).validate_for_submit_same_attempt());
+
+    assert_eq!(validation_runs.get(), 2);
+    assert_eq!(form.submit_attempt_count(), 1);
+    assert_eq!(form.last_submit_status(), None);
+    assert!(
+        form.begin_submission_after_validation(&validation)
+            .is_started()
+    );
+}
+
+#[test]
+fn submit_validation_token_tracks_submit_validator_topology_only() {
+    let initial = ContactForm {
+        name: "Ada".to_owned(),
+    };
+    let mut submit_form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(initial.clone());
+    let submit_validation = submit_form.submit_validation_snapshot();
+
+    submit_form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "submit",
+        ValidationTrigger::Submit,
+        |_value, _context| Vec::new(),
+    );
+
+    assert_eq!(
+        submit_form.begin_submission_after_validation(&submit_validation),
+        SubmitAttempt::Blocked(SubmitBlocker::StaleSubmitValidation)
+    );
+
+    let mut manual_form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(initial);
+    let manual_validation = manual_form.submit_validation_snapshot();
+    manual_form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "manual",
+        ValidationTrigger::Manual,
+        |_value, _context| Vec::new(),
+    );
+
+    assert!(matches!(
+        manual_form.begin_submission_after_validation(&manual_validation),
+        SubmitAttempt::Started(_)
+    ));
 }
 
 #[test]
@@ -9356,6 +9814,10 @@ fn reinitialize_retires_collection_item_identities_for_good() {
         form.collection_item_field_value(lines_path(), retained, line_description_path()),
         None,
     );
+
+    form.push_collection_item(lines_path(), line("Transient"));
+    form.reset();
+    assert_eq!(line_identities(&mut form), reinitialized);
 }
 
 #[test]

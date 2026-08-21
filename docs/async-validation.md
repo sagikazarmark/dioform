@@ -108,7 +108,19 @@ Pending async validation blocks submit availability only when that validator is 
 
 Async validators remember the trigger that produced their current result. A prior `Change` or `Manual` async success does not satisfy submit correctness for a validator that also participates in `ValidationTrigger::Submit`; submit records a pending blocker and starts submit-scoped async validation for the current snapshot.
 
-Synchronous submit APIs cannot await async validation. `managed_submit().on_submit(...)` runs synchronous submit validation and returns `SubmitResult::Blocked(SubmitBlocker::PendingValidation)` when submit-relevant async validation is pending, stale, unknown, or must run before submission can be trusted. If form state changes while managed submission is waiting for async validation, its **Submit Validation Token** no longer applies and the attempt reports `SubmitBlocker::StaleSubmitValidation`; submit the current form state again. This outcome-only blocker is not part of **Submit Availability**. `submit_async_unmanaged(...)` and `intent(intent).submit_async(...)` make the same fire-and-return behavior explicit for callers that intentionally do not want managed waiting.
+Synchronous submit APIs cannot await async validation. `managed_submit().on_submit(...)` runs synchronous submit validation and returns `SubmitResult::Blocked(SubmitBlocker::PendingValidation)` when submit-relevant async validation is pending, stale, unknown, or must run before submission can be trusted. If form state changes while managed submission is waiting for async validation, its **Submit Validation Token** no longer applies and the attempt reports `SubmitBlocker::StaleSubmitValidation`; submit the current form state again. This strict behavior remains the default and this outcome-only blocker is not part of **Submit Availability**.
+
+One managed async request can explicitly opt into a single additional full submit-validation cycle:
+
+```rust
+use dioform::ManagedSubmitContinuation;
+
+form.managed_submit()
+    .with_continuation(ManagedSubmitContinuation::RevalidateOnce)
+    .on_submit_async(event, submit);
+```
+
+Successful ordinary draft and collection replacements may continue once. Reset, reinitialization, state restoration, file selection changes, standalone validator-visible metadata changes, validator topology changes, and independent validation-evidence changes remain terminal. The additional cycle stays within the original submit attempt and retains its typed submit intent. `submit_async_unmanaged(...)` and `intent(intent).submit_async(...)` make fire-and-return behavior explicit for callers that intentionally do not want managed waiting.
 
 Dioxus-managed async submit can wait. `managed_submit().on_submit_async(...)` uses `submit_async_managed`, starts or flushes submit-relevant async validation immediately, waits for pending submit-relevant async validation to settle, then starts the application submit future only if validation still applies to the same field-version snapshot and has no errors.
 

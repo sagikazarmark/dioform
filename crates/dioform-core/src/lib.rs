@@ -1224,8 +1224,8 @@ pub struct SubmissionSnapshot<Model, Intent = ()> {
 /// A point-in-time freshness token for submit validation managed outside the core.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubmitValidationSnapshot<Intent = ()> {
-    form_version: u64,
-    field_versions: BTreeMap<FieldIdentity, u64>,
+    submit_validation_generation: u64,
+    continuation_barrier_generation: u64,
     intent: Intent,
 }
 
@@ -1545,13 +1545,13 @@ impl<Model, Intent> SubmissionSnapshot<Model, Intent> {
 
 impl<Intent> SubmitValidationSnapshot<Intent> {
     fn new(
-        form_version: u64,
-        field_versions: BTreeMap<FieldIdentity, u64>,
+        submit_validation_generation: u64,
+        continuation_barrier_generation: u64,
         intent: Intent,
     ) -> Self {
         Self {
-            form_version,
-            field_versions,
+            submit_validation_generation,
+            continuation_barrier_generation,
             intent,
         }
     }
@@ -1559,6 +1559,17 @@ impl<Intent> SubmitValidationSnapshot<Intent> {
     /// Returns the submit intent captured for this validation snapshot.
     pub const fn intent(&self) -> &Intent {
         &self.intent
+    }
+
+    /// Returns whether retirement since this snapshot permits one managed revalidation cycle.
+    #[doc(hidden)]
+    pub fn permits_managed_submit_continuation(&self, current: &Self) -> bool
+    where
+        Intent: PartialEq,
+    {
+        self.intent == current.intent
+            && self.submit_validation_generation != current.submit_validation_generation
+            && self.continuation_barrier_generation == current.continuation_barrier_generation
     }
 }
 
@@ -2631,6 +2642,33 @@ pub struct FieldMetadata {
     blurred: bool,
 }
 
+/// Adapter cleanup produced when a generic field replacement reaches tracked collections.
+#[doc(hidden)]
+pub struct FieldReplacementEffects {
+    collections: Vec<CollectionReplacementEffect>,
+}
+
+/// One tracked collection whose current logical rows were replaced wholesale.
+#[doc(hidden)]
+pub struct CollectionReplacementEffect {
+    collection: FieldIdentity,
+    displaced_items: Vec<CollectionItemIdentity>,
+}
+
+impl FieldReplacementEffects {
+    /// Returns the affected collections and their displaced logical item identities.
+    pub fn into_collections(self) -> impl Iterator<Item = CollectionReplacementEffect> {
+        self.collections.into_iter()
+    }
+}
+
+impl CollectionReplacementEffect {
+    /// Consumes this effect into its collection identity and displaced item identities.
+    pub fn into_parts(self) -> (FieldIdentity, Vec<CollectionItemIdentity>) {
+        (self.collection, self.displaced_items)
+    }
+}
+
 impl FieldMetadata {
     /// Returns whether this field has received user interaction.
     pub const fn is_touched(self) -> bool {
@@ -2648,6 +2686,7 @@ pub(crate) struct CollectionState {
     baseline_items: Vec<CollectionItemIdentity>,
     current_items: Vec<CollectionItemIdentity>,
     next_item_identity: u64,
+    current_replacement_pending: bool,
 }
 
 impl CollectionState {
@@ -2657,6 +2696,7 @@ impl CollectionState {
             baseline_items: Vec::new(),
             current_items: Vec::new(),
             next_item_identity: 0,
+            current_replacement_pending: false,
         }
     }
 
@@ -2669,9 +2709,9 @@ impl CollectionState {
     /// empty in the **Form Draft** too, so it mints nothing here either.
     ///
     /// [ADR-0025]: https://github.com/sagikazarmark/dioform/blob/main/docs/adr/0025-mint-collection-item-identities-from-a-never-rewinding-counter.md
-    fn mint_items_if_unminted(&mut self, baseline_len: usize, current_len: usize) {
+    fn mint_items_if_unminted(&mut self, baseline_len: usize, current_len: usize) -> bool {
         if !self.baseline_items.is_empty() || !self.current_items.is_empty() {
-            return;
+            return false;
         }
 
         for _ in 0..baseline_len {
@@ -2686,6 +2726,8 @@ impl CollectionState {
             let identity = self.allocate_item_identity();
             self.current_items.push(identity);
         }
+
+        baseline_len > 0 || current_len > 0
     }
 
     /// Restores the current item sequence from the baseline sequence, returning the identities the
@@ -2699,6 +2741,7 @@ impl CollectionState {
             .collect();
 
         self.current_items = self.baseline_items.clone();
+        self.current_replacement_pending = false;
 
         dropped
     }
@@ -2710,6 +2753,21 @@ impl CollectionState {
     fn retire_items(&mut self) {
         self.baseline_items.clear();
         self.current_items.clear();
+        self.current_replacement_pending = false;
+    }
+
+    fn replace_current_items(&mut self, new_len: usize) -> Vec<CollectionItemIdentity> {
+        let displaced = std::mem::take(&mut self.current_items);
+        self.current_items = (0..new_len)
+            .map(|_| self.allocate_item_identity())
+            .collect();
+        self.current_replacement_pending = false;
+        displaced
+    }
+
+    fn retire_current_items_for_replacement(&mut self) -> Vec<CollectionItemIdentity> {
+        self.current_replacement_pending = true;
+        std::mem::take(&mut self.current_items)
     }
 
     const fn next_item_identity(&self) -> u64 {
@@ -2758,10 +2816,10 @@ impl CollectionState {
 }
 
 /// Current compatibility version for serialized form-state snapshots.
-pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 4;
+pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 5;
 
 /// Current compatibility version for serialized collection identity state.
-pub const COLLECTION_IDENTITY_SERIALIZATION_VERSION: u32 = 1;
+pub const COLLECTION_IDENTITY_SERIALIZATION_VERSION: u32 = 2;
 
 /// Which collection item identity sequence is malformed in serialized state.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -2818,6 +2876,7 @@ impl CollectionIdentityState {
                     baseline_items: state.baseline_items.clone(),
                     current_items: state.current_items.clone(),
                     next_item_identity: state.next_item_identity,
+                    current_replacement_pending: state.current_replacement_pending,
                 })
                 .collect(),
         }
@@ -2869,6 +2928,8 @@ pub struct CollectionIdentitySnapshot {
     baseline_items: Vec<CollectionItemIdentity>,
     current_items: Vec<CollectionItemIdentity>,
     next_item_identity: u64,
+    #[cfg_attr(feature = "serde", serde(default))]
+    current_replacement_pending: bool,
 }
 
 impl CollectionIdentitySnapshot {
@@ -2915,6 +2976,7 @@ impl CollectionIdentitySnapshot {
                 baseline_items: self.baseline_items,
                 current_items: self.current_items,
                 next_item_identity: self.next_item_identity,
+                current_replacement_pending: self.current_replacement_pending,
             },
         ))
     }
@@ -3119,12 +3181,18 @@ pub struct FormCore<Model, Error = String> {
     draft: FormDraft<Model>,
     validation_mode: ValidationMode,
     form_version: u64,
+    submit_validation_generation: u64,
+    continuation_barrier_generation: u64,
+    eligible_submit_continuation_depth: usize,
+    tracked_collection_lengths: BTreeMap<FieldIdentity, CollectionLength<Model>>,
     field_store: FieldStore,
     validation_chains: ValidationChainRegistry<Model, Error>,
     submission: SubmissionState<Error>,
     observers: Vec<Box<FormObserver>>,
     error_visibility_policy: ErrorVisibilityPolicy,
 }
+
+type CollectionLength<Model> = Rc<dyn Fn(&Model) -> usize>;
 
 /// Form-core operations scoped to one submit intent.
 pub struct FormCoreIntent<'form, Model, Error, Intent> {
@@ -3151,6 +3219,10 @@ impl<Model: Clone> FormCore<Model> {
             draft: FormDraft::new(initial),
             validation_mode: ValidationMode::default(),
             form_version: 0,
+            submit_validation_generation: 0,
+            continuation_barrier_generation: 0,
+            eligible_submit_continuation_depth: 0,
+            tracked_collection_lengths: BTreeMap::new(),
             field_store: FieldStore::default(),
             validation_chains: ValidationChainRegistry::new(),
             submission: SubmissionState::default(),
@@ -3233,8 +3305,8 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         }
 
         let has_validation_errors = self.has_submit_blocking_errors(&validation.intent);
-        let validation_token_is_retired = self.form_version != validation.form_version
-            || self.field_store.versions() != &validation.field_versions;
+        let validation_token_is_retired =
+            self.submit_validation_generation != validation.submit_validation_generation;
         let has_pending_validation =
             self.has_pending_validation_for_submit_intent(&validation.intent);
         let has_unresolved_validation =
@@ -3287,14 +3359,18 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         SubmitAttempt::Blocked(SubmitBlocker::InFlightSubmission)
     }
 
-    /// Returns the current field-version snapshot used for stale submit protection.
+    /// Returns current field versions used to reject stale field-scoped submit errors.
     pub fn submit_validation_field_versions(&self) -> BTreeMap<FieldIdentity, u64> {
         self.field_store.versions_cloned()
     }
 
     /// Returns the current validation lifecycle snapshot used for stale submit protection.
     pub fn submit_validation_snapshot(&self) -> SubmitValidationSnapshot {
-        SubmitValidationSnapshot::new(self.form_version, self.field_store.versions_cloned(), ())
+        SubmitValidationSnapshot::new(
+            self.submit_validation_generation,
+            self.continuation_barrier_generation,
+            (),
+        )
     }
 
     /// Returns the current validation lifecycle snapshot for an explicit submit intent.
@@ -3303,8 +3379,8 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         intent: Intent,
     ) -> SubmitValidationSnapshot<Intent> {
         SubmitValidationSnapshot::new(
-            self.form_version,
-            self.field_store.versions_cloned(),
+            self.submit_validation_generation,
+            self.continuation_barrier_generation,
             intent,
         )
     }
@@ -3404,6 +3480,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     pub fn reset(&mut self) {
         self.draft.reset();
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.field_store.clear_fields();
         self.restore_baseline_collection_identities();
         self.validation_chains
@@ -3423,6 +3500,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     pub fn reinitialize(&mut self, initial: Model) {
         self.draft.reinitialize(initial);
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.field_store.clear_fields();
         self.retire_collection_identities();
         self.validation_chains
@@ -3487,6 +3565,7 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         let dropped_collection_items = self.restore_collection_items_from_baseline(&field_identity);
         *self.field_store.metadata_mut(&field_identity) = FieldMetadata::default();
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.increment_field_version(&field_identity);
         self.validation_chains
             .clear_field_results_matching(|validator_field| {
@@ -3532,10 +3611,19 @@ impl<Model, Error, Intent> FormCoreIntent<'_, Model, Error, Intent> {
         Intent: Clone,
     {
         SubmitValidationSnapshot::new(
-            self.core.form_version,
-            self.core.field_store.versions_cloned(),
+            self.core.submit_validation_generation,
+            self.core.continuation_barrier_generation,
             self.intent.clone(),
         )
+    }
+
+    /// Runs another full submit-validation cycle without creating another submit attempt.
+    #[doc(hidden)]
+    pub fn validate_for_submit_same_attempt(&mut self) -> bool
+    where
+        Intent: Clone + PartialEq + 'static,
+    {
+        self.core.run_submit_validation_cycle(self.intent.clone())
     }
 
     /// Returns current UI-oriented submit availability for this submit intent.
@@ -3885,6 +3973,7 @@ impl<Model, Error> FormCore<Model, Error> {
         self.submission.reset();
         self.submission
             .restore_attempt_count(snapshot.submit_attempts);
+        self.increment_submit_validation_generation();
 
         Ok(())
     }
@@ -3901,6 +3990,7 @@ impl<Model, Error> FormCore<Model, Error> {
     ) -> Result<(), FormStateRestoreError> {
         self.field_store
             .adopt_collections(state.into_collection_states()?);
+        self.increment_submit_validation_generation();
         Ok(())
     }
 
@@ -4164,10 +4254,13 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     /// Returns the current logical items for a direct `Vec<Item>` collection field.
-    pub fn collection_items<Item>(
+    pub fn collection_items<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
-    ) -> Vec<CollectionItem> {
+    ) -> Vec<CollectionItem>
+    where
+        Model: 'static,
+    {
         let items = self.ensure_collection_state(&path).items();
         self.ensure_collection_item_validator_states_for_collection(&path.identity());
         items
@@ -4190,9 +4283,9 @@ impl<Model, Error> FormCore<Model, Error> {
     /// A read-only lookup: unlike [`Self::collection_items`] it neither takes a mutable borrow nor
     /// ensures item validator state, so a render-path accessor can call it while the core is
     /// immutably borrowed. The resolved index is bounds-checked against the **Form Draft**, because
-    /// writing the collection path directly mutates the draft `Vec` without touching collection
-    /// state and the two can therefore desynchronize. It answers `Some`/`None` in lockstep with
-    /// [`Self::collection_item_field_value`].
+    /// an identity must never resolve to a row the current draft does not hold, including while
+    /// defensive restore checks reject inconsistent external state. It answers `Some`/`None` in
+    /// lockstep with [`Self::collection_item_field_value`].
     pub fn collection_item_index<Item>(
         &self,
         collection: FieldPath<Model, Vec<Item>>,
@@ -4250,31 +4343,49 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     /// Inserts a collection item through the programmatic update path.
-    pub fn insert_collection_item<Item>(
+    pub fn insert_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> Option<CollectionItemIdentity> {
-        self.insert_collection_item_with_origin(path, index, item, FieldUpdateOrigin::Programmatic)
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.insert_collection_item_with_origin(
+                path,
+                index,
+                item,
+                FieldUpdateOrigin::Programmatic,
+            )
+        })
     }
 
     /// Inserts a collection item through the user update path and marks the collection touched.
-    pub fn insert_user_collection_item<Item>(
+    pub fn insert_user_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> Option<CollectionItemIdentity> {
-        self.insert_collection_item_with_origin(path, index, item, FieldUpdateOrigin::User)
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.insert_collection_item_with_origin(path, index, item, FieldUpdateOrigin::User)
+        })
     }
 
     /// Appends a collection item through the programmatic update path.
-    pub fn push_collection_item<Item>(
+    pub fn push_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: Item,
-    ) -> CollectionItemIdentity {
+    ) -> CollectionItemIdentity
+    where
+        Model: 'static,
+    {
         let index = path.get(self.draft.current()).len();
 
         self.insert_collection_item(path, index, item)
@@ -4282,11 +4393,14 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     /// Appends a collection item through the user update path and marks the collection touched.
-    pub fn push_user_collection_item<Item>(
+    pub fn push_user_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: Item,
-    ) -> CollectionItemIdentity {
+    ) -> CollectionItemIdentity
+    where
+        Model: 'static,
+    {
         let index = path.get(self.draft.current()).len();
 
         self.insert_user_collection_item(path, index, item)
@@ -4294,46 +4408,71 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     /// Removes a logical collection item through the programmatic update path.
-    pub fn remove_collection_item<Item>(
+    pub fn remove_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
-    ) -> Option<Item> {
-        self.remove_collection_item_with_origin(path, item, FieldUpdateOrigin::Programmatic)
+    ) -> Option<Item>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.remove_collection_item_with_origin(path, item, FieldUpdateOrigin::Programmatic)
+        })
     }
 
     /// Removes a logical collection item through the user update path and marks the collection touched.
-    pub fn remove_user_collection_item<Item>(
+    pub fn remove_user_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
-    ) -> Option<Item> {
-        self.remove_collection_item_with_origin(path, item, FieldUpdateOrigin::User)
+    ) -> Option<Item>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.remove_collection_item_with_origin(path, item, FieldUpdateOrigin::User)
+        })
     }
 
     /// Moves a logical collection item to a new index through the programmatic update path.
-    pub fn move_collection_item_to_index<Item>(
+    pub fn move_collection_item_to_index<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         index: usize,
-    ) -> bool {
-        self.move_collection_item_to_index_with_origin(
-            path,
-            item,
-            index,
-            FieldUpdateOrigin::Programmatic,
-        )
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.move_collection_item_to_index_with_origin(
+                path,
+                item,
+                index,
+                FieldUpdateOrigin::Programmatic,
+            )
+        })
     }
 
     /// Moves a logical collection item to a new index through the user update path.
-    pub fn move_user_collection_item_to_index<Item>(
+    pub fn move_user_collection_item_to_index<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         index: usize,
-    ) -> bool {
-        self.move_collection_item_to_index_with_origin(path, item, index, FieldUpdateOrigin::User)
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.move_collection_item_to_index_with_origin(
+                path,
+                item,
+                index,
+                FieldUpdateOrigin::User,
+            )
+        })
     }
 
     /// Swaps two collection items by position through the programmatic update path.
@@ -4341,105 +4480,150 @@ impl<Model, Error> FormCore<Model, Error> {
     /// Each item keeps its library-owned **Collection Item Identity**, so item-scoped metadata,
     /// validation, parse state, and dirty tracking follow the swapped items. Returns `false` if
     /// either index is out of bounds or the two indices are equal (a no-op that changes nothing).
-    pub fn swap_collection_items<Item>(
+    pub fn swap_collection_items<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         a: usize,
         b: usize,
-    ) -> bool {
-        self.swap_collection_items_with_origin(path, a, b, FieldUpdateOrigin::Programmatic)
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.swap_collection_items_with_origin(path, a, b, FieldUpdateOrigin::Programmatic)
+        })
     }
 
     /// Swaps two collection items by position through the user update path.
-    pub fn swap_user_collection_items<Item>(
+    pub fn swap_user_collection_items<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         a: usize,
         b: usize,
-    ) -> bool {
-        self.swap_collection_items_with_origin(path, a, b, FieldUpdateOrigin::User)
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.swap_collection_items_with_origin(path, a, b, FieldUpdateOrigin::User)
+        })
     }
 
     /// Replaces one collection item's value in place through the programmatic update path.
     ///
     /// The existing item keeps its **Collection Item Identity**, so item-scoped metadata and
     /// validation stay attached. Returns `false` if the index is out of bounds.
-    pub fn replace_collection_item<Item>(
+    pub fn replace_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> bool {
-        self.replace_collection_item_with_origin(path, index, item, FieldUpdateOrigin::Programmatic)
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.replace_collection_item_with_origin(
+                path,
+                index,
+                item,
+                FieldUpdateOrigin::Programmatic,
+            )
+        })
     }
 
     /// Replaces one collection item's value in place through the user update path.
-    pub fn replace_user_collection_item<Item>(
+    pub fn replace_user_collection_item<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
-    ) -> bool {
-        self.replace_collection_item_with_origin(path, index, item, FieldUpdateOrigin::User)
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.replace_collection_item_with_origin(path, index, item, FieldUpdateOrigin::User)
+        })
     }
 
     /// Removes every collection item through the programmatic update path.
     ///
     /// Releases item-scoped state for each removed item and returns their identities so the caller
     /// can release adapter-owned state. Other collections and form-level state are untouched.
-    pub fn clear_collection_items<Item>(
+    pub fn clear_collection_items<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
-    ) -> Vec<CollectionItemIdentity> {
-        self.clear_collection_items_with_origin(path, FieldUpdateOrigin::Programmatic)
+    ) -> Vec<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.clear_collection_items_with_origin(path, FieldUpdateOrigin::Programmatic)
+        })
     }
 
     /// Removes every collection item through the user update path.
-    pub fn clear_user_collection_items<Item>(
+    pub fn clear_user_collection_items<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
-    ) -> Vec<CollectionItemIdentity> {
-        self.clear_collection_items_with_origin(path, FieldUpdateOrigin::User)
+    ) -> Vec<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.clear_collection_items_with_origin(path, FieldUpdateOrigin::User)
+        })
     }
 
     /// Replaces one child field value inside a logical collection item programmatically.
-    pub fn set_collection_item_field<Item, Value>(
+    pub fn set_collection_item_field<Item: 'static, Value>(
         &mut self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
         value: Value,
-    ) -> bool {
-        self.replace_collection_item_field_with_origin(
-            &collection,
-            item,
-            &field,
-            value,
-            FieldUpdateOrigin::Programmatic,
-        )
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            core.replace_collection_item_field_with_origin(
+                &collection,
+                item,
+                &field,
+                value,
+                FieldUpdateOrigin::Programmatic,
+            )
+        })
     }
 
     /// Replaces one child field value inside a logical collection item because of user input.
-    pub fn set_user_collection_item_field<Item, Value>(
+    pub fn set_user_collection_item_field<Item: 'static, Value>(
         &mut self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
         value: Value,
-    ) -> bool {
-        let updated = self.replace_collection_item_field_with_origin(
-            &collection,
-            item,
-            &field,
-            value,
-            FieldUpdateOrigin::User,
-        );
+    ) -> bool
+    where
+        Model: 'static,
+    {
+        self.with_eligible_submit_continuation_root(move |core| {
+            let updated = core.replace_collection_item_field_with_origin(
+                &collection,
+                item,
+                &field,
+                value,
+                FieldUpdateOrigin::User,
+            );
 
-        if updated {
-            self.mark_collection_item_field_touched(collection, item, field);
-        }
+            if updated {
+                core.mark_collection_item_field_touched(collection, item, field);
+            }
 
-        updated
+            updated
+        })
     }
 
     /// Marks one child field inside a logical collection item as touched.
@@ -4453,8 +4637,10 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         }
 
-        self.field_metadata_mut(&collection_item_field_identity(&collection, item, &field))
-            .touched = true;
+        self.mark_field_metadata(
+            &collection_item_field_identity(&collection, item, &field),
+            false,
+        );
         true
     }
 
@@ -4469,10 +4655,10 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         }
 
-        let metadata =
-            self.field_metadata_mut(&collection_item_field_identity(&collection, item, &field));
-        metadata.touched = true;
-        metadata.blurred = true;
+        self.mark_field_metadata(
+            &collection_item_field_identity(&collection, item, &field),
+            true,
+        );
 
         if self
             .validation_mode
@@ -4495,10 +4681,10 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         }
 
-        let metadata =
-            self.field_metadata_mut(&collection_item_field_identity(&collection, item, &field));
-        metadata.touched = true;
-        metadata.blurred = true;
+        self.mark_field_metadata(
+            &collection_item_field_identity(&collection, item, &field),
+            true,
+        );
         true
     }
 
@@ -4581,6 +4767,8 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         let id = self.allocate_validator_id();
         let key = ValidatorKey::new(path.identity(), id);
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
         let validate = move |model: &Model, context: ValidatorContext<'_, Model>| {
             validator(path.get(model), context)
         };
@@ -4590,13 +4778,16 @@ impl<Model, Error> FormCore<Model, Error> {
             RegisteredFieldValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Sync,
                 ),
                 validate: Some(Rc::new(validate)),
                 model_dependent: true,
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4617,19 +4808,24 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         let id = self.allocate_validator_id();
         let key = ValidatorKey::new(field, id);
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
 
         self.validation_chains.insert_field_validator(
             key,
             RegisteredFieldValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Sync,
                 ),
                 validate: Some(Rc::new(validator)),
                 model_dependent: true,
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4647,19 +4843,24 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         let id = self.allocate_validator_id();
         let key = ValidatorKey::new(path.identity(), id);
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
 
         self.validation_chains.insert_field_validator(
             key,
             RegisteredFieldValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Async,
                 ),
                 validate: None,
                 model_dependent: true,
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4697,19 +4898,24 @@ impl<Model, Error> FormCore<Model, Error> {
     {
         let id = self.allocate_validator_id();
         let key = ValidatorKey::new(field, id);
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
 
         self.validation_chains.insert_field_validator(
             key,
             RegisteredFieldValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Async,
                 ),
                 validate: None,
                 model_dependent,
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4807,6 +5013,8 @@ impl<Model, Error> FormCore<Model, Error> {
         Value: 'static,
     {
         let id = self.allocate_validator_id();
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
         let collection_identity = collection.identity();
         let field_identity_value = field.identity();
         let field_identity = field_identity_value
@@ -4839,12 +5047,15 @@ impl<Model, Error> FormCore<Model, Error> {
             key,
             RegisteredCollectionItemFieldValidator {
                 source: source.into(),
-                triggers: triggers.into(),
+                triggers,
                 collection_len: Rc::new(move |model| collection_for_len.get(model).len()),
                 validate: Rc::new(validate),
             },
         );
         self.ensure_collection_item_validator_states_for_collection(&collection_identity);
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4879,8 +5090,16 @@ impl<Model, Error> FormCore<Model, Error> {
         path: FieldPath<Model, Value>,
         id: ValidatorId,
     ) -> bool {
-        self.validation_chains
-            .remove_field_validator(&ValidatorKey::new(path.identity(), id))
+        let key = ValidatorKey::new(path.identity(), id);
+        let submit_applicable = self
+            .validation_chains
+            .field_validator(&key)
+            .is_some_and(|validator| validator.lifecycle.should_run(ValidationTrigger::Submit));
+        let removed = self.validation_chains.remove_field_validator(&key);
+        if removed && submit_applicable {
+            self.increment_submit_validation_generation();
+        }
+        removed
     }
 
     /// Removes the first field validator with this source label and clears its validation result.
@@ -4897,7 +5116,7 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         };
 
-        self.validation_chains.remove_field_validator(&key)
+        self.unregister_field_validator_by_id(path, key.id)
     }
 
     /// Registers a synchronous validator for the whole form and every trigger.
@@ -4930,18 +5149,23 @@ impl<Model, Error> FormCore<Model, Error> {
         Model: 'static,
     {
         let id = self.allocate_validator_id();
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
 
         self.validation_chains.insert_form_validator(
             id,
             RegisteredFormValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Sync,
                 ),
                 validate: Some(Box::new(validator)),
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -4957,18 +5181,23 @@ impl<Model, Error> FormCore<Model, Error> {
         Triggers: Into<ValidationTriggers>,
     {
         let id = self.allocate_validator_id();
+        let triggers = triggers.into();
+        let submit_applicable = triggers.contains(ValidationTrigger::Submit);
 
         self.validation_chains.insert_form_validator(
             id,
             RegisteredFormValidator {
                 lifecycle: validation_lifecycle::SourceState::new(
                     source.into(),
-                    triggers.into(),
+                    triggers,
                     validation_lifecycle::SourceKind::Async,
                 ),
                 validate: None,
             },
         );
+        if submit_applicable {
+            self.increment_submit_validation_generation();
+        }
 
         id
     }
@@ -5013,7 +5242,15 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Removes one form validator by stable ID and clears its validation result.
     pub fn unregister_form_validator_by_id(&mut self, id: ValidatorId) -> bool {
-        self.validation_chains.remove_form_validator(id)
+        let submit_applicable = self
+            .validation_chains
+            .form_validator(id)
+            .is_some_and(|validator| validator.lifecycle.should_run(ValidationTrigger::Submit));
+        let removed = self.validation_chains.remove_form_validator(id);
+        if removed && submit_applicable {
+            self.increment_submit_validation_generation();
+        }
+        removed
     }
 
     /// Removes the first form validator with this source label and clears its validation result.
@@ -5026,7 +5263,7 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         };
 
-        self.validation_chains.remove_form_validator(id)
+        self.unregister_form_validator_by_id(id)
     }
 
     /// Runs validators registered for one field and trigger, then form validators for the same trigger.
@@ -5111,12 +5348,18 @@ impl<Model, Error> FormCore<Model, Error> {
         if !validator.lifecycle.should_begin_async_after_sync(trigger) {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let form = self.draft.current().clone();
         let field_value = path.get(self.draft.current()).clone();
         let form_version = self.form_version;
         let field_version = self.current_field_version(&key.field);
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5184,11 +5427,17 @@ impl<Model, Error> FormCore<Model, Error> {
         if !validator.lifecycle.should_begin_async_after_sync(trigger) {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let form = self.draft.current().clone();
         let form_version = self.form_version;
         let field_version = self.current_field_version(&key.field);
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5256,8 +5505,14 @@ impl<Model, Error> FormCore<Model, Error> {
         {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5324,8 +5579,14 @@ impl<Model, Error> FormCore<Model, Error> {
         {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5695,10 +5956,16 @@ impl<Model, Error> FormCore<Model, Error> {
         if !validator.lifecycle.should_begin_async_after_sync(trigger) {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let form = self.draft.current().clone();
         let form_version = self.form_version;
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5757,8 +6024,14 @@ impl<Model, Error> FormCore<Model, Error> {
         {
             return None;
         }
+        let retires_submit_evidence = validator
+            .lifecycle
+            .submit_evidence_will_be_superseded_by(trigger);
 
         let submit_intent = self.submit_intent_for_trigger(trigger);
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let (source, run_id, outcome) = {
             let validator = self
                 .validation_chains
@@ -5992,14 +6265,8 @@ impl<Model, Error> FormCore<Model, Error> {
     where
         Intent: Clone + PartialEq + 'static,
     {
-        self.clear_submit_errors();
         self.mark_submit_attempt();
-        self.submission
-            .set_validation_intent(Some(SubmitIntentSnapshot::new(intent.clone())));
-        self.validate_all(ValidationTrigger::Submit);
-        self.mark_unresolved_async_validators_pending_for_submit_intent(&intent);
-        let valid = !self.has_submit_blocking_errors(&intent)
-            && !self.has_pending_validation_for_submit_intent(&intent);
+        let valid = self.run_submit_validation_cycle(intent.clone());
 
         if !valid {
             self.record_submit_status(
@@ -6009,6 +6276,19 @@ impl<Model, Error> FormCore<Model, Error> {
         }
 
         valid
+    }
+
+    fn run_submit_validation_cycle<Intent>(&mut self, intent: Intent) -> bool
+    where
+        Intent: Clone + PartialEq + 'static,
+    {
+        self.clear_submit_errors();
+        self.submission
+            .set_validation_intent(Some(SubmitIntentSnapshot::new(intent.clone())));
+        self.validate_all(ValidationTrigger::Submit);
+        self.mark_unresolved_async_validators_pending_for_submit_intent(&intent);
+        !self.has_submit_blocking_errors(&intent)
+            && !self.has_pending_validation_for_submit_intent(&intent)
     }
 
     fn validate_intent_for_submit_preflight<Intent>(
@@ -6050,8 +6330,11 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Marks all pending asynchronous validation runs stale so their completions no longer apply.
     pub fn invalidate_pending_async_validations(&mut self) {
-        self.invalidate_async_field_validators_for_form_change();
-        self.invalidate_pending_async_form_validators();
+        let retired_field_proof = self.invalidate_async_field_validators_for_form_change();
+        let retired_form_proof = self.invalidate_pending_async_form_validators();
+        if retired_field_proof || retired_form_proof {
+            self.increment_submit_validation_generation();
+        }
     }
 
     /// Records a submit attempt for error visibility decisions and submit-attempt-aware validation modes.
@@ -6073,13 +6356,15 @@ impl<Model, Error> FormCore<Model, Error> {
     ) -> bool {
         let key = ValidatorKey::new(path.identity(), id);
 
-        match self.validation_chains.field_validator_mut(&key) {
-            Some(validator) => {
-                validator.lifecycle.mark_skipped_without_trigger();
-                true
-            }
-            None => false,
+        let Some(validator) = self.validation_chains.field_validator_mut(&key) else {
+            return false;
+        };
+        let submit_applicable = validator.lifecycle.should_run(ValidationTrigger::Submit);
+        validator.lifecycle.mark_skipped_without_trigger();
+        if submit_applicable {
+            self.increment_submit_validation_generation();
         }
+        true
     }
 
     /// Marks the first registered field validator with this source label as skipped and clears its errors.
@@ -6101,13 +6386,15 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Marks one registered form validator as skipped and clears its errors.
     pub fn skip_form_validator_by_id(&mut self, id: ValidatorId) -> bool {
-        match self.validation_chains.form_validator_mut(id) {
-            Some(validator) => {
-                validator.lifecycle.mark_skipped_without_trigger();
-                true
-            }
-            None => false,
+        let Some(validator) = self.validation_chains.form_validator_mut(id) else {
+            return false;
+        };
+        let submit_applicable = validator.lifecycle.should_run(ValidationTrigger::Submit);
+        validator.lifecycle.mark_skipped_without_trigger();
+        if submit_applicable {
+            self.increment_submit_validation_generation();
         }
+        true
     }
 
     /// Marks the first registered form validator with this source label as skipped and clears its errors.
@@ -6400,12 +6687,14 @@ impl<Model, Error> FormCore<Model, Error> {
         path: &FieldPath<Model, Value>,
         value: Value,
         origin: FieldUpdateOrigin,
-    ) {
+    ) -> FieldReplacementEffects {
         let field = FormObserverField::from_path(path);
         let field_identity = field.identity();
 
         *path.get_mut(self.draft.current_mut()) = value;
+        let effects = self.reconcile_collection_affecting_replacement(&field_identity);
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.increment_field_version(&field_identity);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
@@ -6419,29 +6708,123 @@ impl<Model, Error> FormCore<Model, Error> {
             origin,
             value: FormObserverValue::Redacted,
         });
+        effects
     }
 
     /// Replaces a typed field value in the current draft.
     pub fn set_field<Value>(&mut self, path: FieldPath<Model, Value>, value: Value) {
-        self.replace_field_with_origin(&path, value, FieldUpdateOrigin::Programmatic);
-        self.validate_value_change_if_configured(path);
+        self.set_field_with_effects(path, value);
+    }
+
+    /// Replaces a field and returns adapter cleanup for tracked collections it contains.
+    #[doc(hidden)]
+    pub fn set_field_with_effects<Value>(
+        &mut self,
+        path: FieldPath<Model, Value>,
+        value: Value,
+    ) -> FieldReplacementEffects {
+        self.with_eligible_submit_continuation_root(move |core| {
+            let effects =
+                core.replace_field_with_origin(&path, value, FieldUpdateOrigin::Programmatic);
+            core.validate_value_change_if_configured(path);
+            effects
+        })
     }
 
     /// Replaces one typed field value because of user input.
     pub fn set_user_field<Value>(&mut self, path: FieldPath<Model, Value>, value: Value) {
-        self.replace_field_with_origin(&path, value, FieldUpdateOrigin::User);
-        self.mark_field_touched(path.clone());
-        self.validate_value_change_if_configured(path);
+        self.set_user_field_with_effects(path, value);
+    }
+
+    /// Replaces a user field and returns adapter cleanup for tracked collections it contains.
+    #[doc(hidden)]
+    pub fn set_user_field_with_effects<Value>(
+        &mut self,
+        path: FieldPath<Model, Value>,
+        value: Value,
+    ) -> FieldReplacementEffects {
+        self.with_eligible_submit_continuation_root(move |core| {
+            let effects = core.replace_field_with_origin(&path, value, FieldUpdateOrigin::User);
+            core.mark_field_touched(path.clone());
+            core.validate_value_change_if_configured(path);
+            effects
+        })
+    }
+
+    fn reconcile_collection_affecting_replacement(
+        &mut self,
+        written: &FieldIdentity,
+    ) -> FieldReplacementEffects {
+        let affected: Vec<_> = self
+            .field_store
+            .collection_keys()
+            .into_iter()
+            .filter(|collection| FieldAncestry::contains(written, collection))
+            .map(|collection| {
+                let new_len = self
+                    .tracked_collection_lengths
+                    .get(&collection)
+                    .map(|len| len(self.draft.current()));
+                (collection, new_len)
+            })
+            .collect();
+        let mut collections = Vec::with_capacity(affected.len());
+
+        for (collection, new_len) in affected {
+            if let Some(new_len) = new_len {
+                let displaced_items =
+                    self.replace_collection_identity_sequence(&collection, new_len);
+                collections.push(CollectionReplacementEffect {
+                    collection,
+                    displaced_items,
+                });
+            } else {
+                // Restored identity state can exist before this process has seen the typed path.
+                // Retire its old rows immediately, then mint the replacement sequence once a typed
+                // access supplies the current collection length.
+                let displaced_items = self
+                    .field_store
+                    .collection_mut(&collection)
+                    .expect("collection key should have identity state")
+                    .retire_current_items_for_replacement();
+                for item in displaced_items.iter().copied() {
+                    self.clear_collection_item_state(&collection, item);
+                }
+                collections.push(CollectionReplacementEffect {
+                    collection,
+                    displaced_items,
+                });
+            }
+        }
+
+        FieldReplacementEffects { collections }
+    }
+
+    fn replace_collection_identity_sequence(
+        &mut self,
+        collection: &FieldIdentity,
+        new_len: usize,
+    ) -> Vec<CollectionItemIdentity> {
+        let displaced_items = self
+            .field_store
+            .collection_mut(collection)
+            .expect("tracked collection length has no identity state")
+            .replace_current_items(new_len);
+        for item in displaced_items.iter().copied() {
+            self.clear_collection_item_state(collection, item);
+        }
+        self.ensure_collection_item_validator_states_for_collection(collection);
+        displaced_items
     }
 
     /// Marks a field as touched by user interaction.
     pub fn mark_field_touched<Value>(&mut self, path: FieldPath<Model, Value>) {
-        self.field_metadata_mut(&path.identity()).touched = true;
+        self.mark_field_metadata(&path.identity(), false);
     }
 
     /// Marks a field identity as touched by user interaction.
     pub fn mark_field_identity_touched(&mut self, field: &FieldIdentity) {
-        self.field_metadata_mut(field).touched = true;
+        self.mark_field_metadata(field, false);
     }
 
     /// Records a user change for field-like state that lives outside the form draft.
@@ -6452,6 +6835,7 @@ impl<Model, Error> FormCore<Model, Error> {
     /// pending ordinary async field validators do not become stale because adapter-owned field-like
     /// state changed.
     pub fn record_field_identity_user_change(&mut self, field: &FieldIdentity) {
+        self.increment_submit_validation_generation();
         self.increment_field_version(field);
         self.invalidate_async_field_validators_for_field(field);
         self.invalidate_pending_async_form_validators();
@@ -6473,9 +6857,7 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Marks a field identity as blurred and touched by user interaction.
     pub fn mark_field_identity_blurred(&mut self, field: &FieldIdentity) {
-        let metadata = self.field_metadata_mut(field);
-        metadata.touched = true;
-        metadata.blurred = true;
+        self.mark_field_metadata(field, true);
 
         if self
             .validation_mode
@@ -6500,18 +6882,32 @@ impl<Model, Error> FormCore<Model, Error> {
 
     /// Marks a field as blurred and touched without running blur validation.
     pub fn mark_field_blurred_without_validation<Value>(&mut self, path: FieldPath<Model, Value>) {
-        let metadata = self.field_metadata_mut(&path.identity());
-        metadata.touched = true;
-        metadata.blurred = true;
+        self.mark_field_metadata(&path.identity(), true);
     }
 
     fn ensure_collection_state<Item>(
         &mut self,
         path: &FieldPath<Model, Vec<Item>>,
-    ) -> &mut CollectionState {
+    ) -> &mut CollectionState
+    where
+        Model: 'static,
+        Item: 'static,
+    {
         let identity = path.identity();
         let baseline_len = path.get(self.draft.baseline()).len();
         let current_len = path.get(self.draft.current()).len();
+        let path_for_len = path.clone();
+        self.tracked_collection_lengths
+            .entry(identity.clone())
+            .or_insert_with(|| Rc::new(move |model| path_for_len.get(model).len()));
+
+        let replacement_pending = self
+            .field_store
+            .collection(&identity)
+            .is_some_and(|state| state.current_replacement_pending);
+        if replacement_pending {
+            self.replace_collection_identity_sequence(&identity, current_len);
+        }
 
         self.ensure_collection_state_by_identity(identity, baseline_len, current_len)
     }
@@ -6524,13 +6920,17 @@ impl<Model, Error> FormCore<Model, Error> {
         baseline_len: usize,
         current_len: usize,
     ) -> &mut CollectionState {
-        let state = self
+        let minted = self
             .field_store
-            .collection_or_insert_with(collection, CollectionState::unminted);
+            .collection_or_insert_with(collection.clone(), CollectionState::unminted)
+            .mint_items_if_unminted(baseline_len, current_len);
+        if minted {
+            self.increment_submit_validation_generation();
+        }
 
-        state.mint_items_if_unminted(baseline_len, current_len);
-
-        state
+        self.field_store
+            .collection_mut(&collection)
+            .expect("collection state should exist after insertion")
     }
 
     /// Restores every tracked collection's current item sequence from its baseline sequence, for a
@@ -6650,13 +7050,16 @@ impl<Model, Error> FormCore<Model, Error> {
             .is_some_and(|state| state.current_index(item).is_some())
     }
 
-    fn insert_collection_item_with_origin<Item>(
+    fn insert_collection_item_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
         origin: FieldUpdateOrigin,
-    ) -> Option<CollectionItemIdentity> {
+    ) -> Option<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
         let current_len = path.get(self.draft.current()).len();
         if index > current_len {
             return None;
@@ -6684,12 +7087,15 @@ impl<Model, Error> FormCore<Model, Error> {
         Some(item_identity)
     }
 
-    fn remove_collection_item_with_origin<Item>(
+    fn remove_collection_item_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         origin: FieldUpdateOrigin,
-    ) -> Option<Item> {
+    ) -> Option<Item>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let index = self.ensure_collection_state(&path).current_index(item)?;
         let removed = path.get_mut(self.draft.current_mut()).remove(index);
@@ -6711,13 +7117,16 @@ impl<Model, Error> FormCore<Model, Error> {
         Some(removed)
     }
 
-    fn move_collection_item_to_index_with_origin<Item>(
+    fn move_collection_item_to_index_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         index: usize,
         origin: FieldUpdateOrigin,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let len = path.get(self.draft.current()).len();
         if index >= len {
@@ -6752,13 +7161,16 @@ impl<Model, Error> FormCore<Model, Error> {
         true
     }
 
-    fn swap_collection_items_with_origin<Item>(
+    fn swap_collection_items_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         a: usize,
         b: usize,
         origin: FieldUpdateOrigin,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         let len = path.get(self.draft.current()).len();
         if a >= len || b >= len {
@@ -6788,13 +7200,16 @@ impl<Model, Error> FormCore<Model, Error> {
         true
     }
 
-    fn replace_collection_item_with_origin<Item>(
+    fn replace_collection_item_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         index: usize,
         item: Item,
         origin: FieldUpdateOrigin,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         {
             let items = path.get_mut(self.draft.current_mut());
@@ -6839,11 +7254,14 @@ impl<Model, Error> FormCore<Model, Error> {
         true
     }
 
-    fn clear_collection_items_with_origin<Item>(
+    fn clear_collection_items_with_origin<Item: 'static>(
         &mut self,
         path: FieldPath<Model, Vec<Item>>,
         origin: FieldUpdateOrigin,
-    ) -> Vec<CollectionItemIdentity> {
+    ) -> Vec<CollectionItemIdentity>
+    where
+        Model: 'static,
+    {
         let collection = path.identity();
         self.ensure_collection_state(&path);
         let cleared: Vec<CollectionItemIdentity> = self
@@ -6869,14 +7287,17 @@ impl<Model, Error> FormCore<Model, Error> {
         cleared
     }
 
-    fn replace_collection_item_field_with_origin<Item, Value>(
+    fn replace_collection_item_field_with_origin<Item: 'static, Value>(
         &mut self,
         collection: &FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: &FieldPath<Item, Value>,
         value: Value,
         origin: FieldUpdateOrigin,
-    ) -> bool {
+    ) -> bool
+    where
+        Model: 'static,
+    {
         let Some(index) = self.ensure_collection_state(collection).current_index(item) else {
             return false;
         };
@@ -6890,6 +7311,7 @@ impl<Model, Error> FormCore<Model, Error> {
         *field.get_mut(item_value) = value;
         let collection_identity = collection.identity();
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.increment_field_version(&collection_identity);
         self.increment_field_version(&identity);
         self.invalidate_async_field_validators_for_model_change();
@@ -6920,6 +7342,7 @@ impl<Model, Error> FormCore<Model, Error> {
 
     fn begin_collection_mutation(&mut self, collection: &FieldIdentity, origin: FieldUpdateOrigin) {
         self.increment_form_version();
+        self.increment_submit_validation_generation();
         self.increment_field_version(collection);
         self.invalidate_async_field_validators_for_model_change();
         self.invalidate_pending_async_form_validators();
@@ -7035,6 +7458,19 @@ impl<Model, Error> FormCore<Model, Error> {
         self.field_store.metadata_mut(identity)
     }
 
+    fn mark_field_metadata(&mut self, identity: &FieldIdentity, blurred: bool) -> bool {
+        let current = self.field_store.metadata(identity);
+        if current.touched && (!blurred || current.blurred) {
+            return false;
+        }
+
+        let metadata = self.field_metadata_mut(identity);
+        metadata.touched = true;
+        metadata.blurred |= blurred;
+        self.increment_submit_validation_generation();
+        true
+    }
+
     fn increment_field_version(&mut self, identity: &FieldIdentity) {
         self.field_store.increment_version(identity);
     }
@@ -7069,6 +7505,45 @@ impl<Model, Error> FormCore<Model, Error> {
             .form_version
             .checked_add(1)
             .expect("form version counter exhausted");
+    }
+
+    fn increment_submit_validation_generation(&mut self) {
+        self.submit_validation_generation = self
+            .submit_validation_generation
+            .checked_add(1)
+            .expect("submit validation generation exhausted");
+        if self.eligible_submit_continuation_depth == 0 {
+            self.continuation_barrier_generation = self
+                .continuation_barrier_generation
+                .checked_add(1)
+                .expect("submit continuation barrier generation exhausted");
+        }
+    }
+
+    fn with_eligible_submit_continuation_root<Result>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result,
+    ) -> Result {
+        self.eligible_submit_continuation_depth += 1;
+        let result = operation(self);
+        self.eligible_submit_continuation_depth -= 1;
+        result
+    }
+
+    /// Extends an ordinary draft operation across adapter-owned validation scheduling.
+    #[doc(hidden)]
+    pub fn begin_eligible_submit_continuation_follow_up(&mut self) {
+        self.eligible_submit_continuation_depth += 1;
+    }
+
+    /// Ends adapter-owned validation scheduling for an ordinary draft operation.
+    #[doc(hidden)]
+    pub fn end_eligible_submit_continuation_follow_up(&mut self) {
+        assert!(
+            self.eligible_submit_continuation_depth > 0,
+            "eligible submit continuation root ended without a matching begin"
+        );
+        self.eligible_submit_continuation_depth -= 1;
     }
 
     fn record_submit_status<Intent>(&mut self, status: SubmitStatus, intent: Intent)
@@ -7130,28 +7605,28 @@ impl<Model, Error> FormCore<Model, Error> {
         }
     }
 
-    fn invalidate_async_field_validators_for_form_change(&mut self) {
-        self.invalidate_async_field_validators(|_, _| true);
+    fn invalidate_async_field_validators_for_form_change(&mut self) -> bool {
+        self.invalidate_async_field_validators(|_, _| true)
     }
 
-    fn invalidate_async_field_validators_for_model_change(&mut self) {
+    fn invalidate_async_field_validators_for_model_change(&mut self) -> bool {
         // Async field validators receive the whole form snapshot, so any draft edit can make
         // their pending or completed result describe stale context. File-selection validators that
         // do not request form context are scoped to adapter-owned file state and should not be
         // invalidated by ordinary draft edits.
         self.invalidate_async_field_validators(|key, validator| {
             !key.field.is_file() || validator.model_dependent
-        });
+        })
     }
 
-    fn invalidate_async_field_validators_for_field(&mut self, field: &FieldIdentity) {
-        self.invalidate_async_field_validators(|key, _| key.field == *field);
+    fn invalidate_async_field_validators_for_field(&mut self, field: &FieldIdentity) -> bool {
+        self.invalidate_async_field_validators(|key, _| key.field == *field)
     }
 
     fn invalidate_async_field_validators(
         &mut self,
         mut include: impl FnMut(&ValidatorKey, &RegisteredFieldValidator<Model, Error>) -> bool,
-    ) {
+    ) -> bool {
         let keys: Vec<_> = self
             .validation_chains
             .sorted_field_entries()
@@ -7160,6 +7635,7 @@ impl<Model, Error> FormCore<Model, Error> {
             .map(|(key, _)| key.clone())
             .collect();
 
+        let mut retired_submit_proof = false;
         for key in keys {
             let Some(validator) = self.validation_chains.field_validator_mut(&key) else {
                 continue;
@@ -7174,11 +7650,14 @@ impl<Model, Error> FormCore<Model, Error> {
                 continue;
             }
 
+            retired_submit_proof |= validator.lifecycle.should_run(ValidationTrigger::Submit);
             validator.lifecycle.mark_stale();
         }
+        retired_submit_proof
     }
 
-    fn invalidate_pending_async_form_validators(&mut self) {
+    fn invalidate_pending_async_form_validators(&mut self) -> bool {
+        let mut retired_submit_proof = false;
         for validator in self.validation_chains.form_values_mut() {
             if validator.lifecycle.is_sync()
                 || !matches!(
@@ -7189,8 +7668,10 @@ impl<Model, Error> FormCore<Model, Error> {
                 continue;
             }
 
+            retired_submit_proof |= validator.lifecycle.should_run(ValidationTrigger::Submit);
             validator.lifecycle.mark_stale();
         }
+        retired_submit_proof
     }
 
     fn validate_value_change_if_configured<Value>(&mut self, path: FieldPath<Model, Value>) {
@@ -7547,6 +8028,17 @@ impl<Model, Error> FormCore<Model, Error> {
         let submit_intent = self.submit_intent_for_trigger(trigger);
 
         for key in keys {
+            let retires_submit_evidence =
+                self.validation_chains
+                    .field_validator(&key)
+                    .is_some_and(|validator| {
+                        validator
+                            .lifecycle
+                            .submit_evidence_will_be_superseded_by(trigger)
+                    });
+            if retires_submit_evidence {
+                self.increment_submit_validation_generation();
+            }
             let Some(validator) = self.validation_chains.field_validator_mut(&key) else {
                 continue;
             };
@@ -7572,6 +8064,17 @@ impl<Model, Error> FormCore<Model, Error> {
             .skipped_async_field_keys_to_clear(field, trigger);
 
         for key in keys {
+            let retires_submit_evidence =
+                self.validation_chains
+                    .field_validator(&key)
+                    .is_some_and(|validator| {
+                        validator
+                            .lifecycle
+                            .submit_evidence_will_be_superseded_by(trigger)
+                    });
+            if retires_submit_evidence {
+                self.increment_submit_validation_generation();
+            }
             if let Some(validator) = self.validation_chains.field_validator_mut(&key) {
                 validator.lifecycle.clear_async_skip();
             }
@@ -7583,7 +8086,7 @@ impl<Model, Error> FormCore<Model, Error> {
         key: ValidatorKey,
         trigger: ValidationTrigger,
     ) -> Option<ValidationStatus> {
-        let errors = {
+        let (errors, retires_submit_evidence) = {
             let validator = self.validation_chains.field_validator(&key)?;
             if !validator.lifecycle.should_run(trigger) {
                 return None;
@@ -7602,8 +8105,16 @@ impl<Model, Error> FormCore<Model, Error> {
                 submit_intent: self.submit_intent_ref_for_trigger(trigger),
             };
 
-            validate(model, context)
+            (
+                validate(model, context),
+                validator
+                    .lifecycle
+                    .submit_evidence_will_be_superseded_by(trigger),
+            )
         };
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let submit_intent = self.submit_intent_for_trigger(trigger);
         let validator = self
             .validation_chains
@@ -7627,7 +8138,7 @@ impl<Model, Error> FormCore<Model, Error> {
         let template_key = collection_item_template_key_for_field(&key.field, key.id)?;
         let (collection, item, _) = key.field.collection_item_parts()?;
         let collection = FieldIdentity::new(collection);
-        let errors = {
+        let (errors, retires_submit_evidence) = {
             let validator = self
                 .validation_chains
                 .collection_item_template(&template_key)?;
@@ -7648,8 +8159,14 @@ impl<Model, Error> FormCore<Model, Error> {
                 submit_intent: self.submit_intent_ref_for_trigger(trigger),
             };
 
-            (validator.validate)(model, collection_state, item, context)
+            (
+                (validator.validate)(model, collection_state, item, context),
+                lifecycle.submit_evidence_will_be_superseded_by(trigger),
+            )
         };
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let submit_intent = self.submit_intent_for_trigger(trigger);
         let validator = self
             .validation_chains
@@ -7691,6 +8208,17 @@ impl<Model, Error> FormCore<Model, Error> {
         let submit_intent = self.submit_intent_for_trigger(trigger);
 
         for id in ids {
+            let retires_submit_evidence =
+                self.validation_chains
+                    .form_validator(id)
+                    .is_some_and(|validator| {
+                        validator
+                            .lifecycle
+                            .submit_evidence_will_be_superseded_by(trigger)
+                    });
+            if retires_submit_evidence {
+                self.increment_submit_validation_generation();
+            }
             let Some(validator) = self.validation_chains.form_validator_mut(id) else {
                 continue;
             };
@@ -7712,6 +8240,17 @@ impl<Model, Error> FormCore<Model, Error> {
             .skipped_async_form_ids_to_clear(trigger);
 
         for id in ids {
+            let retires_submit_evidence =
+                self.validation_chains
+                    .form_validator(id)
+                    .is_some_and(|validator| {
+                        validator
+                            .lifecycle
+                            .submit_evidence_will_be_superseded_by(trigger)
+                    });
+            if retires_submit_evidence {
+                self.increment_submit_validation_generation();
+            }
             if let Some(validator) = self.validation_chains.form_validator_mut(id) {
                 validator.lifecycle.clear_async_skip();
             }
@@ -7723,7 +8262,7 @@ impl<Model, Error> FormCore<Model, Error> {
         id: ValidatorId,
         trigger: ValidationTrigger,
     ) -> Option<ValidationStatus> {
-        let errors = {
+        let (errors, retires_submit_evidence) = {
             let validator = self.validation_chains.form_validator(id)?;
             if !validator.lifecycle.should_run(trigger) {
                 return None;
@@ -7739,8 +8278,16 @@ impl<Model, Error> FormCore<Model, Error> {
                 submit_intent: self.submit_intent_ref_for_trigger(trigger),
             };
 
-            validate(context)
+            (
+                validate(context),
+                validator
+                    .lifecycle
+                    .submit_evidence_will_be_superseded_by(trigger),
+            )
         };
+        if retires_submit_evidence {
+            self.increment_submit_validation_generation();
+        }
         let submit_intent = self.submit_intent_for_trigger(trigger);
         let validator = self
             .validation_chains

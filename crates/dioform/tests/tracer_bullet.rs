@@ -20,9 +20,9 @@ use dioform::{
     CollectionParsedTextBinding, CollectionRadioGroupBinding, CollectionRenderedSelectBinding,
     CollectionSelectBinding, CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle,
     FieldGroup, FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace,
-    FormListenerEvent, FormValidationError, ParsedTextBinding, ProgressiveSubmitResult,
-    SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker, SubmitError,
-    SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
+    FormListenerEvent, FormValidationError, ManagedSubmitContinuation, ParsedTextBinding,
+    ProgressiveSubmitResult, SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker,
+    SubmitError, SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
     ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
     provide_form_context, try_use_form_context, use_collection_item_date,
     use_collection_item_number, use_date, use_date_with, use_debounced_field_listener,
@@ -5144,7 +5144,7 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
         .expect("restored form state snapshot should serialize");
     let reserialized_value: serde_json::Value =
         serde_json::from_str(&reserialized).expect("reserialized snapshot should be JSON");
-    assert_eq!(serialized_value["version"], serde_json::json!(4));
+    assert_eq!(serialized_value["version"], serde_json::json!(5));
     assert_eq!(reserialized_value["version"], serialized_value["version"]);
 
     let serialized_metadata = serialized
@@ -6059,6 +6059,35 @@ fn removing_collection_item_clears_parse_state_and_submit_blocker() {
     );
     assert!(called.get());
     assert_eq!(handle.last_submit_status(), Some(SubmitStatus::Succeeded));
+}
+
+#[test]
+fn replacing_a_collection_field_clears_displaced_parse_state_and_blocks_old_writes() {
+    let handle = FormHandle::new(invoice_collection_form());
+    let lines_path = InvoiceCollectionForm::fields().lines();
+    let lines = handle.collection(lines_path.clone());
+    let old_item = lines.items()[0].clone();
+    let old_quantity = old_item.number(InvoiceCollectionLine::fields().quantity());
+
+    old_quantity.on_input("not-a-number");
+    assert_eq!(handle.parse_errors().len(), 1);
+
+    handle.set_field(lines_path, invoice_collection_form().lines);
+
+    let new_item = handle
+        .collection(InvoiceCollectionForm::fields().lines())
+        .items()[0]
+        .clone();
+    assert_ne!(new_item.identity(), old_item.identity());
+    assert!(!old_quantity.is_resolved());
+    assert!(old_quantity.parse_error().is_none());
+    assert!(handle.parse_errors().is_empty());
+    assert!(handle.can_submit());
+
+    old_quantity.on_input("7");
+
+    assert_eq!(handle.snapshot().lines[0].quantity, 2);
+    assert!(old_quantity.parse_error().is_none());
 }
 
 #[test]
@@ -8266,17 +8295,21 @@ fn collection_item_value_selectors_rerender_when_a_field_containing_the_collecti
     );
     product_name_dom.render_immediate_to_vec();
 
+    assert!(!probe.product_name.is_resolved());
     assert_eq!(
         probe.product_name_values.borrow().as_slice(),
-        ["Keyboard".to_owned(), "Mouse".to_owned()]
+        ["Keyboard".to_owned(), String::new()]
+    );
+    assert_eq!(
+        probe.form.collection(nested_invoice_lines_path()).items()[0]
+            .text(nested_invoice_product_name_path())
+            .value(),
+        "Mouse"
     );
 }
 
-/// The same holds one **Field Ancestry** hop away from the write: the blind write addresses a
-/// collection-item child, and the write the mounted reader must wake on addresses the field
-/// containing the **Collection Field**, which never resolves the item's identity itself. It is the
-/// containing field rather than the collection field because **Field Ancestry** is strict between a
-/// collection and its own items.
+/// A retained reader wakes when a containing field replaces its collection and observes that its
+/// displaced logical item is now unresolved, even when nothing had read the containing field.
 #[test]
 fn a_collection_item_reader_mounting_after_a_write_nothing_had_read_wakes_through_field_ancestry() {
     let probe = Rc::new(NestedCollectionItemSelectorProbe::new());
@@ -8304,9 +8337,16 @@ fn a_collection_item_reader_mounting_after_a_write_nothing_had_read_wakes_throug
     );
     product_name_dom.render_immediate_to_vec();
 
+    assert!(!probe.product_name.is_resolved());
     assert_eq!(
         probe.product_name_values.borrow().as_slice(),
-        ["Mouse".to_owned(), "Trackball".to_owned()]
+        ["Mouse".to_owned(), String::new()]
+    );
+    assert_eq!(
+        probe.form.collection(nested_invoice_lines_path()).items()[0]
+            .text(nested_invoice_product_name_path())
+            .value(),
+        "Trackball"
     );
 }
 
@@ -9955,8 +9995,8 @@ fn dioxus_shortening_the_collection_path_directly_keeps_name_and_value_agreeing(
     let second = lines.items()[1].clone();
     let description = second.text(InvoiceCollectionLine::fields().description());
 
-    // Writing the collection path directly mutates the draft `Vec` without touching collection
-    // state, leaving an index that resolves for an item the draft no longer holds.
+    // Generic replacement retires the old logical rows, so a retained binding cannot resolve by
+    // position into the replacement collection.
     handle.set_field(lines_path, Vec::new());
 
     assert_eq!(description.name(), None);
@@ -12611,6 +12651,7 @@ struct PendingFileAsyncSubmitProbe {
     result: RefCell<Option<SubmitResult>>,
     submitted_files: RefCell<Option<Vec<SelectedFile>>>,
     submit_calls: Cell<u32>,
+    continuation: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -12902,7 +12943,11 @@ fn pending_file_async_submit_probe(probe: Rc<PendingFileAsyncSubmitProbe>) -> El
 
             let submit = probe.submit.clone();
             let submit_probe = Rc::clone(&probe);
-            let result = form.managed_submit().on_submit_async_with_files(
+            let mut binding = form.managed_submit();
+            if probe.continuation.get() {
+                binding = binding.with_continuation(ManagedSubmitContinuation::RevalidateOnce);
+            }
+            let result = binding.on_submit_async_with_files(
                 managed_submit_event(),
                 move |_submitted, files| {
                     submit_probe
@@ -13426,8 +13471,41 @@ fn dioxus_managed_async_submit_does_not_submit_stale_files_after_selection_chang
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.submit_calls.get(), 0);
+    assert!(!handle.is_submitting());
+    assert_eq!(
+        handle.last_submit_status(),
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
+    );
     assert!(probe.submitted_files.borrow().is_none());
     assert_eq!(attachments.selected_files()[0].name(), "portfolio.zip");
+}
+
+#[test]
+fn managed_submit_continuation_does_not_accept_file_selection_changes() {
+    let probe = Rc::new(PendingFileAsyncSubmitProbe::default());
+    probe.continuation.set(true);
+    let mut dom = VirtualDom::new_with_props(pending_file_async_submit_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle
+        .file(FileFieldKey::new("attachments"))
+        .select_files([SelectedFileMetadata::new("portfolio.zip", 4_096)]);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.submit_calls.get(), 0);
+    assert!(!handle.is_submitting());
+    assert_eq!(
+        handle.last_submit_status(),
+        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
+    );
 }
 
 #[test]
@@ -14026,73 +14104,50 @@ fn dioxus_sync_submit_does_not_restart_pending_submit_validation_on_duplicate_cl
 
 #[derive(Default)]
 struct ManagedAsyncSubmitValidationProbe {
-    delay: AsyncGate<()>,
     validation: AsyncGate<Vec<&'static str>>,
     submit: AsyncGate<()>,
     handle: RefCell<Option<FormHandle<SignupForm, &'static str>>>,
-    validator_id: RefCell<Option<ValidatorId>>,
     submit_result: RefCell<Option<SubmitResult>>,
     validation_snapshot: RefCell<Option<(String, String)>>,
     submitted_snapshot: RefCell<Option<SignupForm>>,
+    submitted_intent: RefCell<Option<SignupSubmitIntent>>,
+    continuation: Cell<bool>,
+    write_on_attempt: Cell<bool>,
+    validation_calls: Cell<u32>,
     submit_calls: Cell<u32>,
     events: RefCell<Vec<SubmitListenerEvent>>,
 }
 
 fn managed_async_submit_validation_probe(probe: Rc<ManagedAsyncSubmitValidationProbe>) -> Element {
-    let form = use_form_handle({
-        let probe = Rc::clone(&probe);
-
-        move || {
-            let form: FormHandle<SignupForm, &'static str> =
-                FormHandle::new_with_error_type(SignupForm {
-                    email: "ada@example.com".to_owned(),
-                });
-            let email = SignupForm::fields().email();
-            let validator_id = form.write_advanced(|core| {
-                core.register_async_field_validator_for_triggers(
-                    email,
-                    "availability",
-                    ValidationTriggers::new([ValidationTrigger::Change, ValidationTrigger::Submit]),
-                )
-            });
-
-            probe.validator_id.borrow_mut().replace(validator_id);
-            form
-        }
-    });
-    let email = SignupForm::fields().email();
-    let validator_id = probe
-        .validator_id
-        .borrow()
-        .expect("probe should store validator id");
+    let validation = probe.validation.clone();
+    let validation_probe = Rc::clone(&probe);
+    let form = use_form_config(
+        FormConfig::<SignupForm, &'static str>::new(SignupForm {
+            email: "ada@example.com".to_owned(),
+        })
+        .async_field_validator(SignupForm::fields().email(), "availability")
+        .on(ValidationTrigger::Submit)
+        .check(move |value, snapshot| {
+            validation_probe
+                .validation_calls
+                .set(validation_probe.validation_calls.get() + 1);
+            validation_probe
+                .validation_snapshot
+                .borrow_mut()
+                .replace((value, snapshot.value().email.clone()));
+            validation.future()
+        }),
+    );
 
     let listener_probe = Rc::clone(&probe);
     use_submit_listener(form.clone(), move |context| {
         listener_probe.events.borrow_mut().push(context.event());
-    });
-
-    let validation_email = email.clone();
-    use_hook({
-        let form = form.clone();
-        let probe = Rc::clone(&probe);
-
-        move || {
-            let delay = probe.delay.future();
-            let validation = probe.validation.clone();
-            let captured_probe = Rc::clone(&probe);
-
-            form.validate_async_field_validator_with_debounce(
-                validation_email.clone(),
-                validator_id,
-                ValidationTrigger::Change,
-                delay,
-                move |value, snapshot| {
-                    captured_probe
-                        .validation_snapshot
-                        .borrow_mut()
-                        .replace((value, snapshot.value().email.clone()));
-                    validation.future()
-                },
+        if listener_probe.write_on_attempt.get()
+            && context.event() == SubmitListenerEvent::SubmitAttempted
+        {
+            context.form().set_field(
+                SignupForm::fields().email(),
+                "listener@example.com".to_owned(),
             );
         }
     });
@@ -14104,18 +14159,20 @@ fn managed_async_submit_validation_probe(probe: Rc<ManagedAsyncSubmitValidationP
         move || {
             let submit = probe.submit.clone();
             let submit_probe = Rc::clone(&probe);
-            let result =
-                form.managed_submit()
-                    .on_submit_async(managed_submit_event(), move |submitted| {
-                        submit_probe
-                            .submit_calls
-                            .set(submit_probe.submit_calls.get() + 1);
-                        submit_probe
-                            .submitted_snapshot
-                            .borrow_mut()
-                            .replace(submitted.value().clone());
-                        submit.future()
-                    });
+            let mut binding = form.managed_submit();
+            if probe.continuation.get() {
+                binding = binding.with_continuation(ManagedSubmitContinuation::RevalidateOnce);
+            }
+            let result = binding.on_submit_async(managed_submit_event(), move |submitted| {
+                submit_probe
+                    .submit_calls
+                    .set(submit_probe.submit_calls.get() + 1);
+                submit_probe
+                    .submitted_snapshot
+                    .borrow_mut()
+                    .replace(submitted.value().clone());
+                submit.future()
+            });
 
             probe.submit_result.borrow_mut().replace(result);
         }
@@ -14123,6 +14180,333 @@ fn managed_async_submit_validation_probe(probe: Rc<ManagedAsyncSubmitValidationP
 
     probe.handle.borrow_mut().replace(form);
     VNode::empty()
+}
+
+fn intent_managed_submit_continuation_probe(
+    probe: Rc<ManagedAsyncSubmitValidationProbe>,
+) -> Element {
+    let validation = probe.validation.clone();
+    let validation_probe = Rc::clone(&probe);
+    let form = use_form_config(
+        FormConfig::<SignupForm, &'static str>::new(SignupForm {
+            email: "ada@example.com".to_owned(),
+        })
+        .async_field_validator(SignupForm::fields().email(), "availability")
+        .on(ValidationTrigger::Submit)
+        .check(move |_value, _snapshot| {
+            validation_probe
+                .validation_calls
+                .set(validation_probe.validation_calls.get() + 1);
+            validation.future()
+        }),
+    );
+
+    let listener_probe = Rc::clone(&probe);
+    use_submit_listener(form.clone(), move |context| {
+        listener_probe.events.borrow_mut().push(context.event());
+    });
+
+    use_hook({
+        let form = form.clone();
+        let probe = Rc::clone(&probe);
+
+        move || {
+            let submit = probe.submit.clone();
+            let submit_probe = Rc::clone(&probe);
+            let result = form
+                .managed_submit()
+                .intent(SignupSubmitIntent::Publish)
+                .with_continuation(ManagedSubmitContinuation::RevalidateOnce)
+                .on_submit_async(managed_submit_event(), move |submitted| {
+                    submit_probe
+                        .submit_calls
+                        .set(submit_probe.submit_calls.get() + 1);
+                    submit_probe
+                        .submitted_snapshot
+                        .borrow_mut()
+                        .replace(submitted.value().clone());
+                    submit_probe
+                        .submitted_intent
+                        .borrow_mut()
+                        .replace(*submitted.intent());
+                    submit.future()
+                });
+
+            probe.submit_result.borrow_mut().replace(result);
+        }
+    });
+
+    probe.handle.borrow_mut().replace(form);
+    VNode::empty()
+}
+
+#[test]
+fn managed_submit_continuation_revalidates_one_draft_replacement() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    probe.continuation.set(true);
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    assert_eq!(probe.validation_calls.get(), 1);
+    assert_eq!(handle.submit_attempt_count(), 1);
+
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("grace@example.com");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(probe.submit_calls.get(), 0);
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [SubmitListenerEvent::SubmitAttempted]
+    );
+
+    probe.validation.complete(Vec::new());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(probe.submit_calls.get(), 1);
+    assert_eq!(
+        probe.submitted_snapshot.borrow().as_ref(),
+        Some(&SignupForm {
+            email: "grace@example.com".to_owned(),
+        })
+    );
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmissionStarted,
+        ]
+    );
+}
+
+#[test]
+fn managed_submit_continuation_accepts_a_submit_listener_draft_replacement() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    probe.continuation.set(true);
+    probe.write_on_attempt.set(true);
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [SubmitListenerEvent::SubmitAttempted]
+    );
+
+    probe.validation.complete(Vec::new());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.submit_calls.get(), 1);
+    assert_eq!(
+        probe.submitted_snapshot.borrow().as_ref(),
+        Some(&SignupForm {
+            email: "listener@example.com".to_owned(),
+        })
+    );
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmissionStarted,
+        ]
+    );
+}
+
+#[test]
+fn intent_managed_submit_continuation_retains_the_original_intent() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(intent_managed_submit_continuation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("grace@example.com");
+    dom.render_immediate_to_vec();
+    probe.validation.complete(Vec::new());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(probe.submit_calls.get(), 1);
+    assert_eq!(
+        *probe.submitted_intent.borrow(),
+        Some(SignupSubmitIntent::Publish)
+    );
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmissionStarted,
+        ]
+    );
+}
+
+#[test]
+fn managed_submit_remains_strict_without_explicit_continuation() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("grace@example.com");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 1);
+    assert_eq!(probe.submit_calls.get(), 0);
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
+        ]
+    );
+}
+
+#[test]
+fn managed_submit_continuation_is_spent_when_the_second_cycle_starts() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    probe.continuation.set(true);
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("grace@example.com");
+    dom.render_immediate_to_vec();
+    assert_eq!(probe.validation_calls.get(), 2);
+
+    handle
+        .text(SignupForm::fields().email())
+        .on_input("lin@example.com");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(probe.submit_calls.get(), 0);
+    assert_eq!(handle.submit_attempt_count(), 1);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
+        ]
+    );
+}
+
+#[test]
+fn managed_submit_continuation_coalesces_replacements_before_recapture() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    probe.continuation.set(true);
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let binding = handle.text(SignupForm::fields().email());
+    binding.on_input("grace@example.com");
+    binding.on_input("lin@example.com");
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 2);
+    assert_eq!(handle.submit_attempt_count(), 1);
+    probe.validation.complete(Vec::new());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.submit_calls.get(), 1);
+    assert_eq!(
+        probe.submitted_snapshot.borrow().as_ref(),
+        Some(&SignupForm {
+            email: "lin@example.com".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn managed_submit_continuation_rejects_standalone_metadata_changes() {
+    let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+    probe.continuation.set(true);
+    let mut dom =
+        VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    dom.render_immediate_to_vec();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    handle.mark_field_touched(SignupForm::fields().email());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.validation_calls.get(), 1);
+    assert_eq!(probe.submit_calls.get(), 0);
+    assert_eq!(
+        probe.events.borrow().as_slice(),
+        [
+            SubmitListenerEvent::SubmitAttempted,
+            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
+        ]
+    );
 }
 
 #[cfg(feature = "serde")]
@@ -14921,10 +15305,7 @@ fn dioxus_managed_async_submit_does_not_submit_after_reset_while_validation_is_p
 
     assert_eq!(probe.submit_calls.get(), 0);
     assert!(!handle.is_submitting());
-    assert_eq!(
-        handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
-    );
+    assert_eq!(handle.last_submit_status(), None);
 
     probe.validation.complete(Vec::new());
     dom.render_immediate_to_vec();
@@ -14933,7 +15314,7 @@ fn dioxus_managed_async_submit_does_not_submit_after_reset_while_validation_is_p
 }
 
 #[test]
-fn submit_listener_reports_terminal_block_when_managed_validation_is_cancelled() {
+fn submit_listener_reports_no_terminal_event_when_managed_validation_is_cancelled() {
     let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
     let mut dom =
         VirtualDom::new_with_props(managed_async_submit_validation_probe, Rc::clone(&probe));
@@ -14959,10 +15340,7 @@ fn submit_listener_reports_terminal_block_when_managed_validation_is_cancelled()
     assert_eq!(probe.submit_calls.get(), 0);
     assert_eq!(
         probe.events.borrow().as_slice(),
-        [
-            SubmitListenerEvent::SubmitAttempted,
-            SubmitListenerEvent::SubmitBlocked(SubmitBlocker::StaleSubmitValidation),
-        ]
+        [SubmitListenerEvent::SubmitAttempted]
     );
 }
 
@@ -15003,10 +15381,7 @@ fn dioxus_managed_async_submit_does_not_submit_after_reinitialize_while_validati
         handle.field_value(SignupForm::fields().email()),
         "grace@example.com"
     );
-    assert_eq!(
-        handle.last_submit_status(),
-        Some(SubmitStatus::Blocked(SubmitBlocker::StaleSubmitValidation))
-    );
+    assert_eq!(handle.last_submit_status(), None);
 
     probe.validation.complete(Vec::new());
     dom.render_immediate_to_vec();
@@ -18679,11 +19054,12 @@ fn dioxus_managed_async_submit_blocks_parse_errors_that_appear_while_validation_
     assert_eq!(handle.parse_errors().len(), 1);
     assert_eq!(
         handle.submit_availability().blockers(),
-        &[
-            SubmitBlocker::ParseErrors,
-            SubmitBlocker::PendingValidation,
-            SubmitBlocker::InFlightSubmission,
-        ]
+        &[SubmitBlocker::ParseErrors, SubmitBlocker::PendingValidation,]
+    );
+    assert!(!handle.is_submitting());
+    assert_eq!(
+        handle.last_submit_status(),
+        Some(SubmitStatus::Blocked(SubmitBlocker::ParseErrors))
     );
 
     probe.validation.complete(Vec::new());

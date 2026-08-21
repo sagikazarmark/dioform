@@ -7,8 +7,9 @@
 use std::future::Future;
 
 use super::{
-    FileSubmissionSnapshot, FormHandle, SubmissionSnapshot, SubmitAttempt, SubmitBlocker,
-    SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitValidationSnapshot, ValidationTrigger,
+    FileSubmissionSnapshot, FormHandle, ManagedSubmitContinuation, SubmissionSnapshot,
+    SubmitAttempt, SubmitBlocker, SubmitErrors, SubmitListenerEvent, SubmitResult,
+    SubmitValidationSnapshot, ValidationTrigger, adapter_runtime::ManagedSubmissionRequestId,
 };
 
 pub(super) struct ManagedSubmission<Model, Error = String> {
@@ -22,6 +23,7 @@ impl<Model, Error> ManagedSubmission<Model, Error> {
 }
 
 impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
+    #[cfg(test)]
     pub(super) fn submit_async<Intent, Submit, Fut, Outcome>(
         &self,
         intent: Intent,
@@ -35,12 +37,35 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        self.submit_async_with_payload(intent, |_handle| (), move |submitted, ()| submit(submitted))
+        self.submit_async_with_continuation(intent, ManagedSubmitContinuation::Strict, submit)
     }
 
-    pub(super) fn submit_async_with_files<Intent, Submit, Fut, Outcome>(
+    pub(super) fn submit_async_with_continuation<Intent, Submit, Fut, Outcome>(
         &self,
         intent: Intent,
+        continuation: ManagedSubmitContinuation,
+        submit: Submit,
+    ) -> SubmitResult
+    where
+        Intent: Clone + PartialEq + 'static,
+        Submit: FnOnce(SubmissionSnapshot<Model, Intent>) -> Fut + 'static,
+        Fut: Future<Output = Outcome> + 'static,
+        Outcome: Into<SubmitErrors<Model, Error>> + 'static,
+        Model: 'static,
+        Error: 'static,
+    {
+        self.submit_async_with_payload(
+            intent,
+            continuation,
+            |_handle| (),
+            move |submitted, ()| submit(submitted),
+        )
+    }
+
+    pub(super) fn submit_async_with_files_and_continuation<Intent, Submit, Fut, Outcome>(
+        &self,
+        intent: Intent,
+        continuation: ManagedSubmitContinuation,
         submit: Submit,
     ) -> SubmitResult
     where
@@ -52,12 +77,18 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
         Model: 'static,
         Error: 'static,
     {
-        self.submit_async_with_payload(intent, |handle| handle.file_submission_snapshot(), submit)
+        self.submit_async_with_payload(
+            intent,
+            continuation,
+            |handle| handle.file_submission_snapshot(),
+            submit,
+        )
     }
 
     fn submit_async_with_payload<Intent, Payload, PayloadFactory, Submit, Fut, Outcome>(
         &self,
         intent: Intent,
+        continuation: ManagedSubmitContinuation,
         payload_factory: PayloadFactory,
         submit: Submit,
     ) -> SubmitResult
@@ -101,9 +132,27 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
             listener_intent.clone(),
         );
 
+        let current_validation = self
+            .handle
+            .core
+            .borrow()
+            .intent_validation_snapshot(availability_intent.clone());
+        let token_retired = validation != current_validation;
+        let continuation_permitted = continuation == ManagedSubmitContinuation::RevalidateOnce
+            && validation.permits_managed_submit_continuation(&current_validation);
+
+        if continuation_permitted {
+            return self.wait_for_pending_submit_validation(
+                validation,
+                true,
+                payload_factory,
+                submit,
+            );
+        }
+
         let availability = self.handle.intent_availability(&availability_intent);
 
-        if availability.contains(SubmitBlocker::PendingValidation) {
+        if !token_retired && availability.contains(SubmitBlocker::PendingValidation) {
             if !self.handle.adapter.has_validation_tasks() {
                 self.handle.dispatch_submit_listeners(
                     SubmitListenerEvent::SubmitBlocked(SubmitBlocker::PendingValidation),
@@ -112,10 +161,15 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 return SubmitResult::Blocked(SubmitBlocker::PendingValidation);
             }
 
-            return self.wait_for_pending_submit_validation(validation, payload_factory, submit);
+            return self.wait_for_pending_submit_validation(
+                validation,
+                continuation == ManagedSubmitContinuation::RevalidateOnce,
+                payload_factory,
+                submit,
+            );
         }
 
-        if !availability.is_available() {
+        if !token_retired && !availability.is_available() {
             let blocker = availability
                 .blockers()
                 .first()
@@ -201,16 +255,21 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
         SubmitResult::Blocked(blocker)
     }
 
-    fn finish_with_parse_blocker<Intent>(handle: &FormHandle<Model, Error>, intent: Intent)
-    where
+    fn finish_with_parse_blocker<Intent>(
+        handle: &FormHandle<Model, Error>,
+        request_id: ManagedSubmissionRequestId,
+        intent: Intent,
+    ) where
         Intent: Clone + 'static,
     {
+        if !handle.adapter.finish_managed_async_submission(request_id) {
+            return;
+        }
         let listener_intent = intent.clone();
         handle.write_core(|core| {
             core.intent(intent)
                 .block_submission_with_parse_errors_after_validation()
         });
-        handle.adapter.finish_managed_async_submission();
         handle.notify_submit_changed();
         handle.dispatch_submit_listeners(
             SubmitListenerEvent::SubmitBlocked(SubmitBlocker::ParseErrors),
@@ -221,6 +280,7 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
     fn wait_for_pending_submit_validation<Intent, Payload, PayloadFactory, Submit, Fut, Outcome>(
         &self,
         validation: SubmitValidationSnapshot<Intent>,
+        continuation_available: bool,
         payload_factory: PayloadFactory,
         submit: Submit,
     ) -> SubmitResult
@@ -241,27 +301,73 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 .flush_submit_relevant_debounced_validations(&core);
         }
 
-        if !self
+        let Some(request_id) = self
             .handle
             .adapter
             .begin_managed_async_submission(validation.intent().clone())
-        {
+        else {
             return self.block_duplicate_submission(validation.intent().clone());
-        }
+        };
 
         let handle = self.handle.clone();
         self.handle.notify_submit_changed();
 
         self.handle.spawn_detached(async move {
+            let mut validation = validation;
+            let mut continuation_available = continuation_available;
+
             loop {
-                if !handle.is_active() {
-                    handle.adapter.finish_managed_async_submission();
+                if !handle
+                    .adapter
+                    .managed_async_submission_is_current(request_id)
+                {
                     return;
+                }
+
+                let current_validation = handle
+                    .core
+                    .borrow()
+                    .intent_validation_snapshot(validation.intent().clone());
+                if validation != current_validation {
+                    let continued = if continuation_available {
+                        handle.write_core(|core| {
+                            let mut intent = core.intent(validation.intent().clone());
+                            let current = intent.validation_snapshot();
+                            if validation.permits_managed_submit_continuation(&current) {
+                                intent.validate_for_submit_same_attempt();
+                                Some(current)
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
+                    if let Some(current) = continued {
+                        continuation_available = false;
+                        validation = current;
+                        handle.notify_validation_changed();
+                        handle.start_runtime_async_validators(ValidationTrigger::Submit);
+                        {
+                            let core = handle.core.borrow();
+                            handle
+                                .adapter
+                                .flush_submit_relevant_debounced_validations(&core);
+                        }
+                        continue;
+                    }
+
+                    break;
                 }
 
                 let availability = handle.intent_availability(validation.intent());
                 if availability.contains(SubmitBlocker::ParseErrors) {
-                    Self::finish_with_parse_blocker(&handle, validation.intent().clone());
+                    Self::finish_with_parse_blocker(
+                        &handle,
+                        request_id,
+                        validation.intent().clone(),
+                    );
                     return;
                 }
 
@@ -270,7 +376,9 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 }
 
                 if !handle.adapter.has_validation_tasks() {
-                    handle.adapter.finish_managed_async_submission();
+                    if !handle.adapter.finish_managed_async_submission(request_id) {
+                        return;
+                    }
                     handle.notify_validation_changed();
                     handle.dispatch_submit_listeners(
                         SubmitListenerEvent::SubmitBlocked(SubmitBlocker::PendingValidation),
@@ -282,13 +390,19 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 handle.adapter.validation_change().await;
             }
 
-            if !handle.is_active() {
-                handle.adapter.finish_managed_async_submission();
+            if !handle
+                .adapter
+                .managed_async_submission_is_current(request_id)
+            {
                 return;
             }
 
             if handle.has_parse_blockers() {
-                Self::finish_with_parse_blocker(&handle, validation.intent().clone());
+                Self::finish_with_parse_blocker(&handle, request_id, validation.intent().clone());
+                return;
+            }
+
+            if !handle.adapter.finish_managed_async_submission(request_id) {
                 return;
             }
 
@@ -299,7 +413,6 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 SubmitAttempt::Started(submitted) => {
                     let payload = payload_factory(&handle);
                     handle.remember_active_submit_intent(validation.intent().clone());
-                    handle.adapter.finish_managed_async_submission();
                     handle.notify_submit_changed();
                     handle.dispatch_submit_listeners(
                         SubmitListenerEvent::SubmissionStarted,
@@ -310,7 +423,6 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                 SubmitAttempt::Blocked(
                     blocker @ (SubmitBlocker::ValidationErrors | SubmitBlocker::PendingValidation),
                 ) => {
-                    handle.adapter.finish_managed_async_submission();
                     handle.notify_validation_changed();
                     handle.dispatch_submit_listeners(
                         SubmitListenerEvent::SubmitBlocked(blocker),
@@ -322,7 +434,6 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                     | SubmitBlocker::InFlightSubmission
                     | SubmitBlocker::ParseErrors),
                 ) => {
-                    handle.adapter.finish_managed_async_submission();
                     handle.notify_submit_changed();
                     handle.dispatch_submit_listeners(
                         SubmitListenerEvent::SubmitBlocked(blocker),
@@ -330,7 +441,6 @@ impl<Model: Clone, Error> ManagedSubmission<Model, Error> {
                     );
                 }
                 SubmitAttempt::Blocked(blocker) => {
-                    handle.adapter.finish_managed_async_submission();
                     handle.notify_changed();
                     handle.dispatch_submit_listeners(
                         SubmitListenerEvent::SubmitBlocked(blocker),
@@ -532,6 +642,16 @@ mod tests {
         submitted_intent: RefCell<Option<ManagedSubmitIntent>>,
     }
 
+    #[derive(Default)]
+    struct WaiterReplacementProbe {
+        validation: AsyncGate<Vec<&'static str>>,
+        handle: RefCell<Option<FormHandle<AccountForm, &'static str>>>,
+        first_result: RefCell<Option<SubmitResult>>,
+        second_result: RefCell<Option<SubmitResult>>,
+        first_submit_calls: Cell<u32>,
+        second_submit_calls: Cell<u32>,
+    }
+
     struct ParseSelectorProbe {
         handle: FormHandle<AccountForm, &'static str>,
         renders: Cell<u32>,
@@ -573,7 +693,7 @@ mod tests {
             if context.event() == SubmitListenerEvent::SubmitAttempted {
                 context
                     .form()
-                    .set_user_field(AccountForm::fields().age(), 43);
+                    .mark_field_touched(AccountForm::fields().age());
             }
         });
 
@@ -812,6 +932,57 @@ mod tests {
         VNode::empty()
     }
 
+    fn waiter_replacement_probe(probe: Rc<WaiterReplacementProbe>) -> Element {
+        let form = crate::use_form_handle({
+            let probe = Rc::clone(&probe);
+            move || {
+                let form: FormHandle<AccountForm, &'static str> =
+                    FormHandle::new_with_error_type(AccountForm { age: 42 });
+                let validation = probe.validation.clone();
+                form.field(AccountForm::fields().age())
+                    .async_validator("age_check")
+                    .on(ValidationTrigger::Submit)
+                    .check(move |_value, _snapshot| validation.future());
+                form
+            }
+        });
+
+        use_hook({
+            let form = form.clone();
+            let probe = Rc::clone(&probe);
+            move || {
+                let first_probe = Rc::clone(&probe);
+                let first = ManagedSubmission::new(form.clone()).submit_async(
+                    ManagedSubmitIntent::Publish,
+                    move |_submitted| {
+                        first_probe
+                            .first_submit_calls
+                            .set(first_probe.first_submit_calls.get() + 1);
+                        async {}
+                    },
+                );
+                probe.first_result.borrow_mut().replace(first);
+
+                form.reset();
+
+                let second_probe = Rc::clone(&probe);
+                let second = ManagedSubmission::new(form.clone()).submit_async(
+                    ManagedSubmitIntent::SaveDraft,
+                    move |_submitted| {
+                        second_probe
+                            .second_submit_calls
+                            .set(second_probe.second_submit_calls.get() + 1);
+                        async {}
+                    },
+                );
+                probe.second_result.borrow_mut().replace(second);
+            }
+        });
+
+        probe.handle.borrow_mut().replace(form);
+        VNode::empty()
+    }
+
     #[test]
     fn managed_submission_blocks_parse_errors_before_validation_or_submit_handler() {
         let handle: FormHandle<AccountForm, &'static str> =
@@ -1042,7 +1213,12 @@ mod tests {
             SubmitResult::Blocked(SubmitBlocker::StaleSubmitValidation)
         );
         assert_eq!(submit_calls.get(), 0);
-        assert_eq!(handle.field_value(AccountForm::fields().age()), 43);
+        assert_eq!(handle.field_value(AccountForm::fields().age()), 42);
+        assert!(
+            handle
+                .field_metadata(AccountForm::fields().age())
+                .is_touched()
+        );
         assert_eq!(
             probe.events.borrow().as_slice(),
             [
@@ -1129,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_submission_intent_takes_precedence_over_managed_wait_intent() {
+    fn direct_submission_cannot_replace_managed_validation_window_owner() {
         let probe = Rc::new(PendingValidationProbe::default());
         let mut dom = VirtualDom::new_with_props(pending_validation_probe, Rc::clone(&probe));
 
@@ -1149,19 +1325,60 @@ mod tests {
             core.unregister_field_validator(AccountForm::fields().age(), "age_check")
         }));
 
-        assert!(matches!(
+        assert_eq!(
             handle
                 .intent(ManagedSubmitIntent::SaveDraft)
                 .begin_submission(),
-            SubmitAttempt::Started(_)
-        ));
+            SubmitAttempt::Blocked(SubmitBlocker::InFlightSubmission)
+        );
 
+        assert_eq!(
+            handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
+            Some(ManagedSubmitIntent::Publish)
+        );
+        assert!(!handle.intent(ManagedSubmitIntent::SaveDraft).is_in_flight());
+        assert!(handle.intent(ManagedSubmitIntent::Publish).is_in_flight());
+        assert_eq!(handle.submit_attempt_count(), 1);
+        assert_eq!(
+            handle
+                .last_submit_status_as::<ManagedSubmitIntent>()
+                .expect("duplicate status should preserve attempted intent")
+                .intent(),
+            &ManagedSubmitIntent::SaveDraft
+        );
+    }
+
+    #[test]
+    fn cancelled_waiter_cannot_clear_a_newer_managed_submission() {
+        let probe = Rc::new(WaiterReplacementProbe::default());
+        let mut dom = VirtualDom::new_with_props(waiter_replacement_probe, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+
+        let handle = probe
+            .handle
+            .borrow()
+            .as_ref()
+            .expect("probe should expose its form handle")
+            .clone();
+        assert_eq!(*probe.first_result.borrow(), Some(SubmitResult::Started));
+        assert_eq!(*probe.second_result.borrow(), Some(SubmitResult::Started));
+        dom.render_immediate_to_vec();
+        assert!(handle.is_submitting());
         assert_eq!(
             handle.in_flight_submit_intent::<ManagedSubmitIntent>(),
             Some(ManagedSubmitIntent::SaveDraft)
         );
-        assert!(handle.intent(ManagedSubmitIntent::SaveDraft).is_in_flight());
-        assert!(!handle.intent(ManagedSubmitIntent::Publish).is_in_flight());
+        assert_eq!(probe.first_submit_calls.get(), 0);
+        assert_eq!(probe.second_submit_calls.get(), 0);
+
+        probe.validation.complete(Vec::new());
+        dom.render_immediate_to_vec();
+
+        assert_eq!(probe.first_submit_calls.get(), 0);
+        assert_eq!(probe.second_submit_calls.get(), 1);
+        assert!(!handle.is_submitting());
+        assert_eq!(handle.last_submit_status(), Some(SubmitStatus::Succeeded));
     }
 
     #[test]

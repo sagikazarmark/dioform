@@ -146,6 +146,10 @@ impl<Error> SourceState<Error> {
         self.status_trigger == Some(ValidationTrigger::Submit)
     }
 
+    pub(super) fn submit_evidence_will_be_superseded_by(&self, trigger: ValidationTrigger) -> bool {
+        self.has_submit_scoped_status() && trigger != ValidationTrigger::Submit
+    }
+
     pub(super) fn snapshot_result(&self) -> SourceResultSnapshot<Error>
     where
         Error: Clone,

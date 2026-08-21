@@ -312,7 +312,7 @@ mod tests {
             "invoice.notes",
             "invoice.sections.lines",
         ];
-        let mut random = 0x5eed_53_u64;
+        let mut random = 0x005e_ed53_u64;
 
         for _ in 0..512 {
             let kind = next_random(&mut random) % 3;
