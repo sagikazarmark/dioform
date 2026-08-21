@@ -203,7 +203,7 @@ impl FieldStore {
         &self.collections
     }
 
-    /// Adopts restored collection state during snapshot restore or explicit identity restore.
+    /// Adopts collection state while restoring a full form-state snapshot.
     ///
     /// Restored identity sequences replace the live ones, but no identity counter moves backward:
     /// each restored collection carries the higher of its own and the live counter, and a live

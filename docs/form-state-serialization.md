@@ -36,3 +36,11 @@ Because snapshots include the **Form Draft** and typed errors, they may contain 
 For collection fields, snapshotting differs from deterministic initialization in one important way: deterministic initialization can recreate the same vector values, but it cannot know that a current row was originally `item-2` after an insertion, removal, or reorder. `FormStateSnapshot` includes collection identity sequences so item-scoped metadata, non-submit validation errors, and future parse-state snapshots continue to refer to the same logical item after restore.
 
 Restoring adopts those sequences without lowering any identity counter: each restored collection carries the higher of its own and the live counter, and a live collection the snapshot says nothing about has its identities retired rather than renumbered from zero. A form therefore never issues one **Collection Item Identity** twice, whatever it restores. The exception is a snapshot minted by a *different* form instance or process, whose identities come from an unrelated allocator history and can collide with live ones; see [Identity Lifetime](collection-fields.md#identity-lifetime).
+
+Collection identities are adopted only through `restore_state_snapshot()`, where their **Form Draft** values move with them. `collection_identity_state()` remains available for read-only inspection, but identity state alone cannot establish which logical rows its identities describe, even when collection cardinalities match.
+
+## Migration from standalone identity restoration
+
+The next Dioform release containing this breaking removal must be `0.3.0` or later. Applications that previously captured and restored collection identity state independently must migrate to `state_snapshot()` and `restore_state_snapshot()`.
+
+An existing identity-only payload cannot be safely converted into a `FormStateSnapshot` or adopted onto separately restored application values because it carries no proof of logical row correspondence. Discard such payloads, initialize or reinitialize the form from its values, and allow Dioform to mint fresh identities. No collection identity serialization version or wire format changed as part of this API removal.

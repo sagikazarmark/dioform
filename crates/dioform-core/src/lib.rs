@@ -2989,7 +2989,11 @@ pub enum FormStateRestoreError {
     },
 }
 
-/// Serializable identity state for all tracked collection fields in one form snapshot.
+/// Read-only serializable identity state for tracked collection fields.
+///
+/// This state is exposed for inspection and as part of [`FormStateSnapshot`]. It cannot be restored
+/// independently because identity sequences without their corresponding form values cannot prove
+/// logical item correspondence.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionIdentityState {
@@ -3052,7 +3056,7 @@ impl CollectionIdentityState {
     }
 }
 
-/// Serializable identity sequences for one collection field.
+/// Read-only serializable identity sequences for one collection field.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionIdentitySnapshot {
@@ -4178,20 +4182,12 @@ impl<Model, Error> FormCore<Model, Error> {
         Ok(())
     }
 
-    /// Returns serializable runtime identity state for all tracked collection fields.
+    /// Returns a read-only view of runtime identity state for all tracked collection fields.
+    ///
+    /// Collection identity state can only be restored as part of [`FormStateSnapshot`], together
+    /// with the form values whose logical items the identities denote.
     pub fn collection_identity_state(&self) -> CollectionIdentityState {
         CollectionIdentityState::from_collection_states(self.field_store.collections())
-    }
-
-    /// Restores serializable runtime identity state for tracked collection fields.
-    pub fn restore_collection_identity_state(
-        &mut self,
-        state: CollectionIdentityState,
-    ) -> Result<(), FormStateRestoreError> {
-        self.field_store
-            .adopt_collections(state.into_collection_states()?);
-        self.increment_submit_validation_generation();
-        Ok(())
     }
 
     /// Returns the mode that controls automatic validation execution.

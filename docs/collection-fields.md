@@ -317,7 +317,7 @@ without affecting other selected values.
 
 Serialization:
 
-`FormCore::state_snapshot()` and `FormHandle::state_snapshot()` include **Collection Item Identity** state for every tracked collection. The serialized identity state records each collection field, its baseline item identity sequence, its current rendered item identity sequence, and the next identity counter used for future insertions. Restoring that snapshot preserves item-scoped metadata and non-submit validation errors that are keyed by **Field Identity**.
+`FormCore::state_snapshot()` and `FormHandle::state_snapshot()` include **Collection Item Identity** state for every tracked collection. The serialized identity state records each collection field, its baseline item identity sequence, its current rendered item identity sequence, and the next identity counter used for future insertions. Restoring that snapshot preserves item-scoped metadata and non-submit validation errors that are keyed by **Field Identity**. The `collection_identity_state()` readers expose this state for inspection, but it cannot be restored independently: matching cardinality does not prove that equal-length rows have the same logical correspondence.
 
 This is different from deterministic initialization. A deterministic client render can recreate the same `Vec<Item>` values, but it cannot infer which logical item survived an insertion, removal, or reorder. Snapshot restore is explicit and opt-in; see [Form State Serialization](form-state-serialization.md).
 

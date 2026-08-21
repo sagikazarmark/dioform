@@ -124,6 +124,10 @@ identities added after the baseline are retired.
 empty identity map and restoring it wipes live identity state. That is the same counter rewind reached
 by a third path and is closed by the same rule.
 
+Collection identity state is now read-only outside full `FormStateSnapshot` restoration. Identity-only
+restoration cannot prove that equal-length collection values describe the same logical items, so even a
+cardinality-checked standalone restore would violate the lifetime guarantee this decision establishes.
+
 Two parse-binding defects surfaced while settling this and are tracked separately, because both are
 reachable today and neither depends on identity reuse: reset, reinitialize, and restore clear parse
 errors without unregistering the parse binding, so a write through an unresolved binding still lands —

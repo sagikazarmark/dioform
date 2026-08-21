@@ -7044,24 +7044,13 @@ impl<Model, Error> FormHandle<Model, Error> {
         result
     }
 
-    /// Returns serializable runtime identity state for all tracked collection fields.
+    /// Returns a read-only view of runtime identity state for all tracked collection fields.
+    ///
+    /// Collection identity state can only be restored through [`Self::restore_state_snapshot`],
+    /// together with the form values whose logical items the identities denote.
     pub fn collection_identity_state(&self) -> CollectionIdentityState {
         self.track_read();
         self.core.borrow().collection_identity_state()
-    }
-
-    /// Restores runtime collection identity state and invalidates all Dioxus selectors.
-    pub fn restore_collection_identity_state(
-        &self,
-        state: CollectionIdentityState,
-    ) -> Result<(), FormStateRestoreError> {
-        let result = self.write_core(|core| core.restore_collection_identity_state(state));
-
-        if result.is_ok() {
-            self.notify_changed();
-        }
-
-        result
     }
 
     /// Reads the underlying form core through a short scoped borrow.

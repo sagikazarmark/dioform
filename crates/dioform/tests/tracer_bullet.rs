@@ -5019,6 +5019,16 @@ fn dioform_handle_state_snapshot_restores_collection_item_identities() {
     assert!(lines.remove(first).is_some());
     assert!(lines.move_to_index(second, 0));
 
+    let identity_state: dioform::advanced::CollectionIdentityState =
+        handle.collection_identity_state();
+    assert_eq!(
+        identity_state.version(),
+        dioform::advanced::COLLECTION_IDENTITY_SERIALIZATION_VERSION
+    );
+    let lines_state: &dioform::advanced::CollectionIdentitySnapshot =
+        &identity_state.collections()[0];
+    assert_eq!(lines_state.current_items(), &[second, inserted]);
+
     let snapshot = handle.state_snapshot();
     let restored = FormHandle::new(InvoiceCollectionForm { lines: Vec::new() });
 

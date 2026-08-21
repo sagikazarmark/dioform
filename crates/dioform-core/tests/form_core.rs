@@ -556,16 +556,9 @@ fn collection_validation_target_rule_rejects_restore_cardinality_mismatch_atomic
 
 #[test]
 fn collection_validation_target_rule_rejects_current_restore_cardinality_mismatch() {
-    let mut identity_source = FormCore::new(invoice_form());
-    identity_source.collection_items(lines_path());
-    let two_row_identities = identity_source.collection_identity_state();
-
     let mut snapshot_source: FormCore<InvoiceForm, &'static str> =
-        FormCore::new_with_error_type(invoice_form());
+        FormCore::new_with_error_type(InvoiceForm { lines: Vec::new() });
     snapshot_source.set_field(lines_path(), vec![line("Only current row")]);
-    snapshot_source
-        .restore_collection_identity_state(two_row_identities)
-        .expect("standalone identity state is structurally valid");
     let mismatched_snapshot = snapshot_source.state_snapshot();
 
     let mut target: FormCore<InvoiceForm, &'static str> =
@@ -588,7 +581,7 @@ fn collection_validation_target_rule_rejects_current_restore_cardinality_mismatc
             collection: FieldIdentity::new("lines"),
             sequence: CollectionIdentitySequence::Current,
             model_items: 1,
-            identity_items: 2,
+            identity_items: 0,
         }
     );
 }
