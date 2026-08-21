@@ -338,6 +338,10 @@ _Avoid_: Serde rename policy, field identity policy
 Headless **Dioxus Adapter** behavior that connects application-rendered control interaction to a **Field**, exposing rendered identity, accessibility helpers, value updates, and binding-owned parsing state when needed without owning visual markup.
 _Avoid_: Input component, form component, binding module
 
+**Collection Item Binding**:
+A read-only item-root validation presentation surface for one logical item in a **Collection Field**, also used to create bindings for the item's descendant **Fields**. It exposes validation errors attached exactly to the whole-item **Field** rather than aggregating descendant errors, but does not by itself assert that the item was rendered as one control or expose general whole-item state or interaction.
+_Avoid_: Collection row component, item input, collection mutation handle
+
 **Field Binding Lifecycle Listener**:
 A **Form Listener** registered against hook-owned **Field Binding** mount and unmount events for one **Field** and the **Fields** it contains, independent of whether the listener hook runs before or after the binding hook in the same component.
 _Avoid_: Validator, input component lifecycle owner
