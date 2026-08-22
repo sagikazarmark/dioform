@@ -22,6 +22,7 @@ interoperability, not as the main addressing mechanism.
 - **Form-owned collections**: repeatable items with library-owned, opaque item identity.
 - **Reusable field groups**: `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
 - **Optional field traversal**: `FieldPath::or` derives a total path through an `Option<Inner>` from a fallback supplied at the call site.
+- **Optional scalar input helpers**: `optional_text` controlled presence bindings plus `use_optional_number` and `use_optional_date` parsed helpers, where only exact empty input means absent.
 - **Optional validation adapters**: `garde` and `validator` adapters that map external diagnostics into Dioform validation errors.
 
 ## Workspace

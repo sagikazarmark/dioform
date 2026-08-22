@@ -295,8 +295,9 @@ identity outcome as `reinitialize`, scoped to one collection. Every row remounts
 `key()`, and item-scoped metadata, validation errors, parse state, focus, and scroll are released,
 even when the new `Vec` is the old one rearranged. This is deliberate: without matching, carrying
 identities across positionally would silently attach one row's state to a different logical item.
-Reach for the per-item operations above — `reorder` for sorting — whenever the rows should survive
-the update.
+The replacement is reported to **Form Observers** as a `CollectionReplaced` transition carrying the
+retired identities, alongside the `FieldUpdated` event for the written field. Reach for the
+per-item operations above — `reorder` for sorting — whenever the rows should survive the update.
 
 ## Resolving One Item by Identity
 

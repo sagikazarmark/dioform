@@ -1536,6 +1536,40 @@ fn reordering_collection_items_by_identity_keeps_item_state_with_the_items() {
 }
 
 #[test]
+fn replacing_a_whole_collection_through_set_field_reports_the_retired_identities() {
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    let retired_items: Vec<_> = form
+        .collection_items(lines_path())
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observed_events = Rc::clone(&events);
+    form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
+
+    form.set_user_field(lines_path(), vec![line("Replacement")]);
+
+    assert!(matches!(
+        events.borrow().as_slice(),
+        [
+            FormObserverEvent::FieldUpdated { .. },
+            FormObserverEvent::CollectionReplaced {
+                retired,
+                origin: FieldUpdateOrigin::User,
+                ..
+            },
+        ] if *retired == retired_items
+    ));
+    // The replacement rows are fresh logical items; no retired identity is reissued.
+    assert!(
+        form.collection_items(lines_path())
+            .iter()
+            .all(|item| !retired_items.contains(&item.identity()))
+    );
+}
+
+#[test]
 fn reordering_collection_items_refuses_a_non_permutation_without_mutating() {
     let mut form: FormCore<InvoiceForm, &'static str> =
         FormCore::new_with_error_type(invoice_form());

@@ -2771,6 +2771,21 @@ pub enum FormObserverEvent {
         /// Whether the change came from application code or user interaction.
         origin: FieldUpdateOrigin,
     },
+    /// A field write replaced a tracked collection wholesale, retiring its issued identities.
+    ///
+    /// Emitted when a generic field replacement reaches a tracked collection — writing the whole
+    /// `Vec<Item>` or a containing field through `set_field` — which carries no positional or
+    /// value matching and therefore retires every displaced **Collection Item Identity**. The
+    /// coordinated per-item operations emit their own transitions instead of this one.
+    #[non_exhaustive]
+    CollectionReplaced {
+        /// The collection whose identity sequence was replaced.
+        collection: FieldIdentity,
+        /// The item identities retired by the replacement.
+        retired: Vec<CollectionItemIdentity>,
+        /// Whether the change came from application code or user interaction.
+        origin: FieldUpdateOrigin,
+    },
     /// A validator source ran and stored a new source-level status.
     #[non_exhaustive]
     ValidationRan {
@@ -7158,6 +7173,15 @@ impl<Model, Error> FormCore<Model, Error> {
             origin,
             value: FormObserverValue::Redacted,
         });
+        for effect in &effects.collections {
+            if !effect.displaced_items.is_empty() {
+                self.emit_observer_event(FormObserverEvent::CollectionReplaced {
+                    collection: effect.collection.clone(),
+                    retired: effect.displaced_items.clone(),
+                    origin,
+                });
+            }
+        }
         effects
     }
 
