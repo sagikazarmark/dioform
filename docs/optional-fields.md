@@ -2,6 +2,13 @@
 
 An **Optional Field** is a **Field** whose value may be absent. A bare `FieldPath<Model, Option<Inner>>` addresses the whole `Option` and refuses traversal: nothing produces `&Inner` from an absent value, so nested values are never implicitly created by traversal.
 
+Choose the editing surface by shape. For an optional record whose inner fields need separate paths,
+derive total inner paths with `FieldPath::or` as described below. For an optional scalar edited by
+one control, write the `Option`-typed path directly with `use_optional_text`,
+`use_optional_number`, or `use_optional_date`; see [Dioxus Adapter Input Helpers](input-helpers.md).
+Those helpers perform the sanctioned presence write, so `""` to `None` and back is total and
+reversible rather than subject to the record-materialization ratchet.
+
 `FieldPath::or` derives a **total** path through an optional field. The caller supplies the value that stands in for absence, which is what makes the materialization opt-in and named rather than invented by traversal:
 
 ```rust
@@ -85,6 +92,10 @@ counterparty.get_present(&model);  // Option<&Party>
 Both take a `&Model`, so they read directly from a validator context, a listener, or a submission snapshot. Through a `FormHandle` the cheaper reactive read is `form.field_value(counterparty)`, which clones the `Option<Party>` alone rather than the whole model.
 
 Presence is set the ordinary way, by writing the `Option`-typed path: `set_user_field(counterparty, None)` clears the record, and `set_user_field(counterparty, Some(party))` sets it whole.
+
+Optional scalar input helpers use this same direct write. `optional_text` deliberately collapses
+empty rendered input to `None`: `None` and `Some("")` both render as `""`, but the next empty input
+writes `None`. That collapse is scalar presence semantics, not traversal or implicit construction.
 
 ## Materialization is a ratchet
 

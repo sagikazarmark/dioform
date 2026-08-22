@@ -83,6 +83,23 @@ radio-like custom UI. The application renders every option and calls `is_selecte
 Hook variants are available for component code: `use_select`,
 `use_select_with`, and `use_radio_group`.
 
+## Optional Scalar Text
+
+Use `FormHandle::optional_text(path)` or `use_optional_text(&form, path)` for an
+`Option<String>` scalar field. This is a plain controlled binding, not a parsed binding: `""`
+writes `None`, and every non-empty rendered value writes `Some(value)` unchanged. Whitespace-only
+input is therefore present and is not trimmed. Normalization remains an application step or a Form
+Listener concern.
+
+Both `None` and an externally supplied `Some("")` render as `""`. The binding's `typed_value()`
+accessor preserves that distinction until the next input event; entering the rendered empty value
+always writes `None`, so `Some("")` is deliberately unreachable through this binding.
+
+Because scalar presence conversion is infallible, `OptionalTextBinding` performs Input Parsing
+without owning Raw Input State, Parse Error, or Parse Blocker.
+In the narrower API sense it is not a parsed binding: presence has no fallible parse to retain.
+[ADR-0046](adr/0046-bind-optional-text-as-controlled-scalar-presence.md) records this choice.
+
 ## Parsed Helpers
 
 Parsed helpers are for rendered text-like input that may temporarily fail conversion into the typed
@@ -96,12 +113,16 @@ Use these helpers when the rendered input is text-like:
 - `number(path)` for built-in numeric field types.
 - `number_with(path, parser, formatter)` for custom numeric behavior, including optional
   fields where empty input maps to `None`.
+- `use_optional_number(&form, path)` for optional built-in numeric scalar fields, where `""`
+  maps to `None` and non-empty invalid input remains a Parse Error.
 - `date(path)` for date-like values that implement `FromStr` and `ToString`.
 - `date_with(path, parser, formatter)` for date-like domain values without requiring
   `chrono`, `time`, or any other date dependency.
+- `use_optional_date(&form, path)` for optional date-like scalar fields, where `""` maps to
+  `None` and non-empty invalid input remains a Parse Error.
 
-In Dioxus components, prefer the hook variants for parsed helpers, such as
-`use_number(...)`, `use_date(...)`, and `use_date_with(...)`.
+In Dioxus components, prefer the hook variants for parsed helpers, such as `use_number(...)`,
+`use_optional_number(...)`, `use_date(...)`, `use_optional_date(...)`, and `use_date_with(...)`.
 Parsed bindings own mounted parse state, so the hook keeps the Parse Blocker lifecycle stable across
 rerenders.
 

@@ -71,15 +71,16 @@ pub mod prelude {
         FormListenerEvent, FormSnapshot, FormValidationError, FormValidatorContext,
         IntentFormHandle, IntentProgressiveSubmitBinding, IntentSubmitBinding, LastSubmitStatus,
         ManagedSubmitContinuation, MultiSelectBinding, MultiSelectItem, MultiSelectOptionBinding,
-        NumericInputValue, ParseError, ParsedTextBinding, ProgressiveSubmitBinding,
-        ProgressiveSubmitResult, RadioGroupBinding, RenderedSelectBinding, SelectBinding,
-        SelectedFile, SelectedFileMetadata, SerializedFileData, SubmissionSnapshot,
-        SubmitAvailability, SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerContext,
-        SubmitListenerEvent, SubmitResult, SubmitStatus, SyncCollectionItemFieldValidatorBuilder,
-        SyncFieldValidatorBuilder, SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder,
-        TextBinding, TextareaBinding, ValidationErrorSnapshot, ValidationErrorView, ValidationMode,
-        ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
-        ValidatorContext, debounce_duration, provide_form_context, try_use_form_context,
+        NumericInputValue, OptionalTextBinding, ParseError, ParsedTextBinding,
+        ProgressiveSubmitBinding, ProgressiveSubmitResult, RadioGroupBinding,
+        RenderedSelectBinding, SelectBinding, SelectedFile, SelectedFileMetadata,
+        SerializedFileData, SubmissionSnapshot, SubmitAvailability, SubmitBlocker, SubmitError,
+        SubmitErrors, SubmitListenerContext, SubmitListenerEvent, SubmitResult, SubmitStatus,
+        SyncCollectionItemFieldValidatorBuilder, SyncFieldValidatorBuilder,
+        SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder, TextBinding, TextareaBinding,
+        ValidationErrorSnapshot, ValidationErrorView, ValidationMode, ValidationStatus,
+        ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext,
+        debounce_duration, provide_form_context, try_use_form_context,
         use_collection_item_checkbox, use_collection_item_date, use_collection_item_date_with,
         use_collection_item_number, use_collection_item_number_with,
         use_collection_item_parsed_text, use_collection_item_parsed_text_with,
@@ -90,8 +91,9 @@ pub mod prelude {
         use_field_blur_listener, use_field_listener, use_field_listener_for_origin, use_form,
         use_form_blur_listener, use_form_config, use_form_context, use_form_handle,
         use_form_listener, use_form_listener_for_origin, use_multi_select, use_number,
-        use_number_with, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
-        use_select_with, use_submit_listener,
+        use_number_with, use_optional_date, use_optional_number, use_optional_text,
+        use_parsed_text, use_parsed_text_with, use_radio_group, use_select, use_select_with,
+        use_submit_listener,
     };
 }
 
@@ -640,6 +642,21 @@ pub fn use_collection_item_radio_group<Model, Item, Value, Error>(
     item.radio_group(path)
 }
 
+/// Creates a stable controlled text binding for an optional scalar `String` field.
+///
+/// Empty rendered input writes `None`; every non-empty value is preserved exactly and writes
+/// `Some(value)`. This conversion is infallible, so the binding owns no Parse Error or Parse Blocker.
+pub fn use_optional_text<Model, Error>(
+    handle: &FormHandle<Model, Error>,
+    path: FieldPath<Model, Option<String>>,
+) -> OptionalTextBinding<Model, Error>
+where
+    Model: 'static,
+    Error: 'static,
+{
+    use_field_binding_hook(handle, path, |handle, path| handle.optional_text(path))
+}
+
 /// Creates a stable parsed text binding for a component instance.
 ///
 /// Parsed bindings own mounted parse-error state. Creating one directly during every render can
@@ -704,6 +721,40 @@ where
     Error: 'static,
 {
     use_parsed_text(handle, path)
+}
+
+fn parse_optional<Value: FromStr>(value: &str) -> Result<Option<Value>, Value::Err> {
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        value.parse().map(Some)
+    }
+}
+
+fn format_optional<Value: ToString>(value: &Option<Value>) -> String {
+    value.as_ref().map(ToString::to_string).unwrap_or_default()
+}
+
+/// Creates a stable numeric input binding for an optional scalar numeric field.
+///
+/// Empty input writes `None`. Non-empty input uses the numeric type's [`FromStr`]
+/// implementation, retaining Raw Input State and a Parse Blocker when conversion fails.
+pub fn use_optional_number<Model, Value, Error>(
+    handle: &FormHandle<Model, Error>,
+    path: FieldPath<Model, Option<Value>>,
+) -> ParsedTextBinding<Model, Option<Value>, Error>
+where
+    Model: 'static,
+    Value: NumericInputValue,
+    Value::Err: fmt::Display + 'static,
+    Error: 'static,
+{
+    use_parsed_text_with(
+        handle,
+        path,
+        parse_optional::<Value>,
+        format_optional::<Value>,
+    )
 }
 
 /// Creates a stable numeric input binding with explicit parser and formatter behavior.
@@ -916,6 +967,28 @@ where
     Error: 'static,
 {
     use_parsed_text(handle, path)
+}
+
+/// Creates a stable date-oriented input binding for an optional scalar date-like field.
+///
+/// Empty input writes `None`. Non-empty input uses the value type's [`FromStr`] implementation,
+/// retaining Raw Input State and a Parse Blocker when conversion fails.
+pub fn use_optional_date<Model, Value, Error>(
+    handle: &FormHandle<Model, Error>,
+    path: FieldPath<Model, Option<Value>>,
+) -> ParsedTextBinding<Model, Option<Value>, Error>
+where
+    Model: 'static,
+    Value: FromStr + ToString + 'static,
+    Value::Err: fmt::Display + 'static,
+    Error: 'static,
+{
+    use_parsed_text_with(
+        handle,
+        path,
+        parse_optional::<Value>,
+        format_optional::<Value>,
+    )
 }
 
 /// Creates a stable date-oriented input binding with explicit parser and formatter behavior.
@@ -10224,6 +10297,20 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
     }
 
+    /// Creates a controlled text binding for an optional scalar `String` field.
+    ///
+    /// Empty rendered input writes `None`; every non-empty value is preserved exactly and writes
+    /// `Some(value)`. Both `None` and an externally supplied `Some("")` render as empty, and the
+    /// next empty input collapses either state to `None`.
+    pub fn optional_text(
+        &self,
+        path: FieldPath<Model, Option<String>>,
+    ) -> OptionalTextBinding<Model, Error> {
+        OptionalTextBinding {
+            base: FieldBindingCore::new(self.clone(), path),
+        }
+    }
+
     /// Creates a controlled checkbox binding for a `bool` field.
     pub fn checkbox(&self, path: FieldPath<Model, bool>) -> CheckboxBinding<Model, Error> {
         CheckboxBinding {
@@ -11611,6 +11698,112 @@ impl<Model, Error> TextBinding<Model, Error> {
     ///
     /// Like [`oninput`](Self::oninput), the handler owns its own clone, so `onblur: field.onblur()`
     /// needs no separate `field.clone()`.
+    pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |_event: Event<FocusData>| binding.on_blur()
+    }
+
+    /// Returns validation errors for this field.
+    pub fn validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.validation_errors()
+    }
+
+    /// Returns visible validation errors for this field.
+    pub fn visible_validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.visible_validation_errors()
+    }
+}
+
+/// Controlled text input behavior for an optional scalar `String` field.
+///
+/// This binding performs infallible Input Parsing: only empty input means `None`, and non-empty
+/// input is stored unchanged as `Some(String)`. It therefore owns no Raw Input State, Parse Error,
+/// or Parse Blocker.
+pub struct OptionalTextBinding<Model, Error = String> {
+    base: FieldBindingCore<Model, Option<String>, Error>,
+}
+
+impl<Model, Error> Clone for OptionalTextBinding<Model, Error> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+        }
+    }
+}
+
+impl<Model, Error> OptionalTextBinding<Model, Error> {
+    /// Returns the rendered input name derived from the typed field path.
+    pub fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    /// Returns headless accessibility IDs and ARIA state for this input.
+    pub fn accessibility(&self) -> FieldAccessibility {
+        self.base.accessibility()
+    }
+
+    /// Returns tracked user interaction metadata for this field.
+    pub fn metadata(&self) -> FieldMetadata {
+        self.base.metadata()
+    }
+
+    /// Returns whether this field has received user interaction.
+    pub fn is_touched(&self) -> bool {
+        self.base.is_touched()
+    }
+
+    /// Returns whether this field has lost focus at least once.
+    pub fn is_blurred(&self) -> bool {
+        self.base.is_blurred()
+    }
+
+    /// Returns the current controlled input value, rendering absence as an empty string.
+    pub fn value(&self) -> String {
+        self.base.value().unwrap_or_default()
+    }
+
+    /// Returns the optional typed field value without collapsing `None` and `Some("")`.
+    pub fn typed_value(&self) -> Option<String> {
+        self.base.value()
+    }
+
+    /// Replaces the optional typed field value.
+    pub fn set_value(&self, value: Option<String>) {
+        self.base.set_programmatic(value);
+    }
+
+    /// Applies a Dioxus text-like `oninput` update and writes scalar presence directly.
+    pub fn on_input(&self, value: impl Into<String>) {
+        let value = value.into();
+        self.base.set_user((!value.is_empty()).then_some(value));
+    }
+
+    /// Applies a Dioxus text-like `onblur` interaction update.
+    pub fn on_blur(&self) {
+        self.base.blur();
+    }
+
+    /// Returns a ready-made `oninput` event handler for this field.
+    pub fn oninput(&self) -> impl FnMut(Event<FormData>) + 'static
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |event: Event<FormData>| binding.on_input(event.value())
+    }
+
+    /// Returns a ready-made `onblur` event handler for this field.
     pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
     where
         Model: 'static,

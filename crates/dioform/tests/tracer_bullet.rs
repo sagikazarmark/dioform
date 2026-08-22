@@ -20,17 +20,18 @@ use dioform::{
     CollectionParsedTextBinding, CollectionRadioGroupBinding, CollectionRenderedSelectBinding,
     CollectionSelectBinding, CollectionTextBinding, FieldAccessibility, FieldBindingLifecycle,
     FieldGroup, FieldPath, FileFieldKey, Form, FormConfig, FormHandle, FormIdNamespace,
-    FormListenerEvent, FormValidationError, ManagedSubmitContinuation, ParsedTextBinding,
-    ProgressiveSubmitResult, SelectedFile, SelectedFileMetadata, SubmissionSnapshot, SubmitBlocker,
-    SubmitError, SubmitErrors, SubmitListenerEvent, SubmitResult, SubmitStatus, ValidationMode,
-    ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers, debounce_duration,
-    provide_form_context, try_use_form_context, use_collection_item_date,
-    use_collection_item_number, use_date, use_date_with, use_debounced_field_listener,
-    use_debounced_field_listener_for_origin, use_debounced_form_listener_for_origin,
-    use_field_binding_listener, use_field_blur_listener, use_field_listener,
-    use_field_listener_for_origin, use_form_blur_listener, use_form_config, use_form_context,
-    use_form_handle, use_form_listener, use_form_listener_for_origin, use_multi_select, use_number,
-    use_number_with, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
+    FormListenerEvent, FormValidationError, ManagedSubmitContinuation, OptionalTextBinding,
+    ParsedTextBinding, ProgressiveSubmitResult, SelectedFile, SelectedFileMetadata,
+    SubmissionSnapshot, SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerEvent,
+    SubmitResult, SubmitStatus, ValidationMode, ValidationStatus, ValidationTarget,
+    ValidationTrigger, ValidationTriggers, debounce_duration, provide_form_context,
+    try_use_form_context, use_collection_item_date, use_collection_item_number, use_date,
+    use_date_with, use_debounced_field_listener, use_debounced_field_listener_for_origin,
+    use_debounced_form_listener_for_origin, use_field_binding_listener, use_field_blur_listener,
+    use_field_listener, use_field_listener_for_origin, use_form_blur_listener, use_form_config,
+    use_form_context, use_form_handle, use_form_listener, use_form_listener_for_origin,
+    use_multi_select, use_number, use_number_with, use_optional_date, use_optional_number,
+    use_optional_text, use_parsed_text, use_parsed_text_with, use_radio_group, use_select,
     use_select_with, use_submit_listener,
 };
 use dioxus::prelude::{
@@ -85,6 +86,13 @@ struct DateYmd {
 struct DateForm {
     check_in: DateYmd,
     check_out: DateYmd,
+}
+
+#[derive(Clone, Debug, Eq, Form, PartialEq)]
+struct OptionalScalarForm {
+    reference: Option<String>,
+    check_in: Option<DateYmd>,
+    quantity: Option<u8>,
 }
 
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
@@ -18252,6 +18260,74 @@ struct DateHookProbe {
     rendered_value: RefCell<Option<String>>,
 }
 
+#[derive(Default)]
+struct OptionalNumberHookProbe {
+    handle: RefCell<Option<FormHandle<OptionalScalarForm>>>,
+    quantity: RefCell<Option<ParsedTextBinding<OptionalScalarForm, Option<u8>>>>,
+}
+
+#[derive(Default)]
+struct OptionalDateHookProbe {
+    handle: RefCell<Option<FormHandle<OptionalScalarForm>>>,
+    check_in: RefCell<Option<ParsedTextBinding<OptionalScalarForm, Option<DateYmd>>>>,
+}
+
+#[derive(Default)]
+struct OptionalTextHookProbe {
+    reference: RefCell<Option<OptionalTextBinding<OptionalScalarForm>>>,
+}
+
+fn optional_text_hook_probe(probe: Rc<OptionalTextHookProbe>) -> Element {
+    let form = use_form_handle(|| {
+        FormHandle::new(OptionalScalarForm {
+            reference: None,
+            check_in: None,
+            quantity: None,
+        })
+    });
+    let reference = use_optional_text(&form, OptionalScalarForm::fields().reference());
+
+    probe.reference.borrow_mut().replace(reference);
+
+    VNode::empty()
+}
+
+fn optional_date_hook_probe(probe: Rc<OptionalDateHookProbe>) -> Element {
+    let form = use_form_handle(|| {
+        FormHandle::new(OptionalScalarForm {
+            reference: None,
+            check_in: Some(DateYmd {
+                year: 2026,
+                month: 8,
+                day: 21,
+            }),
+            quantity: None,
+        })
+    });
+    let check_in = use_optional_date(&form, OptionalScalarForm::fields().check_in());
+
+    probe.handle.borrow_mut().replace(form);
+    probe.check_in.borrow_mut().replace(check_in);
+
+    VNode::empty()
+}
+
+fn optional_number_hook_probe(probe: Rc<OptionalNumberHookProbe>) -> Element {
+    let form = use_form_handle(|| {
+        FormHandle::new(OptionalScalarForm {
+            reference: None,
+            check_in: None,
+            quantity: Some(7),
+        })
+    });
+    let quantity = use_optional_number(&form, OptionalScalarForm::fields().quantity());
+
+    probe.handle.borrow_mut().replace(form);
+    probe.quantity.borrow_mut().replace(quantity);
+
+    VNode::empty()
+}
+
 fn date_hook_probe(probe: Rc<DateHookProbe>) -> Element {
     let form = use_form_handle(|| {
         FormHandle::new(DateForm {
@@ -18740,6 +18816,132 @@ fn dioxus_number_binding_allows_application_defined_optional_empty_behavior() {
     assert_eq!(handle.field_value(age_path), None);
     assert!(age.parse_error().is_some());
     assert!(!handle.can_submit());
+}
+
+#[test]
+fn dioxus_optional_text_binding_writes_scalar_presence_without_parse_state() {
+    let handle = FormHandle::new(OptionalScalarForm {
+        reference: Some(String::new()),
+        check_in: None,
+        quantity: None,
+    });
+    let reference_path = OptionalScalarForm::fields().reference();
+    let reference = handle.optional_text(reference_path.clone());
+
+    assert_eq!(reference.name(), "reference");
+    assert_eq!(reference.value(), "");
+    assert_eq!(reference.typed_value(), Some(String::new()));
+
+    reference.on_input("   ");
+
+    assert_eq!(reference.value(), "   ");
+    assert_eq!(reference.typed_value(), Some("   ".to_owned()));
+    assert_eq!(handle.parse_errors(), Vec::new());
+
+    reference.on_input("");
+
+    assert_eq!(reference.value(), "");
+    assert_eq!(reference.typed_value(), None);
+    assert_eq!(handle.field_value(reference_path), None);
+    assert!(handle.can_submit());
+}
+
+#[test]
+fn dioxus_optional_text_hook_creates_a_controlled_presence_binding() {
+    let probe = Rc::new(OptionalTextHookProbe::default());
+    let mut dom = VirtualDom::new_with_props(optional_text_hook_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    let reference = probe
+        .reference
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its optional text binding")
+        .clone();
+
+    reference.on_input("reference");
+
+    assert_eq!(reference.value(), "reference");
+    assert_eq!(reference.typed_value(), Some("reference".to_owned()));
+}
+
+#[test]
+fn dioxus_optional_number_hook_treats_only_empty_input_as_absent() {
+    let probe = Rc::new(OptionalNumberHookProbe::default());
+    let mut dom = VirtualDom::new_with_props(optional_number_hook_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    let quantity = probe
+        .quantity
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its optional number binding")
+        .clone();
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let quantity_path = OptionalScalarForm::fields().quantity();
+
+    assert_eq!(quantity.value(), "7");
+
+    quantity.on_input("");
+
+    assert_eq!(handle.field_value(quantity_path.clone()), None);
+    assert!(quantity.parse_error().is_none());
+    assert!(handle.can_submit());
+
+    quantity.on_input("not-a-number");
+
+    assert_eq!(quantity.value(), "not-a-number");
+    assert_eq!(handle.field_value(quantity_path), None);
+    assert!(quantity.parse_error().is_some());
+    assert!(!handle.can_submit());
+}
+
+#[test]
+fn dioxus_optional_date_hook_retains_non_empty_parse_errors() {
+    let probe = Rc::new(OptionalDateHookProbe::default());
+    let mut dom = VirtualDom::new_with_props(optional_date_hook_probe, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    let check_in = probe
+        .check_in
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its optional date binding")
+        .clone();
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let check_in_path = OptionalScalarForm::fields().check_in();
+
+    assert_eq!(check_in.value(), "2026-08-21");
+
+    check_in.on_input("not-a-date");
+
+    assert_eq!(check_in.value(), "not-a-date");
+    assert_eq!(
+        handle.field_value(check_in_path.clone()),
+        Some(DateYmd {
+            year: 2026,
+            month: 8,
+            day: 21,
+        })
+    );
+    assert!(check_in.parse_error().is_some());
+    assert!(!handle.can_submit());
+
+    check_in.on_input("");
+
+    assert_eq!(handle.field_value(check_in_path), None);
+    assert!(check_in.parse_error().is_none());
+    assert!(handle.can_submit());
 }
 
 #[test]
