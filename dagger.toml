@@ -3,6 +3,8 @@ source = "github.com/sagikazarmark/daggerverse-beta/rust"
 
 [modules.rust.settings]
 version = "1.97-slim-trixie"
+# Cargo's mtime freshness checks can accept stale workspace artifacts from Dagger's target cache.
+noCache = true
 
 [modules.dagger-gha]
 source = "github.com/sagikazarmark/daggerverse-beta/dagger-gha"
