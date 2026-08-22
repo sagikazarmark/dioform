@@ -51,7 +51,11 @@ This was verified against Dioxus 0.7.10 with a probe, not only by reading: with 
 a signal change re-rendered the child while the parent never re-ran. A memoized skip does not remove the
 scope, so hooks, listener registrations, and **Parse Blockers** registered by that child stay live.
 
-## `FieldPath` is deliberately excluded, and identity equality would be wrong
+## `FieldPath` was deliberately excluded, and identity equality would be wrong
+
+> **Superseded for field paths, field-group maps, and scalar bindings by
+> [ADR-0047](0047-make-field-paths-interchangeable.md).** The **Form Handle** equality decision in
+> this ADR remains in force, as does the requirement that path equality never rely on identity alone.
 
 The obvious next step — equality on `FieldPath` by **Field Identity**, which is already `Eq + Hash` and
 is what the whole field-state layer is keyed by — is unsound, because
@@ -68,9 +72,10 @@ compare identity, rendered name, and `Rc::ptr_eq` on both accessors, so equal me
 interchangeable. It is not adopted here because `#[derive(Form)]` builds a fresh `FieldPath::direct`
 with fresh closures on every `Model::fields().field()` call, so two independently derived paths to one
 field would compare unequal — correct, never stale, but a contract meaning "equal" only for clones, which
-deserves its own decision rather than arriving as a side effect of this one. That decision is
-[ADR-0030](0030-decline-partial-eq-for-field-paths-and-bindings.md), which declines it and gives the
-exclusion above its reasons.
+deserves its own decision rather than arriving as a side effect of this one. That decision was
+[ADR-0030](0030-decline-partial-eq-for-field-paths-and-bindings.md), which declined it. ADR-0047
+revisits the representation, retains direct function pointers for structural comparison, and limits
+clone-of equality to composed paths.
 
 The derived `…FieldGroupMap` follows `FieldPath` and is excluded with it: its fields are field paths and
 it has no other way to compare them.

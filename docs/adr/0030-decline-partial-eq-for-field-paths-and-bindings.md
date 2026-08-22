@@ -1,5 +1,9 @@
 # Decline `PartialEq` for field paths, field group maps, and bindings
 
+> **Superseded by [ADR-0047](0047-make-field-paths-interchangeable.md).** ADR-0047 reverses the
+> refusal for field paths, field-group maps, and scalar bindings while retaining the collection-binding
+> exclusion.
+
 Dioxus requires every `#[component]` prop to be `PartialEq`. `FieldPath` does not implement it, nor does
 the derived `…FieldGroupMap`, nor `CollectionBinding` and `CollectionItemBinding`. So a reusable
 field-group helper stays a plain `fn` rather than a component

@@ -78,9 +78,9 @@ pub mod prelude {
         SubmitErrors, SubmitListenerContext, SubmitListenerEvent, SubmitResult, SubmitStatus,
         SyncCollectionItemFieldValidatorBuilder, SyncFieldValidatorBuilder,
         SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder, TextBinding, TextareaBinding,
-        ValidationErrorSnapshot, ValidationErrorView, ValidationMode, ValidationStatus,
-        ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext,
-        debounce_duration, provide_form_context, try_use_form_context,
+        TriStateCheckboxBinding, ValidationErrorSnapshot, ValidationErrorView, ValidationMode,
+        ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
+        ValidatorContext, debounce_duration, provide_form_context, try_use_form_context,
         use_collection_item_checkbox, use_collection_item_date, use_collection_item_date_with,
         use_collection_item_number, use_collection_item_number_with,
         use_collection_item_parsed_text, use_collection_item_parsed_text_with,
@@ -10318,6 +10318,16 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
     }
 
+    /// Creates a controlled tri-state checkbox binding for an `Option<bool>` field.
+    pub fn tri_state_checkbox(
+        &self,
+        path: FieldPath<Model, Option<bool>>,
+    ) -> TriStateCheckboxBinding<Model, Error> {
+        TriStateCheckboxBinding {
+            base: FieldBindingCore::new(self.clone(), path),
+        }
+    }
+
     /// Creates a headless file-selection binding outside the typed form draft.
     pub fn file(&self, key: FileFieldKey<Model>) -> FileSelectionBinding<Model, Error> {
         FileSelectionBinding {
@@ -11997,6 +12007,92 @@ impl<Model, Error> CheckboxBinding<Model, Error> {
     {
         let binding = self.clone();
         move |event: Event<FormData>| binding.on_change(event.checked())
+    }
+
+    /// Returns a ready-made `onblur` event handler for this checkbox.
+    pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |_event: Event<FocusData>| binding.on_blur()
+    }
+
+    /// Returns validation errors for this field.
+    pub fn validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.validation_errors()
+    }
+
+    /// Returns visible validation errors for this field.
+    pub fn visible_validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.visible_validation_errors()
+    }
+}
+
+/// Controlled tri-state checkbox behavior for a typed `Option<bool>` field.
+pub struct TriStateCheckboxBinding<Model, Error = String> {
+    base: FieldBindingCore<Model, Option<bool>, Error>,
+}
+
+impl<Model, Error> Clone for TriStateCheckboxBinding<Model, Error> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+        }
+    }
+}
+
+impl<Model, Error> TriStateCheckboxBinding<Model, Error> {
+    /// Returns the rendered checkbox name derived from the typed field path.
+    pub fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    /// Returns headless accessibility IDs and ARIA state for this checkbox.
+    pub fn accessibility(&self) -> FieldAccessibility {
+        self.base.accessibility()
+    }
+
+    /// Returns tracked user interaction metadata for this field.
+    pub fn metadata(&self) -> FieldMetadata {
+        self.base.metadata()
+    }
+
+    /// Returns whether this field has received user interaction.
+    pub fn is_touched(&self) -> bool {
+        self.base.is_touched()
+    }
+
+    /// Returns whether this field has lost focus at least once.
+    pub fn is_blurred(&self) -> bool {
+        self.base.is_blurred()
+    }
+
+    /// Returns the current controlled checkbox state.
+    pub fn state(&self) -> Option<bool> {
+        self.base.value()
+    }
+
+    /// Replaces the controlled checkbox state programmatically.
+    pub fn set_state(&self, state: Option<bool>) {
+        self.base.set_programmatic(state);
+    }
+
+    /// Applies a user-originated tri-state checkbox update.
+    pub fn on_change(&self, state: Option<bool>) {
+        self.base.set_user(state);
+    }
+
+    /// Applies a Dioxus checkbox `onblur` interaction update.
+    pub fn on_blur(&self) {
+        self.base.blur();
     }
 
     /// Returns a ready-made `onblur` event handler for this checkbox.

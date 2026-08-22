@@ -9849,6 +9849,11 @@ struct PreferencesForm {
     accepts_terms: bool,
 }
 
+#[derive(Clone, Debug, Eq, Form, PartialEq)]
+struct TriStatePreferencesForm {
+    subscription: Option<bool>,
+}
+
 #[test]
 fn dioxus_facade_textarea_binding_updates_the_typed_field() {
     let handle = FormHandle::new(PreferencesForm {
@@ -9949,6 +9954,44 @@ fn dioxus_facade_checkbox_binding_updates_the_typed_field() {
 
     assert!(handle.is_field_touched(accepts_terms_path.clone()));
     assert!(handle.is_field_blurred(accepts_terms_path));
+}
+
+#[test]
+fn dioxus_facade_tri_state_checkbox_binding_round_trips_none() {
+    let handle = FormHandle::new(TriStatePreferencesForm { subscription: None });
+    let subscription_path = TriStatePreferencesForm::fields().subscription();
+    let subscription = handle.tri_state_checkbox(subscription_path.clone());
+
+    assert_eq!(subscription.name(), "subscription");
+    assert_eq!(subscription.state(), None);
+    assert_eq!(
+        subscription.accessibility(),
+        handle.field_accessibility(subscription_path.clone())
+    );
+    assert!(!handle.is_field_touched(subscription_path.clone()));
+    assert!(!handle.is_field_blurred(subscription_path.clone()));
+
+    subscription.on_change(Some(true));
+
+    assert_eq!(subscription.state(), Some(true));
+    assert!(handle.is_field_dirty(subscription_path.clone()));
+    assert!(handle.is_field_touched(subscription_path.clone()));
+
+    subscription.on_change(Some(false));
+
+    assert_eq!(subscription.state(), Some(false));
+    assert_eq!(handle.field_value(subscription_path.clone()), Some(false));
+
+    subscription.on_change(None);
+
+    assert_eq!(subscription.state(), None);
+    assert_eq!(handle.field_value(subscription_path.clone()), None);
+    assert!(!handle.is_field_dirty(subscription_path.clone()));
+
+    subscription.on_blur();
+
+    assert!(handle.is_field_touched(subscription_path.clone()));
+    assert!(handle.is_field_blurred(subscription_path));
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

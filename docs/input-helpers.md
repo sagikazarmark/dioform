@@ -47,6 +47,13 @@ These cover the common cases. When a handler needs extra logic, fall back to a p
 `move |event| { ...; binding.on_input(event.value()) }` closure with an explicit `binding.clone()`;
 the `on_input` / `on_change` / `on_blur` methods used above remain available for that.
 
+## Tri-State Checkboxes
+
+Use `FormHandle::tri_state_checkbox(path)` for an `Option<bool>` Field. Its `state()` and
+`on_change(...)` methods preserve `Some(false)`, `Some(true)`, and `None` exactly. The binding does
+not choose a state cycle or expose a native `onchange()` helper because a browser checkbox event
+only reports `checked: bool`; the application or widget owns the cycle and indeterminate rendering.
+
 ## Choice Helpers
 
 Use `FormHandle::select(path)` when the application can pass typed values directly, such

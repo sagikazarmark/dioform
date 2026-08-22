@@ -1,6 +1,7 @@
 # First-class Dioxus integration: signals-first dioform, `dioxus-field`, and custom registries
 
-Status: accepted plan, rev 3 (2026-08-22). Tracking issue: TBD.
+Status: accepted plan, rev 3 (2026-08-22). Tracking issue:
+[#81](https://github.com/sagikazarmark/dioform/issues/81).
 
 This document is the in-repo source of truth for the Dioxus-integration initiative. It condenses two
 rounds of verified research (three parallel research passes each, plus an adversarial judge pass that
@@ -16,13 +17,15 @@ a glue crate:
    and only erases them into fresh `Rc<dyn Fn>` allocations inside the constructor
    (`crates/dioform-core`). Keeping a `Direct { get: fn, get_mut: fn }` accessor variant makes
    derived-path equality structural and *true* — `Model::fields().street() ==
-   Model::fields().street()` — an option [ADR-0030](../adr/0030-decline-partial-eq-for-field-paths-and-bindings.md)
-   never evaluated. Composed paths (`join`, `.or`, mounted group maps compose through capturing
-   closures) fall back to `Rc::ptr_eq` clone-of equality, documented. The comparison
+   Model::fields().street()` — the decision recorded by
+   [ADR-0047](../adr/0047-make-field-paths-interchangeable.md), superseding
+   [ADR-0030](../adr/0030-decline-partial-eq-for-field-paths-and-bindings.md). Composed paths
+   (`join`, `.or`, and mounted group maps) compose through capturing closures and fall back to
+   `Rc::ptr_eq` clone-of equality, documented. The comparison
    `identity == && name == && get_ptr == && get_mut_ptr ==` is never falsely equal (ICF can only
    merge behaviorally identical accessors; cross-CGU duplication causes only false *inequality* — a
    missed memoization, never staleness). Collection bindings stay excluded: the row-subscription
-   hazard (ADR-0030 §bindings) is untouched by any equality semantics.
+   hazard (ADR-0047 §collection-bindings-remain-excluded) is untouched by any equality semantics.
 2. **Signals-first field views.** Dioxus's `Readable` trait is unsealed; `ReadSignal::new` boxes any
    implementation; first-party `dioxus-stores` demonstrates the exact pattern. Dioform field views
    can implement `Readable` + `SuperInto<ReadSignal>` so a binding is passable *directly* as a
@@ -102,6 +105,8 @@ dioform in sight — that is the test that the layering holds.
 
 ## Phase 1 — Supersede ADR-0030, scoped to scalars (small–medium)
 
+[ADR-0047](../adr/0047-make-field-paths-interchangeable.md) records this decision.
+
 - `Direct { get: fn, get_mut: fn }` variant in `FieldPathAccessor`; `Rc<dyn Fn>` stays for composed
   paths.
 - `impl PartialEq for FieldPath` in core (structural for direct accessors, `Rc::ptr_eq` fallback for
@@ -129,11 +134,13 @@ dioform in sight — that is the test that the layering holds.
 
 ## Phase 3 — `dioxus-field` (medium)
 
-Hosting: incubate as a dioform workspace member (`crates/dioxus-field`) with hard guardrails — zero
+Hosting, recorded by
+[ADR-0048](../adr/0048-incubate-dioxus-field-in-the-workspace-with-an-extraction-trigger.md): incubate
+as a dioform workspace member (`crates/dioxus-field`) with hard guardrails — zero
 dioform dependencies including dev-deps (compiles and tests standalone; cross-crate tests live in
 `dioform-integration-tests`), own version/README/changelog, no dioform vocabulary in its API or
 docs. **Extract to a standalone repository before going public-facing** (before the crates.io 0.1
-and before the formal upstream proposal), via subtree split with history. Record as an ADR.
+and before the formal upstream proposal), via subtree split with history.
 Donatability to dioxus-primitives is a standing design constraint.
 
 - **Two-level contract.** Lower: the documented **Binding Prop Trio** — `value: ReadSignal<T>`,
