@@ -785,4 +785,110 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn collection_structure_transitions_isolate_unrelated_and_retained_item_selectors() {
+        let mut core = dioform_core::FormCore::<Vec<()>>::new(vec![()]);
+        let path = dioform_core::FieldPath::direct(
+            FieldIdentity::new("lines"),
+            "lines",
+            |items| items,
+            |items| items,
+        );
+        let retained_item = core.collection_items(path)[0].identity();
+        let collection = FieldIdentity::new("lines");
+        let retained_field = FieldIdentity::collection_item("lines", retained_item, "description");
+        let unrelated_collection = FieldIdentity::new("other_lines");
+        let ordinary_field = FieldIdentity::new("title");
+        let tracked = [
+            collection.clone(),
+            retained_field.clone(),
+            unrelated_collection.clone(),
+            ordinary_field.clone(),
+        ];
+
+        for (transition, user_originated) in [
+            (
+                SelectorTransition::CollectionStructureChanged(collection.clone()),
+                false,
+            ),
+            (
+                SelectorTransition::CollectionStructureUserChanged(collection.clone()),
+                true,
+            ),
+        ] {
+            let notifications = transition.selector_notifications(tracked.clone());
+
+            assert!(notifications.contains(&SelectorNotification::FieldValue(collection.clone())));
+            assert_eq!(
+                notifications.contains(&SelectorNotification::FieldMetadata(collection.clone())),
+                user_originated
+            );
+
+            for isolated in [
+                retained_field.clone(),
+                unrelated_collection.clone(),
+                ordinary_field.clone(),
+            ] {
+                assert!(
+                    !notifications.contains(&SelectorNotification::FieldValue(isolated.clone()))
+                );
+                assert!(!notifications.contains(&SelectorNotification::FieldMetadata(isolated)));
+            }
+        }
+    }
+
+    #[test]
+    fn collection_item_removal_transitions_wake_removed_items_but_isolate_unrelated_fields() {
+        let mut core = dioform_core::FormCore::<Vec<()>>::new(vec![()]);
+        let path = dioform_core::FieldPath::direct(
+            FieldIdentity::new("lines"),
+            "lines",
+            |items| items,
+            |items| items,
+        );
+        let removed_item = core.collection_items(path)[0].identity();
+        let collection = FieldIdentity::new("lines");
+        let removed_root = FieldIdentity::collection_item_value("lines", removed_item);
+        let removed_field = FieldIdentity::collection_item("lines", removed_item, "description");
+        let unrelated_collection = FieldIdentity::new("other_lines");
+        let ordinary_field = FieldIdentity::new("title");
+        let tracked = [
+            collection.clone(),
+            removed_field.clone(),
+            unrelated_collection.clone(),
+            ordinary_field.clone(),
+        ];
+
+        for origin in [FieldUpdateOrigin::Programmatic, FieldUpdateOrigin::User] {
+            let notifications = SelectorTransition::CollectionItemsRemoved {
+                collection: collection.clone(),
+                items: vec![removed_root.clone()],
+                origin,
+            }
+            .selector_notifications(tracked.clone());
+
+            assert!(notifications.contains(&SelectorNotification::FieldValue(collection.clone())));
+            assert!(
+                notifications.contains(&SelectorNotification::FieldValue(removed_root.clone()))
+            );
+            assert!(
+                notifications.contains(&SelectorNotification::FieldValue(removed_field.clone()))
+            );
+            assert!(
+                notifications.contains(&SelectorNotification::FieldMetadata(removed_field.clone()))
+            );
+            assert_eq!(
+                notifications.contains(&SelectorNotification::FieldMetadata(collection.clone())),
+                origin == FieldUpdateOrigin::User
+            );
+
+            for isolated in [unrelated_collection.clone(), ordinary_field.clone()] {
+                assert!(
+                    !notifications.contains(&SelectorNotification::FieldValue(isolated.clone()))
+                );
+                assert!(!notifications.contains(&SelectorNotification::FieldMetadata(isolated)));
+            }
+        }
+    }
 }

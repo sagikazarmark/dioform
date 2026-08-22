@@ -8907,6 +8907,320 @@ fn collection_structure_selectors_rerender_without_rerendering_item_value_reader
     );
 }
 
+struct CollectionMutationIsolationProbe {
+    form: FormHandle<ResetScopedCollectionForm>,
+    retained_description: CollectionTextBinding<ResetScopedCollectionForm, InvoiceCollectionLine>,
+    line_description_snapshots: RefCell<Vec<Vec<String>>>,
+    other_line_description_snapshots: RefCell<Vec<Vec<String>>>,
+    title_snapshots: RefCell<Vec<String>>,
+    retained_description_snapshots: RefCell<Vec<String>>,
+}
+
+impl CollectionMutationIsolationProbe {
+    fn new() -> Self {
+        let mut initial = reset_scoped_collection_form();
+        initial.lines.push(InvoiceCollectionLine {
+            description: "Build".to_owned(),
+            quantity: 1,
+        });
+
+        let form = FormHandle::new(initial);
+        let retained_description = form
+            .collection(ResetScopedCollectionForm::fields().lines())
+            .items()[0]
+            .text(InvoiceCollectionLine::fields().description());
+
+        Self {
+            form,
+            retained_description,
+            line_description_snapshots: RefCell::new(Vec::new()),
+            other_line_description_snapshots: RefCell::new(Vec::new()),
+            title_snapshots: RefCell::new(Vec::new()),
+            retained_description_snapshots: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn lines(&self) -> CollectionBinding<ResetScopedCollectionForm, InvoiceCollectionLine> {
+        self.form
+            .collection(ResetScopedCollectionForm::fields().lines())
+    }
+
+    fn assert_unrelated_selectors_stayed_asleep(&self, mutation: impl Debug) {
+        assert_eq!(
+            self.other_line_description_snapshots.borrow().as_slice(),
+            [vec!["Review".to_owned()]],
+            "the unrelated collection selector woke for {mutation:?}"
+        );
+        assert_eq!(
+            self.title_snapshots.borrow().as_slice(),
+            ["Invoice"],
+            "the ordinary field selector woke for {mutation:?}"
+        );
+    }
+}
+
+fn collection_descriptions(
+    collection: CollectionBinding<ResetScopedCollectionForm, InvoiceCollectionLine>,
+) -> Vec<String> {
+    collection
+        .value()
+        .into_iter()
+        .map(|line| line.description)
+        .collect()
+}
+
+fn mutated_collection_value_probe(probe: Rc<CollectionMutationIsolationProbe>) -> Element {
+    let descriptions = collection_descriptions(probe.lines());
+
+    probe
+        .line_description_snapshots
+        .borrow_mut()
+        .push(descriptions);
+
+    VNode::empty()
+}
+
+fn unrelated_collection_value_probe(probe: Rc<CollectionMutationIsolationProbe>) -> Element {
+    let descriptions = collection_descriptions(
+        probe
+            .form
+            .collection(ResetScopedCollectionForm::fields().other_lines()),
+    );
+
+    probe
+        .other_line_description_snapshots
+        .borrow_mut()
+        .push(descriptions);
+
+    VNode::empty()
+}
+
+fn collection_isolation_title_probe(probe: Rc<CollectionMutationIsolationProbe>) -> Element {
+    let title = probe
+        .form
+        .field_value(ResetScopedCollectionForm::fields().title());
+
+    probe.title_snapshots.borrow_mut().push(title);
+
+    VNode::empty()
+}
+
+fn retained_collection_item_value_probe(probe: Rc<CollectionMutationIsolationProbe>) -> Element {
+    let description = probe.retained_description.value();
+
+    probe
+        .retained_description_snapshots
+        .borrow_mut()
+        .push(description);
+
+    VNode::empty()
+}
+
+struct CollectionMutationIsolationDoms {
+    lines: VirtualDom,
+    other_lines: VirtualDom,
+    title: VirtualDom,
+    item: VirtualDom,
+}
+
+impl CollectionMutationIsolationDoms {
+    fn new(probe: &Rc<CollectionMutationIsolationProbe>) -> Self {
+        Self {
+            lines: VirtualDom::new_with_props(mutated_collection_value_probe, Rc::clone(probe)),
+            other_lines: VirtualDom::new_with_props(
+                unrelated_collection_value_probe,
+                Rc::clone(probe),
+            ),
+            title: VirtualDom::new_with_props(collection_isolation_title_probe, Rc::clone(probe)),
+            item: VirtualDom::new_with_props(
+                retained_collection_item_value_probe,
+                Rc::clone(probe),
+            ),
+        }
+    }
+
+    fn rebuild(&mut self) {
+        for dom in [
+            &mut self.lines,
+            &mut self.other_lines,
+            &mut self.title,
+            &mut self.item,
+        ] {
+            dom.rebuild_in_place();
+        }
+    }
+
+    fn render(&mut self) {
+        for dom in [
+            &mut self.lines,
+            &mut self.other_lines,
+            &mut self.title,
+            &mut self.item,
+        ] {
+            dom.render_immediate_to_vec();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CollectionStructureMutation {
+    Insert,
+    InsertProgrammatic,
+    MoveToIndex,
+    MoveToIndexProgrammatic,
+    Swap,
+    SwapProgrammatic,
+    Reorder,
+    ReorderProgrammatic,
+}
+
+fn apply_collection_structure_mutation(
+    mutation: CollectionStructureMutation,
+    lines: &CollectionBinding<ResetScopedCollectionForm, InvoiceCollectionLine>,
+) -> Vec<String> {
+    let identities: Vec<_> = lines
+        .items()
+        .into_iter()
+        .map(|item| item.identity())
+        .collect();
+
+    match mutation {
+        CollectionStructureMutation::Insert => {
+            assert!(
+                lines
+                    .insert(
+                        1,
+                        InvoiceCollectionLine {
+                            description: "Ship".to_owned(),
+                            quantity: 1,
+                        },
+                    )
+                    .is_some()
+            );
+            vec!["Design".to_owned(), "Ship".to_owned(), "Build".to_owned()]
+        }
+        CollectionStructureMutation::InsertProgrammatic => {
+            assert!(
+                lines
+                    .insert_programmatic(
+                        1,
+                        InvoiceCollectionLine {
+                            description: "Ship".to_owned(),
+                            quantity: 1,
+                        },
+                    )
+                    .is_some()
+            );
+            vec!["Design".to_owned(), "Ship".to_owned(), "Build".to_owned()]
+        }
+        CollectionStructureMutation::MoveToIndex => {
+            assert!(lines.move_to_index(identities[0], 1));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+        CollectionStructureMutation::MoveToIndexProgrammatic => {
+            assert!(lines.move_to_index_programmatic(identities[0], 1));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+        CollectionStructureMutation::Swap => {
+            assert!(lines.swap(0, 1));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+        CollectionStructureMutation::SwapProgrammatic => {
+            assert!(lines.swap_programmatic(0, 1));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+        CollectionStructureMutation::Reorder => {
+            assert!(lines.reorder(&[identities[1], identities[0]]));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+        CollectionStructureMutation::ReorderProgrammatic => {
+            assert!(lines.reorder_programmatic(&[identities[1], identities[0]]));
+            vec!["Build".to_owned(), "Design".to_owned()]
+        }
+    }
+}
+
+fn assert_collection_structure_mutation_selector_isolation(mutation: CollectionStructureMutation) {
+    let probe = Rc::new(CollectionMutationIsolationProbe::new());
+    let mut doms = CollectionMutationIsolationDoms::new(&probe);
+    doms.rebuild();
+
+    let expected = apply_collection_structure_mutation(mutation, &probe.lines());
+
+    doms.render();
+
+    assert_eq!(
+        probe.line_description_snapshots.borrow().as_slice(),
+        [vec!["Design".to_owned(), "Build".to_owned()], expected],
+        "the mutated collection selector did not wake for {mutation:?}"
+    );
+    probe.assert_unrelated_selectors_stayed_asleep(mutation);
+    assert_eq!(
+        probe.retained_description_snapshots.borrow().as_slice(),
+        ["Design"],
+        "the unchanged retained-item selector woke for {mutation:?}"
+    );
+}
+
+#[test]
+fn collection_structure_mutations_wake_only_selectors_whose_values_changed() {
+    for mutation in [
+        CollectionStructureMutation::Insert,
+        CollectionStructureMutation::InsertProgrammatic,
+        CollectionStructureMutation::MoveToIndex,
+        CollectionStructureMutation::MoveToIndexProgrammatic,
+        CollectionStructureMutation::Swap,
+        CollectionStructureMutation::SwapProgrammatic,
+        CollectionStructureMutation::Reorder,
+        CollectionStructureMutation::ReorderProgrammatic,
+    ] {
+        assert_collection_structure_mutation_selector_isolation(mutation);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CollectionClearMutation {
+    Clear,
+    ClearProgrammatic,
+}
+
+fn assert_collection_clear_selector_isolation(mutation: CollectionClearMutation) {
+    let probe = Rc::new(CollectionMutationIsolationProbe::new());
+    let mut doms = CollectionMutationIsolationDoms::new(&probe);
+    doms.rebuild();
+
+    let lines = probe.lines();
+    let cleared = match mutation {
+        CollectionClearMutation::Clear => lines.clear(),
+        CollectionClearMutation::ClearProgrammatic => lines.clear_programmatic(),
+    };
+    assert!(cleared);
+
+    doms.render();
+
+    assert_eq!(
+        probe.line_description_snapshots.borrow().as_slice(),
+        [vec!["Design".to_owned(), "Build".to_owned()], vec![]],
+        "the cleared collection selector did not wake for {mutation:?}"
+    );
+    assert_eq!(
+        probe.retained_description_snapshots.borrow().as_slice(),
+        ["Design", ""],
+        "the removed-item selector did not wake for {mutation:?}"
+    );
+    probe.assert_unrelated_selectors_stayed_asleep(mutation);
+}
+
+#[test]
+fn clearing_a_collection_wakes_removed_items_but_not_unrelated_field_selectors() {
+    for mutation in [
+        CollectionClearMutation::Clear,
+        CollectionClearMutation::ClearProgrammatic,
+    ] {
+        assert_collection_clear_selector_isolation(mutation);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum CollectionReplacement {
     User,
