@@ -4,4 +4,4 @@
 ["","container.from",["ghcr.io/sagikazarmark/dang:latest","linux/amd64"],"sha256:071a9e3b5dca444cb7248650a6bcc68e072fbbae8707b0edb1c82937b8b30b74"]
 ["","container.from",["ghcr.io/sagikazarmark/dang:latest","linux/arm64"],"sha256:071a9e3b5dca444cb7248650a6bcc68e072fbbae8707b0edb1c82937b8b30b74"]
 ["","git.ref",["https://github.com/rustsec/advisory-db.git","HEAD"],{"ref":"refs/heads/main","sha":"bf5c0d245a92671908518d7e765914d437954ed6"}]
-["","git.ref",["https://github.com/sagikazarmark/daggerverse-beta","HEAD"],{"ref":"refs/heads/main","sha":"190db574233fd2efcea491d06e782a8be30136fb"}]
+["","git.ref",["https://github.com/sagikazarmark/daggerverse-beta","HEAD"],{"ref":"refs/heads/main","sha":"2158652c2dbc7dc11fdc4f8aa1e22d119620b957"}]
