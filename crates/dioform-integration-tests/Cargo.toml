@@ -1,6 +1,6 @@
 [package]
 name = "dioform-integration-tests"
-version = "0.0.0"
+version = "0.3.0"
 publish = false
 edition.workspace = true
 rust-version.workspace = true
