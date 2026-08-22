@@ -340,7 +340,7 @@ _Avoid_: Serde rename policy, field identity policy
 
 **Field Binding**:
 Headless **Dioxus Adapter** behavior that connects application-rendered control interaction to a **Field**, exposing rendered identity, accessibility helpers, value updates, and binding-owned parsing state when needed without owning visual markup.
-_Avoid_: Input component, form component, binding module
+_Avoid_: Input component, form component, binding module, value binding
 
 **Collection Item Binding**:
 A read-only item-root validation presentation surface for one logical item in a **Collection Field**, also used to create bindings for the item's descendant **Fields**. It exposes validation errors attached exactly to the whole-item **Field** rather than aggregating descendant errors, but does not by itself assert that the item was rendered as one control or expose general whole-item state or interaction.
@@ -349,6 +349,58 @@ _Avoid_: Collection row component, item input, collection mutation handle
 **Field Binding Lifecycle Listener**:
 A **Form Listener** registered against hook-owned **Field Binding** mount and unmount events for one **Field** and the **Fields** it contains, independent of whether the listener hook runs before or after the binding hook in the same component.
 _Avoid_: Validator, input component lifecycle owner
+
+**Field Path Interchangeability**:
+The capability, expressed as `PartialEq` on **Field Path** in the **Form Core**, that equal paths are genuinely interchangeable: structural fn-pointer comparison for directly derived paths, so two independent derivations of the same field compare equal, with clone-of pointer equality as the fallback for composed paths. Equality never lies; false inequality costs only a missed memoization.
+_Avoid_: Identity equality, accessor leak, clone-of-only equality
+
+**Field Signal View**:
+A per-field **Dioxus Adapter** view implementing Dioxus's `Readable` so a **Field**'s state is passable directly as a signal-typed prop, backed by a dirty-gated cache slot owned by the form and interned by **Field Identity** plus accessor identity.
+_Avoid_: Memo bridge, use_memo glue, form selector
+
+**Field Convention**:
+The form-library-agnostic contract (crate: `dioxus-field`) that connects **Widget Registries** to any form state. Dioxus-specific, never form-aware: it knows one field at a time and stops at headless Field, Label, FieldDescription, and FieldError parts. Two levels: the **Binding Prop Trio** and the **Value Binding** with **Field Meta**.
+_Avoid_: Form library, form protocol, component kit
+
+**Value Binding**:
+The **Field Convention**'s form-agnostic two-way port to one field-shaped value: a reactive read, a write carrying a **Change Origin**, a **Commit** signal, and a comparable identity. Dioform produces one from a **Field Binding**; a bare signal produces one with no form library at all.
+_Avoid_: Field binding, mutable signal prop, controlled component state
+
+**Binding Prop Trio**:
+The **Field Convention**'s zero-dependency lower contract: a read-only signal `value`, an `on_change` callback, and an `on_commit` callback, with names fixed by the **Conformance Kit**. A **Value Binding** decomposes into it; trio-only widgets imply a user **Change Origin**.
+_Avoid_: Controlled trio, use_controlled shape, writable signal prop
+
+**Change Origin**:
+Whether a **Value Binding** write came from user interaction or from application code. User writes imply touched-marking and user-event validation semantics; programmatic writes map to a **Programmatic Update**.
+_Avoid_: Event source, DOM event type
+
+**Commit**:
+The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it feeds the Blur **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all.
+_Avoid_: Blur, change event, focusout relay
+
+**Field Meta**:
+The **Field Convention**'s signal-backed per-field presentation metadata: element ids, rendered name, required, disabled, invalid, pre-rendered error text, touched, and dirty. Producer-defined semantics; dioform produces it from form state, and a standalone Field fabricates it. It carries no typed errors and no validity logic — invalid is a flag its producer sets.
+_Avoid_: Accessibility helper, form state, validity classification
+
+**Field Context**:
+The **Field Convention**'s per-field Dioxus context through which one Field provides its **Value Binding**, **Field Meta**, and **Focus Request** slot to descendant parts. Scoped to a single field; unrelated to dioform's **Form Context Scope**, which selects a whole **Form Handle**.
+_Avoid_: Form context scope, form context consumer, global field state
+
+**Binding Resolution**:
+The **Field Convention**'s precedence rule for how a widget obtains its **Value Binding** and **Field Meta**: an explicit prop wins over **Field Context**, which wins over an internal uncontrolled signal, applied per meta flag as well as to the value.
+_Avoid_: Controlled/uncontrolled switch, prop merging
+
+**Focus Request**:
+The **Field Context** slot through which a widget registers a focus callback so a producer can ask the field's control to focus itself. Which field to focus remains the form library's decision.
+_Avoid_: Autofocus, DOM ref, focus trap
+
+**Widget Registry**:
+A component library authored against the **Field Convention**: its authors implement interaction, ARIA, and styling, and never think about forms. Verified by the **Conformance Kit**.
+_Avoid_: Form component library, UI kit, primitives fork
+
+**Conformance Kit**:
+The **Field Convention**'s test suite that any **Widget Registry** runs against its components: commit observable before submit handling, writes carry their **Change Origin**, **Binding Resolution** precedence holds, focus round-trips, and error and description ids register into **Field Meta** on mount and drop.
+_Avoid_: Integration tests, example suite
 
 **Variant Field**:
 A **Field** whose value is an enum variant, treated as a whole value until variant-inner paths receive dedicated conditional-field semantics.
@@ -943,3 +995,23 @@ Domain expert: Yes, until a **Validation Trigger** runs again. A verdict describ
 Developer: Can an application put a dot inside a **Field Identity** segment to get a nicer name?
 
 Domain expert: No. The dot is the **Identity Path Separator**. Rendered naming belongs to **Field Name** and the **Field Name Policy**, which never change **Field Identity**.
+
+Developer: Is the **Field Convention** a second form library?
+
+Domain expert: No. It knows one field at a time — a **Value Binding**, **Field Meta**, and a **Focus Request**. It has no model, no submission, and no notion of all the fields. The moment it grows those, it has become a competing form library.
+
+Developer: Is a **Commit** just a renamed blur?
+
+Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform maps a **Commit** onto the Blur **Validation Trigger**, but the widget decides when it happens, not the DOM.
+
+Developer: Does a **Widget Registry** checkbox need to know dioform exists?
+
+Domain expert: No. It consumes a **Value Binding** and **Field Meta** through **Binding Resolution**. Dioform produces those from a **Field Binding**; a bare signal produces them with no form library at all.
+
+Developer: Should **Field Meta** classify why a field is invalid?
+
+Domain expert: No. Invalid is a flag with pre-rendered error text, set by whatever produced the meta. Validity logic stays with the form library — coupling a field layer to validity classification is what kills field layers.
+
+Developer: Two paths derived independently as `Model::fields().street()` — are they equal now?
+
+Domain expert: Yes. **Field Path Interchangeability** makes directly derived paths compare structurally, so equal means addresses the same field. Composed paths compare equal only for clones, and equality never lies either way.
