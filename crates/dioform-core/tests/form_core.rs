@@ -7225,6 +7225,27 @@ fn blurring_a_contained_field_reveals_its_container_error_without_blurring_the_c
 }
 
 #[test]
+fn blurring_a_field_runs_its_own_validator() {
+    let mut form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        });
+    form.register_sync_field_validator_for_triggers(
+        name_path(),
+        "required",
+        ValidationTrigger::Blur,
+        |_name, _context| vec!["required"],
+    );
+
+    form.mark_field_blurred(name_path());
+
+    assert_eq!(
+        form.field_validation_errors(name_path())[0].error(),
+        &"required"
+    );
+}
+
+#[test]
 fn blurring_a_container_does_not_run_validators_on_fields_it_contains() {
     let mut form: FormCore<NestedPage, &'static str> =
         FormCore::new_with_error_type(NestedPage::default());
@@ -7285,6 +7306,28 @@ fn blurring_a_collection_item_container_does_not_run_its_descendant_validators()
         form.field_validation_errors_by_identity(&line_field_identity_for(item, "customer.name"))
             .is_empty()
     );
+}
+
+#[test]
+fn blurring_a_collection_field_does_not_run_its_item_validators() {
+    let runs = Rc::new(Cell::new(0));
+    let validator_runs = Rc::clone(&runs);
+    let mut form: FormCore<InvoiceForm, &'static str> =
+        FormCore::new_with_error_type(invoice_form());
+    form.register_sync_collection_item_field_validator_for_triggers(
+        lines_path(),
+        line_description_path(),
+        "description_invalid",
+        ValidationTrigger::Blur,
+        move |_description, _context| {
+            validator_runs.set(validator_runs.get() + 1);
+            vec!["description_invalid"]
+        },
+    );
+
+    form.mark_field_blurred(lines_path());
+
+    assert_eq!(runs.get(), 0);
 }
 
 #[test]
