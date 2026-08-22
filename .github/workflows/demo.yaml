@@ -30,7 +30,6 @@ jobs:
           workdir: demo
           verb: call
           args: >-
-            --lock pinned
             worker deploy
             --account-id ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
             --api-token env://CLOUDFLARE_API_TOKEN
@@ -61,7 +60,6 @@ jobs:
           workdir: demo
           verb: call
           args: >-
-            --lock pinned
             worker deploy-pull-request
             --pull-request ${{ github.event.pull_request.number }}
             --commit ${{ github.event.pull_request.head.sha }}
