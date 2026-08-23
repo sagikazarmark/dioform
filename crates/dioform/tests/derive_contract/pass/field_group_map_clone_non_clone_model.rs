@@ -28,5 +28,6 @@ fn main() {
     };
     let cloned = fields.clone();
 
+    assert!(fields == cloned);
     assert_eq!(cloned.street().identity().as_str(), "street_line");
 }

@@ -228,6 +228,10 @@ mod contract {
                 .static_fields
                 .iter()
                 .map(StaticFieldPathContract::expand_group_map_clone_field);
+            let partial_eq_fields = self
+                .static_fields
+                .iter()
+                .map(StaticFieldPathContract::expand_group_map_partial_eq_field);
 
             quote! {
                 #visibility struct #group_map_ident<Model> {
@@ -239,6 +243,12 @@ mod contract {
                         Self {
                             #(#clone_fields,)*
                         }
+                    }
+                }
+
+                impl<Model> PartialEq for #group_map_ident<Model> {
+                    fn eq(&self, other: &Self) -> bool {
+                        true #(&& #partial_eq_fields)*
                     }
                 }
 
@@ -360,6 +370,14 @@ mod contract {
 
             quote! {
                 #field_ident: self.#field_ident.clone()
+            }
+        }
+
+        fn expand_group_map_partial_eq_field(&self) -> proc_macro2::TokenStream {
+            let field_ident = &self.field_ident;
+
+            quote! {
+                self.#field_ident == other.#field_ident
             }
         }
 

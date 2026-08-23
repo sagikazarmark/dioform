@@ -338,16 +338,28 @@ impl FieldIdentity {
 type FieldPathGet<Model, Value> = dyn for<'a> Fn(&'a Model) -> &'a Value + 'static;
 type FieldPathGetMut<Model, Value> = dyn for<'a> Fn(&'a mut Model) -> &'a mut Value + 'static;
 
-struct FieldPathAccessor<Model, Value> {
-    get: Rc<FieldPathGet<Model, Value>>,
-    get_mut: Rc<FieldPathGetMut<Model, Value>>,
+enum FieldPathAccessor<Model, Value> {
+    Direct {
+        get: for<'a> fn(&'a Model) -> &'a Value,
+        get_mut: for<'a> fn(&'a mut Model) -> &'a mut Value,
+    },
+    Composed {
+        get: Rc<FieldPathGet<Model, Value>>,
+        get_mut: Rc<FieldPathGetMut<Model, Value>>,
+    },
 }
 
 impl<Model, Value> Clone for FieldPathAccessor<Model, Value> {
     fn clone(&self) -> Self {
-        Self {
-            get: Rc::clone(&self.get),
-            get_mut: Rc::clone(&self.get_mut),
+        match self {
+            Self::Direct { get, get_mut } => Self::Direct {
+                get: *get,
+                get_mut: *get_mut,
+            },
+            Self::Composed { get, get_mut } => Self::Composed {
+                get: Rc::clone(get),
+                get_mut: Rc::clone(get_mut),
+            },
         }
     }
 }
@@ -361,18 +373,53 @@ impl<Model, Value> FieldPathAccessor<Model, Value> {
         Model: 'static,
         Value: 'static,
     {
-        Self {
-            get: Rc::new(get),
-            get_mut: Rc::new(get_mut),
+        Self::Direct { get, get_mut }
+    }
+
+    fn composed(
+        get: Rc<FieldPathGet<Model, Value>>,
+        get_mut: Rc<FieldPathGetMut<Model, Value>>,
+    ) -> Self {
+        Self::Composed { get, get_mut }
+    }
+
+    #[allow(
+        unpredictable_function_pointer_comparisons,
+        reason = "false inequality only misses memoization; field identity and name prevent false interchangeability"
+    )]
+    fn is_interchangeable_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Direct { get, get_mut },
+                Self::Direct {
+                    get: other_get,
+                    get_mut: other_get_mut,
+                },
+            ) => get == other_get && get_mut == other_get_mut,
+            (
+                Self::Composed { get, get_mut },
+                Self::Composed {
+                    get: other_get,
+                    get_mut: other_get_mut,
+                },
+            ) => Rc::ptr_eq(get, other_get) && Rc::ptr_eq(get_mut, other_get_mut),
+            (Self::Direct { .. }, Self::Composed { .. })
+            | (Self::Composed { .. }, Self::Direct { .. }) => false,
         }
     }
 
     fn get<'a>(&self, model: &'a Model) -> &'a Value {
-        (self.get)(model)
+        match self {
+            Self::Direct { get, .. } => get(model),
+            Self::Composed { get, .. } => get(model),
+        }
     }
 
     fn get_mut<'a>(&self, model: &'a mut Model) -> &'a mut Value {
-        (self.get_mut)(model)
+        match self {
+            Self::Direct { get_mut, .. } => get_mut(model),
+            Self::Composed { get_mut, .. } => get_mut(model),
+        }
     }
 }
 
@@ -401,6 +448,14 @@ impl<Model, Value> Clone for FieldPath<Model, Value> {
             accessor: self.accessor.clone(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<Model, Value> PartialEq for FieldPath<Model, Value> {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+            && self.field_name == other.field_name
+            && self.accessor.is_interchangeable_with(&other.accessor)
     }
 }
 
@@ -464,12 +519,10 @@ impl<Model, Value> FieldPath<Model, Value> {
         Some(FieldPath {
             identity,
             field_name,
-            accessor: FieldPathAccessor {
-                get: Rc::new(move |model| child_for_get.get(parent_for_get.get(model))),
-                get_mut: Rc::new(move |model| {
-                    child_for_get_mut.get_mut(parent_for_get_mut.get_mut(model))
-                }),
-            },
+            accessor: FieldPathAccessor::composed(
+                Rc::new(move |model| child_for_get.get(parent_for_get.get(model))),
+                Rc::new(move |model| child_for_get_mut.get_mut(parent_for_get_mut.get_mut(model))),
+            ),
             _marker: PhantomData,
         })
     }
@@ -595,14 +648,14 @@ impl<Model, Inner> FieldPath<Model, Option<Inner>> {
         FieldPath {
             identity,
             field_name,
-            accessor: FieldPathAccessor {
-                get: Rc::new(move |model| optional_for_get.get(model).as_ref().unwrap_or(fallback)),
-                get_mut: Rc::new(move |model| {
+            accessor: FieldPathAccessor::composed(
+                Rc::new(move |model| optional_for_get.get(model).as_ref().unwrap_or(fallback)),
+                Rc::new(move |model| {
                     optional_for_get_mut
                         .get_mut(model)
                         .get_or_insert_with(|| fallback.clone())
                 }),
-            },
+            ),
             _marker: PhantomData,
         }
     }

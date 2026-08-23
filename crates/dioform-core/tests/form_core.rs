@@ -53,6 +53,13 @@ static ABSENT_PARTY: Party = Party {
     address: None,
 };
 
+static ALTERNATE_ABSENT_PARTY: Party = Party {
+    name: String::new(),
+    address: Some(PostalAddress {
+        city: String::new(),
+    }),
+};
+
 static ABSENT_POSTAL_ADDRESS: PostalAddress = PostalAddress {
     city: String::new(),
 };
@@ -128,6 +135,21 @@ fn counterparty_city_path() -> FieldPath<Transaction, String> {
         .join(party_address_path())
         .or(&ABSENT_POSTAL_ADDRESS)
         .join(postal_address_city_path())
+}
+
+#[test]
+fn direct_field_paths_with_the_same_structural_accessors_are_interchangeable() {
+    assert_eq!(name_path(), name_path());
+}
+
+#[test]
+fn composed_optional_field_paths_are_interchangeable_only_with_their_clones() {
+    let first = counterparty_path().or(&ABSENT_PARTY);
+    let first_clone = first.clone();
+    let other_fallback = counterparty_path().or(&ALTERNATE_ABSENT_PARTY);
+
+    assert_eq!(first, first_clone);
+    assert_ne!(first, other_fallback);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

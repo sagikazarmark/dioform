@@ -2556,6 +2556,12 @@ mod field_binding {
         }
     }
 
+    impl<Model, Value, Error> PartialEq for FieldBindingCore<Model, Value, Error> {
+        fn eq(&self, other: &Self) -> bool {
+            self.handle == other.handle && self.path == other.path
+        }
+    }
+
     impl<Model, Value, Error> FieldBindingCore<Model, Value, Error> {
         pub(super) fn new(handle: FormHandle<Model, Error>, path: FieldPath<Model, Value>) -> Self {
             Self { handle, path }
@@ -11497,6 +11503,12 @@ impl<Model, Value, Error> Clone for RenderedSelectBinding<Model, Value, Error> {
     }
 }
 
+impl<Model, Value, Error> PartialEq for RenderedSelectBinding<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Value, Error> RenderedSelectBinding<Model, Value, Error> {
     /// Returns the rendered select name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -11644,6 +11656,12 @@ impl<Model, Error> Clone for TextBinding<Model, Error> {
     }
 }
 
+impl<Model, Error> PartialEq for TextBinding<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Error> TextBinding<Model, Error> {
     /// Returns the rendered input name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -11751,6 +11769,12 @@ impl<Model, Error> Clone for OptionalTextBinding<Model, Error> {
     }
 }
 
+impl<Model, Error> PartialEq for OptionalTextBinding<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Error> OptionalTextBinding<Model, Error> {
     /// Returns the rendered input name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -11853,6 +11877,12 @@ impl<Model, Error> Clone for TextareaBinding<Model, Error> {
     }
 }
 
+impl<Model, Error> PartialEq for TextareaBinding<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Error> TextareaBinding<Model, Error> {
     /// Returns the rendered textarea name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -11947,6 +11977,12 @@ impl<Model, Error> Clone for CheckboxBinding<Model, Error> {
         Self {
             base: self.base.clone(),
         }
+    }
+}
+
+impl<Model, Error> PartialEq for CheckboxBinding<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
     }
 }
 
@@ -12135,6 +12171,12 @@ impl<Model, Value, Error> Clone for SelectBinding<Model, Value, Error> {
     }
 }
 
+impl<Model, Value, Error> PartialEq for SelectBinding<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Value, Error> SelectBinding<Model, Value, Error> {
     /// Returns the rendered select name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -12251,6 +12293,12 @@ impl<Model, Value, Error> Clone for RadioGroupBinding<Model, Value, Error> {
         Self {
             base: self.base.clone(),
         }
+    }
+}
+
+impl<Model, Value, Error> PartialEq for RadioGroupBinding<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
     }
 }
 

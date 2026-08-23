@@ -510,6 +510,17 @@ fn derive_generates_a_typed_direct_field_path_for_a_text_field() {
     assert_eq!(email.get(&model), "ada@example.com");
 }
 
+#[test]
+fn independently_derived_field_paths_are_interchangeable() {
+    let first = SignupForm::fields().email();
+    let second = SignupForm::fields().email();
+
+    assert_eq!(
+        first, second,
+        "derive codegen must keep direct field accessors structurally comparable"
+    );
+}
+
 #[derive(Clone, Debug, Eq, Form, PartialEq)]
 struct ProfileForm {
     #[form(name = "contact-email")]
@@ -20770,6 +20781,107 @@ fn dioxus_facade_optional_group_bindings_follow_presence_changes() {
             name: "Lin".to_owned(),
             account: "GB44".to_owned(),
         })
+    );
+}
+
+#[test]
+fn mounted_field_group_maps_are_interchangeable_only_with_their_clones() {
+    let prefix = OptionalCounterpartyForm::fields()
+        .counterparty()
+        .or(&ABSENT_COUNTERPARTY);
+    let mounted = OptionalCounterparty::mount(prefix.clone());
+    let mounted_clone = mounted.clone();
+    let independently_mounted = OptionalCounterparty::mount(prefix);
+
+    assert!(mounted == mounted_clone);
+    assert!(mounted != independently_mounted);
+}
+
+#[test]
+fn direct_field_group_maps_are_structurally_interchangeable() {
+    let first = OptionalCounterpartyFieldGroupMap {
+        name: OptionalCounterparty::fields().name(),
+        account: OptionalCounterparty::fields().account(),
+    };
+    let second = OptionalCounterpartyFieldGroupMap {
+        name: OptionalCounterparty::fields().name(),
+        account: OptionalCounterparty::fields().account(),
+    };
+
+    assert!(first == second);
+}
+
+#[test]
+fn scalar_bindings_compare_by_form_handle_and_field_path() {
+    let profile = FormHandle::new(ProfileForm {
+        email: "ada@example.com".to_owned(),
+        accepts_terms: false,
+    });
+    let optional = FormHandle::new(OptionalScalarForm {
+        reference: None,
+        check_in: None,
+        quantity: None,
+    });
+    let upload = FormHandle::new(UploadForm {
+        token: UploadToken {
+            token: "token".to_owned(),
+        },
+    });
+
+    assert!(
+        profile.text(ProfileForm::fields().email()) == profile.text(ProfileForm::fields().email())
+    );
+    assert!(
+        optional.optional_text(OptionalScalarForm::fields().reference())
+            == optional.optional_text(OptionalScalarForm::fields().reference())
+    );
+    assert!(
+        profile.textarea(ProfileForm::fields().email())
+            == profile.textarea(ProfileForm::fields().email())
+    );
+    assert!(
+        profile.checkbox(ProfileForm::fields().accepts_terms())
+            == profile.checkbox(ProfileForm::fields().accepts_terms())
+    );
+    assert!(
+        upload.select(UploadForm::fields().token()) == upload.select(UploadForm::fields().token())
+    );
+    assert!(
+        upload.radio_group(UploadForm::fields().token())
+            == upload.radio_group(UploadForm::fields().token())
+    );
+
+    let first_rendered = upload.select_with(
+        UploadForm::fields().token(),
+        |value| {
+            Ok::<_, std::convert::Infallible>(UploadToken {
+                token: value.to_owned(),
+            })
+        },
+        |value| value.token.clone(),
+    );
+    let second_rendered = upload.select_with(
+        UploadForm::fields().token(),
+        |value| {
+            Ok::<_, std::convert::Infallible>(UploadToken {
+                token: value.to_owned(),
+            })
+        },
+        |value| value.token.clone(),
+    );
+
+    assert!(first_rendered == second_rendered);
+
+    let renamespaced = profile.clone().with_id_namespace("profile-child");
+    assert!(
+        profile.text(ProfileForm::fields().email())
+            != renamespaced.text(ProfileForm::fields().email())
+    );
+
+    let group = FormHandle::new(OptionalCounterparty::default());
+    assert!(
+        group.text(OptionalCounterparty::fields().name())
+            != group.text(OptionalCounterparty::fields().account())
     );
 }
 
