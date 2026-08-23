@@ -2,6 +2,27 @@ use std::{fs, path::PathBuf};
 
 #[test]
 fn workspace_crates_keep_architecture_layers() {
+    let field_convention = manifest("dioxus-field");
+    assert_has_dependencies(
+        "dioxus-field",
+        &field_convention,
+        &["dioxus-core", "dioxus-hooks", "dioxus-signals"],
+    );
+    assert_has_no_dependencies(
+        "dioxus-field",
+        &field_convention,
+        &[
+            "dioform",
+            "dioform-core",
+            "dioform-derive",
+            "dioform-validation-adapter",
+            "dioform-fullstack",
+            "dioform-garde",
+            "dioform-integration-tests",
+            "dioform-validator",
+        ],
+    );
+
     let core = manifest("dioform-core");
     assert_has_no_dependencies(
         "dioform-core",
