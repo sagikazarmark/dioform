@@ -835,9 +835,11 @@ dependencies = [
 name = "dioxus-field"
 version = "0.1.0"
 dependencies = [
+ "dioxus",
  "dioxus-core",
  "dioxus-hooks",
  "dioxus-signals",
+ "dioxus-ssr",
 ]
 
 [[package]]

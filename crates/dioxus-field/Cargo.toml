@@ -13,9 +13,13 @@ keywords = ["dioxus", "field", "binding", "headless"]
 categories = ["web-programming", "gui"]
 
 [dependencies]
+dioxus = { version = "=0.7.10", default-features = false, features = ["hooks", "html", "macro", "signals"] }
 dioxus-core = "=0.7.10"
 dioxus-hooks = "=0.7.10"
 dioxus-signals = "=0.7.10"
+
+[dev-dependencies]
+dioxus-ssr = "=0.7.10"
 
 [package.metadata.release]
 release = false
