@@ -239,6 +239,20 @@ impl SelectorTransition {
         }
     }
 
+    pub(super) fn field_signal_notifications(
+        self,
+        tracked_fields: impl IntoIterator<Item = FieldIdentity>,
+    ) -> Vec<FieldIdentity> {
+        self.selector_notifications(tracked_fields)
+            .into_iter()
+            .filter_map(|notification| match notification {
+                SelectorNotification::FieldValue(field)
+                | SelectorNotification::AllFieldSelectors(field) => Some(field),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn collection_items_removed_notifications(
         collection: FieldIdentity,
         items: Vec<FieldIdentity>,

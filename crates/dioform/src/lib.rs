@@ -24,9 +24,15 @@ use std::{
     time::Duration,
 };
 
-use dioxus_core::{Event, ReactiveContext, Subscribers, provide_context, try_consume_context};
+use dioxus_core::{
+    Event, ReactiveContext, Subscribers, SuperInto, provide_context, try_consume_context,
+    with_owner,
+};
 use dioxus_html::FocusData;
 pub use dioxus_html::{FileData, FormData, SerializedFileData};
+use dioxus_signals::{
+    CopyValue, Owner, ReadSignal, Readable, ReadableRef, UnsyncStorage, WritableExt,
+};
 
 mod adapter_input_state;
 mod adapter_runtime;
@@ -2119,6 +2125,129 @@ struct FormReactivity {
     fields: RefCell<BTreeMap<FieldIdentity, Rc<FieldReactivity>>>,
 }
 
+struct FieldSignalSlot<Model, Value> {
+    path: FieldPath<Model, Value>,
+    cache: CopyValue<Value>,
+    dirty: Cell<bool>,
+    subscribers: ReactiveSubscribers,
+}
+
+impl<Model, Value> FieldSignalSlot<Model, Value>
+where
+    Value: Clone + PartialEq + 'static,
+{
+    fn refresh<Error>(
+        &self,
+        form: &FormHandle<Model, Error>,
+    ) -> Result<ReadableRef<'static, CopyValue<Value>>, dioxus_signals::BorrowError> {
+        let read = self.cache.try_peek_unchecked()?;
+        if !self.dirty.replace(false) {
+            return Ok(read);
+        }
+        drop(read);
+
+        let value = form.core.borrow().field_value(self.path.clone()).clone();
+        let cached = self.cache.try_peek_unchecked()?;
+        if *cached != value {
+            drop(cached);
+            let mut cache = self.cache;
+            cache.set(value);
+        }
+
+        self.cache.try_peek_unchecked()
+    }
+
+    fn mark_dirty(&self) {
+        self.dirty.set(true);
+        self.subscribers.notify_changed();
+    }
+}
+
+struct ErasedFieldSignalSlot {
+    slot: Rc<dyn Any>,
+    mark_dirty: Rc<dyn Fn()>,
+}
+
+struct FieldSignalRegistry<Model> {
+    owner: Owner,
+    fields: RefCell<BTreeMap<FieldIdentity, Vec<ErasedFieldSignalSlot>>>,
+    _marker: PhantomData<fn() -> Model>,
+}
+
+impl<Model> Default for FieldSignalRegistry<Model> {
+    fn default() -> Self {
+        Self {
+            owner: Owner::default(),
+            fields: RefCell::new(BTreeMap::new()),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Model> FieldSignalRegistry<Model> {
+    fn notify_selector_transition(&self, transition: SelectorTransition) {
+        let tracked = self.fields.borrow().keys().cloned().collect::<Vec<_>>();
+        let changed = transition.field_signal_notifications(tracked);
+        let callbacks = {
+            let fields = self.fields.borrow();
+            changed
+                .iter()
+                .filter_map(|field| fields.get(field))
+                .flatten()
+                .map(|entry| Rc::clone(&entry.mark_dirty))
+                .collect::<Vec<_>>()
+        };
+
+        for mark_dirty in callbacks {
+            mark_dirty();
+        }
+    }
+
+    #[cfg(test)]
+    fn slot_count(&self) -> usize {
+        self.fields.borrow().values().map(Vec::len).sum()
+    }
+}
+
+impl<Model: 'static> FieldSignalRegistry<Model> {
+    fn slot<Value>(
+        &self,
+        path: &FieldPath<Model, Value>,
+        initial: impl FnOnce() -> Value,
+    ) -> Rc<FieldSignalSlot<Model, Value>>
+    where
+        Value: Clone + PartialEq + 'static,
+    {
+        let identity = path.identity();
+        let mut fields = self.fields.borrow_mut();
+        let slots = fields.entry(identity).or_default();
+
+        for entry in slots.iter() {
+            let Ok(slot) = Rc::clone(&entry.slot).downcast::<FieldSignalSlot<Model, Value>>()
+            else {
+                continue;
+            };
+            if slot.path.eq(path) {
+                return slot;
+            }
+        }
+
+        let cache = with_owner(self.owner.clone(), || CopyValue::new(initial()));
+        let slot = Rc::new(FieldSignalSlot {
+            path: path.clone(),
+            cache,
+            dirty: Cell::new(false),
+            subscribers: ReactiveSubscribers::default(),
+        });
+        let slot_for_dirty = Rc::clone(&slot);
+        slots.push(ErasedFieldSignalSlot {
+            slot: Rc::clone(&slot) as Rc<dyn Any>,
+            mark_dirty: Rc::new(move || slot_for_dirty.mark_dirty()),
+        });
+        slot
+    }
+}
+
 impl FormReactivity {
     fn track_read(&self) {
         self.whole.track_read();
@@ -4130,6 +4259,7 @@ pub struct FormHandle<Model, Error = String> {
     adapter: AdapterRuntime,
     runtime: Rc<RefCell<ValidationRuntime<Model, Error>>>,
     reactivity: Rc<FormReactivity>,
+    field_signals: Rc<FieldSignalRegistry<Model>>,
     listeners: Rc<RefCell<FormListeners<Model, Error>>>,
     active_submit_intent: Rc<RefCell<Option<Rc<dyn Any>>>>,
     submit_generation: Rc<Cell<u64>>,
@@ -4169,6 +4299,7 @@ impl<Model, Error> Clone for FormHandle<Model, Error> {
             adapter: self.adapter.clone(),
             runtime: Rc::clone(&self.runtime),
             reactivity: Rc::clone(&self.reactivity),
+            field_signals: Rc::clone(&self.field_signals),
             listeners: Rc::clone(&self.listeners),
             active_submit_intent: Rc::clone(&self.active_submit_intent),
             submit_generation: Rc::clone(&self.submit_generation),
@@ -4208,7 +4339,11 @@ where
     }
 }
 
-/// Field-scoped behavior for a typed field path.
+/// Field-scoped behavior and a reactive read-only view for a typed field path.
+///
+/// Values that implement `Clone + PartialEq` can be read through Dioxus's [`Readable`] trait and
+/// passed directly to a [`ReadSignal`] prop. Independently derived direct paths share one cached
+/// view; composed paths share only when the path itself is cloned.
 pub struct FieldHandle<Model, Value, Error = String> {
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -4220,6 +4355,56 @@ impl<Model, Value, Error> Clone for FieldHandle<Model, Value, Error> {
             handle: self.handle.clone(),
             path: self.path.clone(),
         }
+    }
+}
+
+impl<Model, Value, Error> Readable for FieldHandle<Model, Value, Error>
+where
+    Model: 'static,
+    Value: Clone + PartialEq + 'static,
+{
+    type Target = Value;
+    type Storage = UnsyncStorage;
+
+    fn try_read_unchecked(
+        &self,
+    ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+        let slot = self.handle.field_signal_slot(&self.path);
+        let read = slot.refresh(&self.handle)?;
+        slot.subscribers.track_read();
+        Ok(read)
+    }
+
+    fn try_peek_unchecked(
+        &self,
+    ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+        self.handle
+            .field_signal_slot(&self.path)
+            .refresh(&self.handle)
+    }
+
+    fn subscribers(&self) -> Subscribers {
+        self.handle
+            .field_signal_slot(&self.path)
+            .subscribers
+            .subscribers
+            .clone()
+    }
+}
+
+/// Marker used to convert a [`FieldHandle`] into a Dioxus [`ReadSignal`] prop.
+#[doc(hidden)]
+pub struct FieldSignalReadSignalMarker;
+
+impl<Model, Value, Error> SuperInto<ReadSignal<Value>, FieldSignalReadSignalMarker>
+    for FieldHandle<Model, Value, Error>
+where
+    Model: 'static,
+    Value: Clone + PartialEq + 'static,
+    Error: 'static,
+{
+    fn super_into(self) -> ReadSignal<Value> {
+        ReadSignal::new(self)
     }
 }
 
@@ -6636,6 +6821,7 @@ impl<Model, Error> FormHandle<Model, Error> {
             adapter: AdapterRuntime::default(),
             runtime: Rc::new(RefCell::new(ValidationRuntime::default())),
             reactivity: Rc::new(FormReactivity::default()),
+            field_signals: Rc::new(FieldSignalRegistry::default()),
             listeners: Rc::new(RefCell::new(FormListeners::default())),
             active_submit_intent: Rc::new(RefCell::new(None)),
             submit_generation: Rc::new(Cell::new(0)),
@@ -7267,6 +7453,8 @@ impl<Model, Error> FormHandle<Model, Error> {
 
     fn notify_selectors(&self, transition: SelectorTransition) {
         let wake_validation_waiters = transition.wakes_validation_waiters();
+        self.field_signals
+            .notify_selector_transition(transition.clone());
         self.reactivity.notify_selector_transition(transition);
         if wake_validation_waiters {
             self.adapter.wake_validation_waiters();
@@ -7751,6 +7939,19 @@ impl<Model, Error> FormHandle<Model, Error> {
     pub fn field_value<Value: Clone>(&self, path: FieldPath<Model, Value>) -> Value {
         self.reactivity.track_field_value(&path.identity());
         self.core.borrow().field_value(path).clone()
+    }
+
+    fn field_signal_slot<Value>(
+        &self,
+        path: &FieldPath<Model, Value>,
+    ) -> Rc<FieldSignalSlot<Model, Value>>
+    where
+        Model: 'static,
+        Value: Clone + PartialEq + 'static,
+    {
+        self.field_signals.slot(path, || {
+            self.core.borrow().field_value(path.clone()).clone()
+        })
     }
 
     /// Returns whether managed submit validation is waiting or a submission has started and not
@@ -13028,7 +13229,9 @@ impl<Model: Clone, Intent, Error> IntentSubmitBinding<Model, Intent, Error> {
 
 #[cfg(test)]
 mod tests {
+    use dioxus::prelude::{Signal, WritableExt, use_signal};
     use dioxus_core::{Element, VNode, VirtualDom};
+    use dioxus_signals::ReadableExt;
 
     use super::*;
 
@@ -13048,6 +13251,11 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     struct ContactList {
         contacts: Vec<Contact>,
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct ContactEnvelope {
+        contact: Contact,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13093,6 +13301,15 @@ mod tests {
         )
     }
 
+    fn contact() -> FieldPath<ContactEnvelope, Contact> {
+        FieldPath::direct(
+            FieldIdentity::new("contact"),
+            "contact",
+            |envelope| &envelope.contact,
+            |envelope| &mut envelope.contact,
+        )
+    }
+
     /// Reads every field-scoped **Form Selector** the form exposes for one **Field**.
     fn read_every_field_selector(form: &FormHandle<Contact>, path: FieldPath<Contact, String>) {
         form.field_value(path.clone());
@@ -13120,6 +13337,18 @@ mod tests {
         email_values: RefCell<Vec<String>>,
     }
 
+    struct FieldSignalSlotProbe {
+        form: FormHandle<Contact>,
+        rerender: RefCell<Option<Signal<u32>>>,
+        renders: Cell<u32>,
+    }
+
+    struct ComposedFieldSignalSlotProbe {
+        form: FormHandle<ContactEnvelope>,
+        hoisted: FieldPath<ContactEnvelope, String>,
+        rerender: RefCell<Option<Signal<u32>>>,
+    }
+
     struct ContactItemErrorProbe {
         item: CollectionItemBinding<ContactList, Contact>,
     }
@@ -13139,6 +13368,25 @@ mod tests {
             .borrow_mut()
             .push(probe.form.field_value(email()));
 
+        VNode::empty()
+    }
+
+    fn direct_field_signal_slot_probe(probe: Rc<FieldSignalSlotProbe>) -> Element {
+        let rerender = use_signal(|| 0);
+        let _ = rerender();
+        probe.rerender.borrow_mut().replace(rerender);
+        probe.form.field(email()).peek();
+        probe.renders.set(probe.renders.get() + 1);
+        VNode::empty()
+    }
+
+    fn composed_field_signal_slot_probe(probe: Rc<ComposedFieldSignalSlotProbe>) -> Element {
+        let rerender = use_signal(|| 0);
+        let _ = rerender();
+        probe.rerender.borrow_mut().replace(rerender);
+
+        probe.form.field(contact().join(email())).peek();
+        probe.form.field(probe.hoisted.clone()).peek();
         VNode::empty()
     }
 
@@ -13213,6 +13461,70 @@ mod tests {
         form.reset();
 
         assert_no_registrations(&form, "writes");
+    }
+
+    #[test]
+    fn direct_field_signal_slots_are_stable_across_renders_and_peeks_do_not_subscribe() {
+        let probe = Rc::new(FieldSignalSlotProbe {
+            form: contact_form(),
+            rerender: RefCell::new(None),
+            renders: Cell::new(0),
+        });
+        let mut dom = VirtualDom::new_with_props(direct_field_signal_slot_probe, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+        assert_eq!(probe.form.field_signals.slot_count(), 1);
+        assert_no_registrations(&probe.form, "a field signal peek");
+
+        for render in 1..=3 {
+            probe
+                .rerender
+                .borrow()
+                .expect("the probe should expose its render signal")
+                .set(render);
+            dom.render_immediate_to_vec();
+            assert_eq!(probe.form.field_signals.slot_count(), 1);
+        }
+
+        probe
+            .form
+            .set_user_field(email(), "grace@example.com".to_owned());
+        dom.render_immediate_to_vec();
+        assert_eq!(probe.renders.get(), 4, "peek must not subscribe the probe");
+        assert_no_registrations(&probe.form, "a field signal peek followed by a write");
+    }
+
+    #[test]
+    fn composed_field_signal_slots_are_shared_only_by_cloned_paths() {
+        let hoisted = contact().join(email());
+        let probe = Rc::new(ComposedFieldSignalSlotProbe {
+            form: FormHandle::new(ContactEnvelope {
+                contact: Contact {
+                    email: "ada@example.com".to_owned(),
+                    phone: String::new(),
+                },
+            }),
+            hoisted,
+            rerender: RefCell::new(None),
+        });
+        let mut dom =
+            VirtualDom::new_with_props(composed_field_signal_slot_probe, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+        assert_eq!(probe.form.field_signals.slot_count(), 2);
+
+        probe
+            .rerender
+            .borrow()
+            .expect("the probe should expose its render signal")
+            .set(1);
+        dom.render_immediate_to_vec();
+
+        assert_eq!(
+            probe.form.field_signals.slot_count(),
+            3,
+            "the hoisted clone should reuse its slot while the rebuilt composed path gets a new one"
+        );
     }
 
     /// `ReactiveSubscribers::track_read` subscribes only inside a `ReactiveContext`, so a read

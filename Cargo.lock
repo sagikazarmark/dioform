@@ -615,6 +615,7 @@ dependencies = [
  "dioxus",
  "dioxus-core",
  "dioxus-html",
+ "dioxus-signals",
  "futures-timer",
  "serde",
  "serde_json",

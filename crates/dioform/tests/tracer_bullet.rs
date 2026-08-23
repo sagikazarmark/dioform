@@ -38,6 +38,7 @@ use dioxus::prelude::{
     Props, Signal, WritableExt, component, dioxus_signals, rsx, use_memo, use_signal,
 };
 use dioxus_core::{Element, Event, VNode, VirtualDom, use_hook};
+use dioxus_signals::{ReadSignal, ReadableExt};
 
 /// How many debounced delays a reschedule-loop test completes before it gives up on the guard.
 const RESCHEDULE_DRIVE_LIMIT: usize = 256;
@@ -8379,6 +8380,152 @@ fn file_selection_selector_probe(probe: Rc<FileSelectionSelectorProbe>) -> Eleme
     probe.selected_names.borrow_mut().push(names);
 
     VNode::empty()
+}
+
+#[derive(Clone)]
+struct FieldSignalRenderProbe {
+    form: FormHandle<ProfileForm>,
+    parent_render: RefCell<Option<Signal<u32>>>,
+    child_values: RefCell<Vec<String>>,
+}
+
+struct NestedFieldSignalProbe {
+    form: FormHandle<NestedCustomerForm>,
+    path: FieldPath<NestedCustomerForm, String>,
+    values: RefCell<Vec<String>>,
+}
+
+impl PartialEq for FieldSignalRenderProbe {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+#[component]
+fn FieldSignalChild(value: ReadSignal<String>, probe: Rc<FieldSignalRenderProbe>) -> Element {
+    probe.child_values.borrow_mut().push(value());
+    VNode::empty()
+}
+
+fn field_signal_parent(probe: Rc<FieldSignalRenderProbe>) -> Element {
+    let parent_render = use_signal(|| 0);
+    let _ = parent_render();
+    probe.parent_render.borrow_mut().replace(parent_render);
+
+    rsx! {
+        FieldSignalChild {
+            value: probe.form.field(ProfileForm::fields().email()),
+            probe,
+        }
+    }
+}
+
+fn nested_field_signal_reads(probe: Rc<FieldSignalRenderProbe>) -> Element {
+    let first = probe.form.field(ProfileForm::fields().email());
+    let second = probe.form.field(ProfileForm::fields().email());
+    let first_read = first.read();
+    let second_read = second.read();
+
+    assert_eq!(*first_read, *second_read);
+    probe.child_values.borrow_mut().push(first_read.clone());
+    VNode::empty()
+}
+
+fn nested_field_signal_probe(probe: Rc<NestedFieldSignalProbe>) -> Element {
+    probe
+        .values
+        .borrow_mut()
+        .push(probe.form.field(probe.path.clone()).cloned());
+    VNode::empty()
+}
+
+#[test]
+fn field_signal_views_support_nested_reads_after_a_dirty_refresh() {
+    let probe = Rc::new(FieldSignalRenderProbe {
+        form: FormHandle::new(ProfileForm {
+            email: String::new(),
+            accepts_terms: false,
+        }),
+        parent_render: RefCell::new(None),
+        child_values: RefCell::new(Vec::new()),
+    });
+
+    let mut dom = VirtualDom::new_with_props(nested_field_signal_reads, Rc::clone(&probe));
+    dom.rebuild_in_place();
+
+    probe
+        .form
+        .set_user_field(ProfileForm::fields().email(), "ada@example.com".to_owned());
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.child_values.borrow().as_slice(),
+        ["", "ada@example.com"]
+    );
+}
+
+#[test]
+fn field_signal_views_rerender_across_field_ancestry_but_not_for_siblings() {
+    let probe = Rc::new(NestedFieldSignalProbe {
+        form: FormHandle::new(NestedCustomerForm::default()),
+        path: nested_customer_name_path(),
+        values: RefCell::new(Vec::new()),
+    });
+    let mut dom = VirtualDom::new_with_props(nested_field_signal_probe, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+
+    probe
+        .form
+        .set_user_field(nested_customer_path(), nested_customer("Ada"));
+    dom.render_immediate_to_vec();
+
+    probe
+        .form
+        .set_user_field(nested_customer_account_path(), nested_customer("Unrelated"));
+    dom.render_immediate_to_vec();
+
+    assert_eq!(probe.values.borrow().as_slice(), ["", "Ada"]);
+}
+
+#[test]
+fn unchanged_field_signal_props_do_not_rerender_the_child() {
+    let probe = Rc::new(FieldSignalRenderProbe {
+        form: FormHandle::new(ProfileForm {
+            email: "ada@example.com".to_owned(),
+            accepts_terms: false,
+        }),
+        parent_render: RefCell::new(None),
+        child_values: RefCell::new(Vec::new()),
+    });
+    let mut dom = VirtualDom::new_with_props(field_signal_parent, Rc::clone(&probe));
+
+    dom.rebuild_in_place();
+    assert_eq!(probe.child_values.borrow().as_slice(), ["ada@example.com"]);
+
+    probe
+        .parent_render
+        .borrow()
+        .expect("the parent should expose its render signal")
+        .set(1);
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.child_values.borrow().as_slice(),
+        ["ada@example.com"],
+        "diff-time peeking should memoize an unchanged field value"
+    );
+
+    probe.form.set_user_field(
+        ProfileForm::fields().email(),
+        "grace@example.com".to_owned(),
+    );
+    dom.render_immediate_to_vec();
+
+    assert_eq!(
+        probe.child_values.borrow().as_slice(),
+        ["ada@example.com", "grace@example.com"]
+    );
 }
 
 #[test]
