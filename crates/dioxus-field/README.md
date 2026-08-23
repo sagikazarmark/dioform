@@ -27,7 +27,7 @@ fn ProfileName() -> Element {
 
     rsx! {
         Field {
-            context: FieldContext::new(binding).with_meta(meta),
+            binding: FieldContext::new(binding).with_meta(meta),
             Label { "Name" }
             input {
                 value: name,

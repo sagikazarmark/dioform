@@ -28,7 +28,7 @@ fn registration_app(probe: Rc<RegistrationProbe>) -> Element {
 
     rsx! {
         Field {
-            context: FieldContext::empty().with_meta(meta),
+            binding: FieldContext::empty().with_meta(meta),
             if show_parts() {
                 FieldDescription { id: "email-help", "Use a work address" }
                 FieldError { id: "email-error" }
@@ -215,7 +215,7 @@ fn changing_focus_app(probe: Rc<ChangingFocusProbe>) -> Element {
 
     rsx! {
         Field {
-            context: FieldContext::empty(),
+            binding: FieldContext::empty(),
             FocusWidget { probe: Rc::clone(&probe) }
             if show_requester() {
                 FocusRequester { probe }
@@ -263,7 +263,7 @@ fn reactive_error_app(probe: Rc<InvalidProbe>) -> Element {
 
     rsx! {
         Field {
-            context: FieldContext::empty().with_meta(meta),
+            binding: FieldContext::empty().with_meta(meta),
             FieldError { id: "email-error" }
         }
     }

@@ -41,7 +41,13 @@ fn workspace_crates_keep_architecture_layers() {
     assert_has_dependencies(
         "dioform",
         &facade,
-        &["dioxus-core", "dioform-core", "dioform-derive"],
+        &[
+            "dioxus-core",
+            "dioxus-field",
+            "dioxus-hooks",
+            "dioform-core",
+            "dioform-derive",
+        ],
     );
     assert_has_no_dependencies(
         "dioform",

@@ -11,8 +11,8 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 
 use dioxus::prelude::{Props, dioxus_elements, rsx};
 use dioxus_core::{Attribute, Callback, Element, provide_context, try_consume_context, use_hook};
-use dioxus_hooks::use_signal;
-use dioxus_signals::{ReadSignal, Signal, WritableExt};
+use dioxus_hooks::{use_effect, use_reactive, use_signal};
+use dioxus_signals::{ReadSignal, ReadableExt, Signal, WritableExt};
 
 pub mod testing;
 
@@ -205,6 +205,34 @@ impl FieldMeta {
             token,
         }
     }
+
+    /// Replaces producer-owned metadata values without disturbing registered part ids.
+    pub fn set_values(&mut self, values: FieldMetaValues) {
+        if *self.id.peek() != values.id {
+            self.id.set(values.id);
+        }
+        if *self.name.peek() != values.name {
+            self.name.set(values.name);
+        }
+        if *self.required.peek() != values.required {
+            self.required.set(values.required);
+        }
+        if *self.disabled.peek() != values.disabled {
+            self.disabled.set(values.disabled);
+        }
+        if *self.invalid.peek() != values.invalid {
+            self.invalid.set(values.invalid);
+        }
+        if *self.errors.peek() != values.errors {
+            self.errors.set(values.errors);
+        }
+        if *self.touched.peek() != values.touched {
+            self.touched.set(values.touched);
+        }
+        if *self.dirty.peek() != values.dirty {
+            self.dirty.set(values.dirty);
+        }
+    }
 }
 
 /// Creates signal-backed field metadata owned by the current component scope.
@@ -231,6 +259,15 @@ pub fn use_field_meta_state(initial: FieldMetaValues) -> FieldMeta {
         dirty: use_signal(|| dirty),
         registered_ids: use_signal(RegisteredIds::default),
     }
+}
+
+fn use_synced_field_meta_state(values: FieldMetaValues) -> FieldMeta {
+    let meta = use_field_meta_state(values.clone());
+    use_effect(use_reactive(&values, move |values| {
+        let mut meta = meta;
+        meta.set_values(values);
+    }));
+    meta
 }
 
 /// A lifecycle-bound description or error id registration.
@@ -331,10 +368,14 @@ impl<T: 'static> Binding<T> {
         write: Callback<(T, ChangeOrigin)>,
         commit: Callback<()>,
     ) -> Self {
-        Self::with_identity(read, write, commit, (read, write, commit))
+        Self::new_with_identity(read, write, commit, (read, write, commit))
     }
 
-    fn with_identity<I>(
+    /// Creates a binding with a producer-defined comparable identity.
+    ///
+    /// Equal identities must always represent interchangeable read, write, and commit behavior.
+    /// Producers that cannot prove interchangeability should use [`Binding::new`] instead.
+    pub fn new_with_identity<I>(
         read: ReadSignal<T>,
         write: Callback<(T, ChangeOrigin)>,
         commit: Callback<()>,
@@ -401,7 +442,7 @@ impl<T: 'static> From<Signal<T>> for Binding<T> {
         let write = Callback::new(move |(value, _origin)| writer.set(value));
         let commit = Callback::new(|()| {});
 
-        Self::with_identity(read, write, commit, signal)
+        Self::new_with_identity(read, write, commit, signal)
     }
 }
 
@@ -410,7 +451,7 @@ impl<T: 'static> From<(ReadSignal<T>, Callback<T>)> for Binding<T> {
         let write = Callback::new(move |(value, _origin)| on_change.call(value));
         let commit = Callback::new(|()| {});
 
-        Self::with_identity(read, write, commit, (read, on_change))
+        Self::new_with_identity(read, write, commit, (read, on_change))
     }
 }
 
@@ -510,6 +551,7 @@ pub struct FieldContext {
     binding: Option<Rc<dyn Any>>,
     value_type_name: Option<&'static str>,
     meta: Option<FieldMeta>,
+    meta_values: Option<FieldMetaValues>,
     focus_request: FocusRequest,
 }
 
@@ -520,6 +562,7 @@ impl FieldContext {
             binding: Some(Rc::new(binding)),
             value_type_name: Some(std::any::type_name::<T>()),
             meta: None,
+            meta_values: None,
             focus_request: FocusRequest::default(),
         }
     }
@@ -530,6 +573,7 @@ impl FieldContext {
             binding: None,
             value_type_name: None,
             meta: None,
+            meta_values: None,
             focus_request: FocusRequest::default(),
         }
     }
@@ -544,6 +588,14 @@ impl FieldContext {
     /// Adds signal-backed metadata to the context.
     pub fn with_meta(mut self, meta: FieldMeta) -> Self {
         self.meta = Some(meta);
+        self.meta_values = None;
+        self
+    }
+
+    /// Adds producer values that [`Field`] realizes as signal-backed metadata.
+    pub fn with_meta_values(mut self, values: FieldMetaValues) -> Self {
+        self.meta = None;
+        self.meta_values = Some(values);
         self
     }
 
@@ -595,7 +647,9 @@ impl PartialEq for FieldContext {
             (Some(_), None) | (None, Some(_)) => return false,
             _ => {}
         }
-        self.meta == other.meta && self.focus_request == other.focus_request
+        self.meta == other.meta
+            && self.meta_values == other.meta_values
+            && self.focus_request == other.focus_request
     }
 }
 
@@ -674,7 +728,8 @@ struct ActiveFocusRegistration {
 #[derive(Clone, Props, PartialEq)]
 pub struct FieldProps {
     /// The value binding, metadata, and focus slot provided to descendants.
-    pub context: FieldContext,
+    #[props(into)]
+    pub binding: FieldContext,
     /// Attributes forwarded to the rendered `div`.
     #[props(extends = GlobalAttributes)]
     pub attributes: Vec<Attribute>,
@@ -687,8 +742,15 @@ pub struct FieldProps {
 /// On Dioxus 0.7.10, pass listeners through an explicit `attributes: vec![...]` prop so listener
 /// ordering remains visible at the call site.
 pub fn Field(props: FieldProps) -> Element {
-    let focus_request = use_hook(|| props.context.focus_request());
-    provide_context(props.context.with_focus_request(focus_request));
+    let has_meta_values = props.binding.meta_values.is_some();
+    let meta_values = props.binding.meta_values.clone().unwrap_or_default();
+    let synced_meta = use_synced_field_meta_state(meta_values);
+    let mut context = props.binding;
+    if has_meta_values {
+        context = context.with_meta(synced_meta);
+    }
+    let focus_request = use_hook(|| context.focus_request());
+    provide_context(context.with_focus_request(focus_request));
     rsx! {
         div { ..props.attributes, {props.children} }
     }

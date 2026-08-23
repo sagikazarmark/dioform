@@ -29,6 +29,7 @@ interoperability, not as the main addressing mechanism.
 
 - `dioform-core`: renderer-agnostic form draft, field path, validation, submission, reset, reinitialization, async validation, debounce, stale-result, and observer semantics.
 - `dioform`: Dioxus-facing `FormConfig`, hooks, explicit `FormHandle` APIs, headless bindings, parse blockers, managed submission, async validation task spawning, debounced validation timers, cleanup guards, and an explicit `advanced` module for low-level core/runtime/serialization types.
+- `dioxus-field`: form-library-agnostic value binding, metadata, context, and headless field-part conventions for Dioxus widget registries.
 - `dioform-derive`: `#[derive(Form)]` and `#[derive(FieldGroup)]` support for named form structs.
 - `dioform-fullstack`: Dioxus Fullstack submit adapters mapping server payloads into structured submit errors.
 - `dioform-garde`: optional renderer-agnostic `garde` validation adapter for mapping external diagnostics into Dioform validation errors.

@@ -12,13 +12,16 @@ categories.workspace = true
 
 [features]
 default = []
+dioxus-field = ["dep:dioxus-field", "dep:dioxus-hooks"]
 serde = ["dioform-core/serde"]
 
 [dependencies]
 dioform-core = { workspace = true }
 dioform-derive = { workspace = true }
+dioxus-field = { workspace = true, optional = true }
 
 dioxus-core = { workspace = true }
+dioxus-hooks = { workspace = true, optional = true }
 dioxus-html = { version = "0.7", default-features = false, features = ["serialize"] }
 dioxus-signals = "=0.7.10"
 futures-timer = { version = "3", features = ["wasm-bindgen"] }

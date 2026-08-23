@@ -614,6 +614,8 @@ dependencies = [
  "dioform-derive",
  "dioxus",
  "dioxus-core",
+ "dioxus-field",
+ "dioxus-hooks",
  "dioxus-html",
  "dioxus-signals",
  "futures-timer",
@@ -664,6 +666,9 @@ version = "0.3.0"
 dependencies = [
  "dioform",
  "dioform-garde",
+ "dioxus",
+ "dioxus-field",
+ "dioxus-ssr",
  "garde",
 ]
 

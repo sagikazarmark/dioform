@@ -2731,6 +2731,19 @@ mod field_binding {
                 .visible_field_validation_errors(self.path.clone())
         }
 
+        #[cfg(feature = "dioxus-field")]
+        pub(super) fn field_handle(&self) -> FieldHandle<Model, Value, Error> {
+            self.handle.field(self.path.clone())
+        }
+
+        #[cfg(feature = "dioxus-field")]
+        pub(super) fn is_dirty(&self) -> bool
+        where
+            Value: PartialEq,
+        {
+            self.handle.is_field_dirty(self.path.clone())
+        }
+
         pub(super) fn read_value<Result>(&self, read: impl FnOnce(&Value) -> Result) -> Result {
             self.handle
                 .reactivity
@@ -2767,6 +2780,11 @@ mod field_binding {
 
         pub(super) fn blur(&self) {
             self.handle.mark_field_blurred(self.path.clone());
+        }
+
+        #[cfg(feature = "dioxus-field")]
+        pub(super) fn commit(&self) {
+            self.handle.commit_field(self.path.clone());
         }
 
         pub(super) fn blur_without_validation(&self) {
@@ -10370,6 +10388,18 @@ impl<Model, Error> FormHandle<Model, Error> {
         );
     }
 
+    #[cfg(feature = "dioxus-field")]
+    fn commit_field<Value>(&self, path: FieldPath<Model, Value>) {
+        let validates_on_blur = {
+            let core = self.core.borrow();
+            core.validation_mode()
+                .should_validate_on_blur(core.submit_attempt_count())
+        };
+        if validates_on_blur {
+            self.validate_field(path, ValidationTrigger::Blur);
+        }
+    }
+
     /// Returns all mounted binding parse errors separately from validation errors through a selector subscription.
     pub fn parse_errors(&self) -> Vec<ParseError> {
         self.reactivity.track_parse_errors();
@@ -12286,6 +12316,12 @@ impl<Model, Error> Clone for TriStateCheckboxBinding<Model, Error> {
     }
 }
 
+impl<Model, Error> PartialEq for TriStateCheckboxBinding<Model, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
 impl<Model, Error> TriStateCheckboxBinding<Model, Error> {
     /// Returns the rendered checkbox name derived from the typed field path.
     pub fn name(&self) -> &str {
@@ -12608,6 +12644,138 @@ impl<Model, Value, Error> RadioGroupBinding<Model, Value, Error> {
         let binding = self.clone();
         move |_event: Event<FocusData>| binding.on_blur()
     }
+}
+
+#[cfg(feature = "dioxus-field")]
+mod field_convention {
+    use super::*;
+    use dioxus_core::Callback;
+    use dioxus_field::{
+        Binding, ChangeOrigin, FieldContext, FieldMeta, FieldMetaValues, use_field_meta_state,
+    };
+    use dioxus_hooks::{use_effect, use_reactive};
+
+    fn use_convention_meta(values: FieldMetaValues) -> FieldMeta {
+        let meta = use_field_meta_state(values.clone());
+        use_effect(use_reactive(&values, move |values| {
+            let mut meta = meta;
+            meta.set_values(values);
+        }));
+        meta
+    }
+
+    impl<Model, Value, Error> FieldBindingCore<Model, Value, Error> {
+        fn convention_binding(&self) -> Binding<Value>
+        where
+            Model: 'static,
+            Value: Clone + PartialEq + 'static,
+            Error: 'static,
+        {
+            let read = ReadSignal::new(self.field_handle());
+            let identity = self.clone();
+            let writer = self.clone();
+            let committer = self.clone();
+            let write = Callback::new(move |(value, origin)| match origin {
+                ChangeOrigin::User => writer.set_user(value),
+                ChangeOrigin::Programmatic => writer.set_programmatic(value),
+            });
+            let commit = Callback::new(move |()| committer.commit());
+
+            Binding::new_with_identity(read, write, commit, identity)
+        }
+
+        fn convention_meta_values(&self, formatter: impl Fn(&Error) -> String) -> FieldMetaValues
+        where
+            Value: PartialEq,
+            Error: Clone,
+        {
+            let accessibility = self.accessibility();
+            let metadata = self.metadata();
+            FieldMetaValues {
+                id: Some(Rc::from(accessibility.input_id())),
+                name: Some(Rc::from(self.name())),
+                required: false,
+                disabled: false,
+                invalid: Some(accessibility.aria_invalid()),
+                errors: self
+                    .visible_validation_errors()
+                    .iter()
+                    .map(|error| Rc::from(formatter(error.error())))
+                    .collect(),
+                touched: metadata.is_touched(),
+                dirty: self.is_dirty(),
+            }
+        }
+    }
+
+    macro_rules! impl_scalar_field_convention {
+        ([$($generic:ident),*] $binding:ty => $value:ty) => {
+            impl<Model, Error, $($generic,)*> $binding {
+                /// Produces signal-backed presentation metadata for the Field Convention.
+                ///
+                /// Visible validation errors are formatted with [`fmt::Display`]. This method is a
+                /// Dioxus hook and must be called unconditionally from a component render.
+                pub fn meta(&self) -> FieldMeta
+                where
+                    $value: PartialEq,
+                    Error: Clone + fmt::Display,
+                {
+                    self.meta_with_error_formatter(ToString::to_string)
+                }
+
+                /// Produces Field Convention metadata using an application-defined error formatter.
+                ///
+                /// This method is a Dioxus hook and must be called unconditionally from a component
+                /// render.
+                pub fn meta_with_error_formatter(
+                    &self,
+                    formatter: impl Fn(&Error) -> String,
+                ) -> FieldMeta
+                where
+                    $value: PartialEq,
+                    Error: Clone,
+                {
+                    use_convention_meta(self.base.convention_meta_values(formatter))
+                }
+            }
+
+            impl<Model, Error, $($generic,)*> From<$binding> for Binding<$value>
+            where
+                Model: 'static,
+                $value: Clone + PartialEq + 'static,
+                Error: 'static,
+            {
+                fn from(binding: $binding) -> Self {
+                    binding.base.convention_binding()
+                }
+            }
+
+            impl<Model, Error, $($generic,)*> From<$binding> for FieldContext
+            where
+                Model: 'static,
+                $value: Clone + PartialEq + 'static,
+                Error: Clone + fmt::Display + 'static,
+            {
+                fn from(binding: $binding) -> Self {
+                    let meta = binding
+                        .base
+                        .convention_meta_values(ToString::to_string);
+                    let binding = binding.base.convention_binding();
+
+                    FieldContext::new(binding).with_meta_values(meta)
+                }
+            }
+        };
+    }
+
+    impl_scalar_field_convention!([] TextBinding<Model, Error> => String);
+    impl_scalar_field_convention!([] OptionalTextBinding<Model, Error> => Option<String>);
+    impl_scalar_field_convention!([] TextareaBinding<Model, Error> => String);
+    impl_scalar_field_convention!([] CheckboxBinding<Model, Error> => bool);
+    impl_scalar_field_convention!([] TriStateCheckboxBinding<Model, Error> => Option<bool>);
+    impl_scalar_field_convention!([Value] SelectBinding<Model, Value, Error> => Value);
+    impl_scalar_field_convention!([Value] RenderedSelectBinding<Model, Value, Error> => Value);
+    impl_scalar_field_convention!([Value] RadioGroupBinding<Model, Value, Error> => Value);
 }
 
 /// Controlled text input behavior for a field parsed from rendered text.
