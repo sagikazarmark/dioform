@@ -14,6 +14,8 @@ use dioxus_core::{Attribute, Callback, Element, provide_context, try_consume_con
 use dioxus_hooks::use_signal;
 use dioxus_signals::{ReadSignal, Signal, WritableExt};
 
+pub mod testing;
+
 /// Initial presentation metadata for one field-shaped value.
 ///
 /// `invalid: None` derives invalidity from whether `errors` is empty. Setting it to `Some` keeps
