@@ -3,6 +3,85 @@
 //! Registry tests wire these probes into their real components, drive the component through its
 //! normal interaction path, then call the corresponding assertion. The probes deliberately do not
 //! prescribe a rendered element or DOM event because those details belong to each widget.
+//!
+//! # Conformance levels
+//!
+//! The convention has two levels, and the kit certifies each:
+//!
+//! - **Trio-conformant** (no dependency on this crate): the widget honors the `value` /
+//!   `on_change` / `on_commit` prop trio plus attribute spread. Applicable tests:
+//!   [`CommitOrderProbe`] and [`ChangeOriginProbe`] (trio-only widgets imply
+//!   [`ChangeOrigin::User`]).
+//! - **Field-aware**: the widget additionally resolves the Field Context. Applicable tests: the
+//!   three resolution-precedence assertions, [`FocusRoundTripProbe`], and
+//!   [`assert_field_part_ids`].
+//!
+//! # Example
+//!
+//! A condensed test adapter for the two interaction probes. The full worked example covering all
+//! five tests is `tests/conformance.rs` in this crate's repository.
+//!
+//! ```rust
+//! use std::{cell::RefCell, rc::Rc};
+//!
+//! use dioxus::prelude::{dioxus_elements, rsx};
+//! use dioxus_core::{Element, VirtualDom};
+//! use dioxus_field::{
+//!     Binding, ChangeOrigin,
+//!     testing::{ChangeOriginProbe, CommitOrderProbe},
+//! };
+//! use dioxus_hooks::use_signal;
+//! use dioxus_signals::ReadSignal;
+//!
+//! // The handles a registry test adapter exposes for driving its real widget. Callbacks are
+//! // created during render (they need a live scope) and stashed here for the test to call.
+//! #[derive(Clone, Default)]
+//! struct Driver {
+//!     binding: Rc<RefCell<Option<Binding<i32>>>>,
+//!     on_submit: Rc<RefCell<Option<dioxus_core::Callback<()>>>>,
+//! }
+//!
+//! #[derive(Clone)]
+//! struct Harness {
+//!     changes: ChangeOriginProbe<i32>,
+//!     commits: CommitOrderProbe,
+//!     driver: Driver,
+//! }
+//!
+//! fn app(harness: Harness) -> Element {
+//!     let value = use_signal(|| 1);
+//!     // The probe produces the Binding the widget under test receives.
+//!     let binding = harness
+//!         .changes
+//!         .binding_with_commit(ReadSignal::from(value), harness.commits.on_commit());
+//!     *harness.driver.binding.borrow_mut() = Some(binding.clone());
+//!     *harness.driver.on_submit.borrow_mut() = Some(harness.commits.on_submit());
+//!     // A real test renders the registry widget here and hands it `binding`;
+//!     // the driver then dispatches events on it or calls its exposed handlers.
+//!     rsx! { input { value: (binding.read)() } }
+//! }
+//!
+//! let changes = ChangeOriginProbe::new();
+//! let commits = CommitOrderProbe::new();
+//! let driver = Driver::default();
+//! let mut dom = VirtualDom::new_with_props(
+//!     app,
+//!     Harness { changes: changes.clone(), commits: commits.clone(), driver: driver.clone() },
+//! );
+//! dom.rebuild_in_place();
+//!
+//! // Drive the widget through its normal interaction path, then assert.
+//! dom.in_runtime(|| {
+//!     let binding = driver.binding.borrow().clone().expect("app stored the binding");
+//!     binding.write(2, ChangeOrigin::User);
+//!     binding.commit();
+//!     let on_submit = driver.on_submit.borrow().expect("app stored its submit handler");
+//!     on_submit.call(());
+//! });
+//!
+//! changes.assert_writes(&[(2, ChangeOrigin::User)]);
+//! commits.assert_commit_before_submit();
+//! ```
 
 use std::{
     cell::{Cell, RefCell},

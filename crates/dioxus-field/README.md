@@ -48,7 +48,14 @@ safe forwarding mechanism, and duplicate listeners on one element silently keep 
 ## Conformance testing
 
 Widget registries can use the public `dioxus_field::testing` module from ordinary integration tests;
-no browser renderer or form library is required. Create the probe outside the `VirtualDom`, obtain
+no browser renderer or form library is required. The convention has two conformance levels, and a
+registry states which one each widget meets:
+
+- **Trio-conformant** — the widget honors the `value` / `on_change` / `on_commit` prop trio plus
+  attribute spread, with no dependency on this crate. Applicable tests: commit ordering and change
+  origin (trio-only widgets imply the user origin).
+- **Field-aware** — the widget additionally resolves the Field Context. Applicable tests: the three
+  resolution-precedence assertions, the focus round-trip, and part-id registration. Create the probe outside the `VirtualDom`, obtain
 its Dioxus callbacks while rendering the test component, drive the registry component through its
 normal interaction path, then call the assertion after rendering.
 
@@ -66,5 +73,9 @@ The test adapter is intentionally registry-owned. It may dispatch DOM events or 
 handlers the rendered control uses, but it should not reproduce binding or metadata resolution in
 test-only code. This keeps the assertions shared while allowing checkbox, select, slider, and other
 widgets to retain their native interaction semantics.
+
+The `testing` module documentation carries a condensed wired-up example, and `tests/conformance.rs`
+in this repository is the reference implementation exercising all five tests against a minimal
+conforming widget.
 
 The crate is currently incubating and its API is not yet stable.
