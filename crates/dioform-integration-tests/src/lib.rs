@@ -124,7 +124,7 @@ mod tests {
     fn checkbox_field(probe: Rc<CheckboxProbe>) -> Element {
         rsx! {
             Field {
-                binding: probe.form.checkbox(CheckboxForm::fields().accepted()),
+                context: probe.form.checkbox(CheckboxForm::fields().accepted()),
                 ConventionCheckbox { probe }
                 FieldError { id: "accepted-error" }
             }
@@ -225,7 +225,7 @@ mod tests {
 
         rsx! {
             Field {
-                binding: FieldContext::new(binding).with_meta(meta),
+                context: FieldContext::new(binding).with_meta(meta),
                 FieldError { id: "formatted-error" }
             }
         }

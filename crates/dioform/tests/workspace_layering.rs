@@ -2,27 +2,8 @@ use std::{fs, path::PathBuf};
 
 #[test]
 fn workspace_crates_keep_architecture_layers() {
-    let field_convention = manifest("dioxus-field");
-    assert_has_dependencies(
-        "dioxus-field",
-        &field_convention,
-        &["dioxus-core", "dioxus-hooks", "dioxus-signals"],
-    );
-    assert_has_no_dependencies(
-        "dioxus-field",
-        &field_convention,
-        &[
-            "dioform",
-            "dioform-core",
-            "dioform-derive",
-            "dioform-validation-adapter",
-            "dioform-fullstack",
-            "dioform-garde",
-            "dioform-integration-tests",
-            "dioform-validator",
-        ],
-    );
-
+    // dioxus-field's own independence guard lives in its repository now that the crate is
+    // consumed from crates.io; this workspace asserts only its own layers.
     let core = manifest("dioform-core");
     assert_has_no_dependencies(
         "dioform-core",
