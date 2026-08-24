@@ -1,5 +1,11 @@
 # Incubate dioxus-field in the workspace with an extraction trigger
 
+> **Completed 2026-08-24.** The extraction trigger fired as specified: the crate was extracted with
+> history to [sagikazarmark/dioxus-field](https://github.com/sagikazarmark/dioxus-field) and published
+> to crates.io as 0.1.0 before any public-facing event. Dioform now consumes the published crate as an
+> ordinary dependency, and the independence guardrails below are enforced by the standalone repository
+> rather than by this workspace.
+
 The form-library-agnostic **Field Convention** crate will incubate at `crates/dioxus-field` as a Dioform
 workspace member. Workspace hosting keeps early changes reviewable beside their first producer and
 consumer, but it is temporary incubation rather than permanent Dioform ownership.
