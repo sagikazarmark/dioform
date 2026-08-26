@@ -5,6 +5,7 @@ use crate::components::{
     DocsCallout, ExampleLayout, ExampleSection, ExternalAction, InlineCode, PageHeader,
     snippet_theme,
 };
+use crate::examples::dioxus_field_registry::DioxusFieldRegistryExample;
 use crate::examples::field_bindings::FieldBindingsExample;
 use crate::examples::minimal::MinimalExample;
 use crate::examples::parsed_inputs::ParsedInputsExample;
@@ -124,6 +125,37 @@ pub fn FieldBindings() -> Element {
             code: rsx! {
                 Code { src: code!("src/examples/field_bindings.rs"), theme: snippet_theme() }
             },
+        }
+    }
+}
+
+#[component]
+pub fn DioxusFieldRegistry() -> Element {
+    rsx! {
+        PageHeader {
+            eyebrow: "Basics",
+            title: "dioxus-field registry integration",
+            intro: "Dioform bindings plug directly into dioxus-field compatible controls. This example uses dioxus-daisyui from Git and lets the registry own interaction, styling, and accessibility markup.",
+        }
+        ExampleSection {
+            title: "Dioform Field Context + dioxus-daisyui",
+            intro: rsx! {
+                "Each registry "
+                InlineCode { "Field" }
+                " receives a Dioform text, textarea, radio-group, or checkbox binding as its context. Descendant controls resolve the value, user writes, commits, field metadata, and formatted errors without adapter code."
+            },
+            demo: rsx! { DioxusFieldRegistryExample {} },
+            code: rsx! {
+                Code { src: code!("src/examples/dioxus_field_registry.rs"), theme: snippet_theme() }
+            },
+        }
+        DocsCallout {
+            title: "External widget registry",
+            action: Some(ExternalAction::new(
+                "dioxus-daisyui registry",
+                "https://github.com/sagikazarmark/dioxus-daisyui-registry.orig",
+            )),
+            "The demo depends on the registry's library crate directly from Git because it is not published yet. Normal registry users can also install individual components into their own source tree."
         }
     }
 }

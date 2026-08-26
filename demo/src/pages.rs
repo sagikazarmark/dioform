@@ -10,7 +10,7 @@ mod server;
 mod submission;
 mod validation;
 
-pub use basics::{FieldBindings, Home, Minimal, ParsedInputs};
+pub use basics::{DioxusFieldRegistry, FieldBindings, Home, Minimal, ParsedInputs};
 pub use fields::{
     CollectionValidation, Collections, FieldGroups, FileFields, NestedPaths, Observers,
     OptionalFields, Serialization, StateMeta,

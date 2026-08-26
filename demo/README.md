@@ -19,8 +19,9 @@ plain Axum route. `src/signup.rs` keeps the actual rule in one place.
 
 ## What it covers
 
-**Basics**: minimal form, all field bindings (text/textarea/checkbox/select/radio), parsed
-inputs (number/money).
+**Basics**: minimal form, all field bindings (text/textarea/checkbox/select/radio), direct
+`dioxus-field` integration with the Git-hosted `dioxus-daisyui` registry, and parsed inputs
+(number/money).
 
 **Validation**: validation modes & triggers, field & form (cross-field) validators, the
 whole-form error summary, async & debounced validation, and the `garde` validation adapter.

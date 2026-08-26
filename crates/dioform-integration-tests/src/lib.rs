@@ -166,13 +166,13 @@ mod tests {
             .meta
             .borrow()
             .expect("component should expose metadata");
-        assert_eq!(meta.id().as_deref(), Some("terms-accepted-input"));
+        assert_eq!(meta.id().as_ref(), "terms-accepted-input");
         assert_eq!(meta.name().as_deref(), Some("accepted"));
         assert!(!meta.touched());
         assert!(!meta.dirty());
         assert_eq!(
             dioxus_ssr::render(&dom),
-            "<div><input type=\"checkbox\" id=\"terms-accepted-input\" name=\"accepted\" aria-invalid=\"false\"/></div>"
+            "<div><input type=\"checkbox\" aria-invalid=\"false\" id=\"terms-accepted-input\" name=\"accepted\"/><div id=\"accepted-error\" aria-live=\"polite\"></div></div>"
         );
 
         binding.write(true, ChangeOrigin::Programmatic);
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(meta.errors(), vec![Rc::from("Accept the terms")]);
         assert_eq!(
             dioxus_ssr::render(&dom),
-            "<div><input type=\"checkbox\" id=\"terms-accepted-input\" name=\"accepted\" aria-invalid=\"true\" aria-errormessage=\"accepted-error\" data-invalid=\"true\" data-touched=\"true\"/><div id=\"accepted-error\" aria-live=\"polite\" data-invalid=\"true\" data-touched=\"true\">Accept the terms</div></div>"
+            "<div><input type=\"checkbox\" aria-describedby=\"accepted-error\" aria-errormessage=\"accepted-error\" aria-invalid=\"true\" data-invalid=\"true\" data-touched=\"true\" id=\"terms-accepted-input\" name=\"accepted\"/><div id=\"accepted-error\" aria-live=\"polite\" data-invalid=\"true\" data-touched=\"true\"><div>Accept the terms</div></div></div>"
         );
     }
 
@@ -258,7 +258,7 @@ mod tests {
 
         assert_eq!(
             dioxus_ssr::render(&dom),
-            "<div><div id=\"formatted-error\" aria-live=\"polite\" data-invalid=\"true\">Error TERMS</div></div>"
+            "<div><div id=\"formatted-error\" aria-live=\"polite\" data-invalid=\"true\"><div>Error TERMS</div></div></div>"
         );
     }
 

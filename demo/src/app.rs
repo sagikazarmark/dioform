@@ -19,6 +19,8 @@ pub enum Route {
     Minimal {},
     #[route("/fields")]
     FieldBindings {},
+    #[route("/dioxus-field-registry")]
+    DioxusFieldRegistry {},
     #[route("/parsed")]
     ParsedInputs {},
     // Validation
@@ -104,6 +106,7 @@ fn DemoLayout() -> Element {
                         SidebarNavLink { route: Route::Home {}, label: "Overview" }
                         SidebarNavLink { route: Route::Minimal {}, label: "Minimal form" }
                         SidebarNavLink { route: Route::FieldBindings {}, label: "Field bindings" }
+                        SidebarNavLink { route: Route::DioxusFieldRegistry {}, label: "dioxus-field registry" }
                         SidebarNavLink { route: Route::ParsedInputs {}, label: "Parsed inputs" }
                     }
                     SidebarNavSection { label: "Validation",

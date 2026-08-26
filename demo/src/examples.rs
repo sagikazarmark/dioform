@@ -9,6 +9,7 @@ pub mod async_validation;
 pub mod browser_submission;
 pub mod collection_validation;
 pub mod collections;
+pub mod dioxus_field_registry;
 pub mod error_summary;
 pub mod field_bindings;
 pub mod field_groups;
