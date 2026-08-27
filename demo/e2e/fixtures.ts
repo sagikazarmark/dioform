@@ -1,4 +1,4 @@
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, test as base, type Locator, type Page } from "@playwright/test";
 
 export const test = base.extend<{ browserHealth: void }>({
   browserHealth: [
@@ -45,6 +45,13 @@ export async function openExample(page: Page, path: string) {
   await expect(demo).toHaveCount(1);
 
   return demo;
+}
+
+export function stateValue(demo: Locator, label: string) {
+  return demo
+    .locator("dt")
+    .filter({ hasText: label })
+    .locator("xpath=following-sibling::dd[1]");
 }
 
 export async function waitForHydration(page: Page, timeout = 10_000) {

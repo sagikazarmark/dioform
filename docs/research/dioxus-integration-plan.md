@@ -1,7 +1,9 @@
 # First-class Dioxus integration: signals-first dioform, `dioxus-field`, and custom registries
 
-Status: accepted plan, rev 3 (2026-08-22). Tracking issue:
+Status: accepted plan, rev 4 (2026-08-27). Tracking issue:
 [#81](https://github.com/sagikazarmark/dioform/issues/81).
+Focus Exit compatibility is recorded by
+[ADR-0050](../adr/0050-map-field-convention-focus-exit-without-validation.md).
 
 This document is the in-repo source of truth for the Dioxus-integration initiative. It condenses two
 rounds of verified research (three parallel research passes each, plus an adversarial judge pass that
@@ -148,7 +150,8 @@ Donatability to dioxus-primitives is a standing design constraint.
   any registry satisfies with zero dependency (matches the vocabulary upstream standardized in
   components PR #40: read-only signals + callbacks). Upper: **Value Binding** (`Binding<T>`) as the
   ergonomic carrier — `read` as a `ReadSignal<T>` (from Phase 2 views), `write(T, ChangeOrigin)`,
-  `commit()`, identity from Phase 1's sound identity. Binding decomposes into the trio. Rich `From`
+  `commit()`, optional `focus_exit()`, and identity from Phase 1's sound identity. Binding decomposes
+  into the trio, which intentionally carries no Focus Exit capability. Rich `From`
   conversions on the Thaw `Model<T>` template: `Signal<T>`, `(ReadSignal, Callback)`, plain `T` →
   uncontrolled.
 - **Field Context** carries signal-backed **Field Meta** (ids, name, required/disabled, invalid,
@@ -164,12 +167,13 @@ Donatability to dioxus-primitives is a standing design constraint.
   Ark's MutationObserver hack). Field Meta → attribute helper: `aria-invalid`,
   `aria-errormessage` + polite live region when invalid, `aria-describedby` chaining, `data-*`.
 - **Conformance kit** with named tests: commit is synchronously observable before submit handling
-  runs; write carries origin; resolution precedence holds; focus round-trip; error/description ids
-  appear in meta on mount and vanish on drop.
+  runs; write carries origin; optional Focus Exit is exact and ordered; resolution precedence holds;
+  focus round-trip; error/description ids appear in meta on mount and vanish on drop.
 - dioform producer surface (in dioform, not dioxus-field): `From<CheckboxBinding<M, E>> for
   Binding<bool>` and friends; `binding.meta()` (Display-based error formatting, override
-  available); `on_commit()` feeding the Blur trigger. `FieldAccessibility` demoted to producing
-  Field Meta.
+  available); `on_commit()` feeding the Blur trigger; Focus Exit feeding exact blurred/touched
+  metadata and blur listeners without validation. `FieldAccessibility` demoted to producing Field
+  Meta.
 
 ## Phase 4 — First custom registry + demo gallery (medium–large)
 
@@ -178,8 +182,8 @@ Donatability to dioxus-primitives is a standing design constraint.
   think about forms. Registry lives in its own repository (name/location: owner's call).
 - Proposed v1 widget list (owner to confirm): checkbox, switch, text input, textarea, select
   (single), radio group, slider. v1.1: combobox, multi-select, date picker, tag group.
-- Commit implemented where only the widget can: focus-scope exit via a small `focus-scope.js`
-  helper, and widget-state transitions.
+- Commit implemented at widget-defined interaction boundaries; Focus Exit implemented from the
+  widget's complete logical focus scope, including owned popup content.
 - Real hidden native inputs driven by `FieldMeta.name` — restoring **Progressive Submission** /
   `BrowserSubmitBinding` (dioxus-primitives cannot offer this today; only its Checkbox/Switch have a
   functional `name`).

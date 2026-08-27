@@ -70,7 +70,7 @@ fn build_form() -> FormHandle<WorkshopRegistration> {
     let handle = FormHandle::<WorkshopRegistration>::from_config(
         FormConfig::new(WorkshopRegistration::default())
             .validation_mode(ValidationMode::on_blur())
-            // dioxus-field Commit feeds Blur validation without making a Blurred Field.
+            // Keep errors visible for controls that Commit before they report Focus Exit (#96).
             .error_visibility_policy(ErrorVisibilityPolicy::TouchedOrSubmit),
     )
     .with_id_namespace("workshop-registration");
@@ -274,6 +274,7 @@ pub fn HappyPathExample() -> Element {
                         rows: vec![
                             ("form.dirty", form.is_dirty().to_string()),
                             ("name.touched", form.is_field_touched(fields.name()).to_string()),
+                            ("name.blurred", form.is_field_blurred(fields.name()).to_string()),
                             (
                                 "name.visible_errors",
                                 form.visible_field_validation_errors(fields.name())
@@ -306,7 +307,7 @@ pub fn HappyPathExample() -> Element {
                         "The panel uses field-scoped Form Selectors rather than subscribing each control to the whole form. Optional fields stay optional; every Dioxus-Managed Submission still reruns garde before producing a Submission Snapshot."
                     }
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
-                        "The Field Convention reports Commit rather than DOM focus state. Dioform uses Commit for Blur validation without making a Blurred Field, so registry controls do not drive is_field_blurred."
+                        "The Field Convention reports Commit and Focus Exit separately. Dioform uses Commit for Blur validation and Focus Exit for exact touched and Blurred Field state without validating twice."
                     }
                 }
             },
@@ -319,11 +320,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostics_explain_commit_without_claiming_blurred_state() {
+    fn diagnostics_explain_commit_and_focus_exit_as_separate_facts() {
         let html = dioxus::ssr::render_element(rsx! { HappyPathExample {} });
 
         assert!(html.contains("name.visible_errors"));
-        assert!(!html.contains("name.blurred"));
-        assert!(html.contains("Commit rather than DOM focus state"));
+        assert!(html.contains("name.blurred"));
+        assert!(html.contains("Commit and Focus Exit separately"));
     }
 }

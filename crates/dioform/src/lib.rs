@@ -12675,13 +12675,15 @@ mod field_convention {
             let identity = self.clone();
             let writer = self.clone();
             let committer = self.clone();
+            let focus_exiter = self.clone();
             let write = Callback::new(move |(value, origin)| match origin {
                 ChangeOrigin::User => writer.set_user(value),
                 ChangeOrigin::Programmatic => writer.set_programmatic(value),
             });
             let commit = Callback::new(move |()| committer.commit());
+            let focus_exit = Callback::new(move |()| focus_exiter.blur_without_validation());
 
-            Binding::new_with_identity(read, write, commit, identity)
+            Binding::new_with_identity(read, write, commit, identity).with_focus_exit(focus_exit)
         }
 
         fn convention_meta_values(&self, formatter: impl Fn(&Error) -> String) -> FieldMetaValues

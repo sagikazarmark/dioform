@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, fmt, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        fmt,
+        rc::Rc,
+    };
 
     use dioform::{
         ErrorVisibilityPolicy, FieldIdentity, FieldPath, Form, FormHandle, ValidationTarget,
@@ -208,6 +212,8 @@ mod tests {
         meta: RefCell<Option<FieldMeta>>,
         on_change: RefCell<Option<Callback<bool>>>,
         on_commit: RefCell<Option<Callback<()>>>,
+        blur_listener_runs: Cell<usize>,
+        form_blur_listener_runs: Cell<usize>,
     }
 
     #[derive(Clone, Props)]
@@ -245,6 +251,23 @@ mod tests {
     }
 
     fn checkbox_field(probe: Rc<CheckboxProbe>) -> Element {
+        let blur_probe = Rc::clone(&probe);
+        dioform::use_field_blur_listener(
+            probe.form.clone(),
+            CheckboxForm::fields().accepted(),
+            move |_| {
+                blur_probe
+                    .blur_listener_runs
+                    .set(blur_probe.blur_listener_runs.get() + 1)
+            },
+        );
+        let form_blur_probe = Rc::clone(&probe);
+        dioform::use_form_blur_listener(probe.form.clone(), move |_| {
+            form_blur_probe
+                .form_blur_listener_runs
+                .set(form_blur_probe.form_blur_listener_runs.get() + 1)
+        });
+
         rsx! {
             Field {
                 context: probe.form.checkbox(CheckboxForm::fields().accepted()),
@@ -264,10 +287,13 @@ mod tests {
         let form = FormHandle::new_with_error_type(CheckboxForm { accepted: false })
             .with_id_namespace("terms");
         form.set_error_visibility_policy(ErrorVisibilityPolicy::Always);
+        let validation_runs = Rc::new(Cell::new(0));
+        let validator_runs = Rc::clone(&validation_runs);
         form.field(CheckboxForm::fields().accepted())
             .validator("required")
             .on(ValidationTrigger::Blur)
-            .check_optional(|accepted, _context| {
+            .check_optional(move |accepted, _context| {
+                validator_runs.set(validator_runs.get() + 1);
                 (!accepted).then_some(CheckboxError("Accept the terms"))
             });
         let probe = Rc::new(CheckboxProbe {
@@ -276,6 +302,8 @@ mod tests {
             meta: RefCell::new(None),
             on_change: RefCell::new(None),
             on_commit: RefCell::new(None),
+            blur_listener_runs: Cell::new(0),
+            form_blur_listener_runs: Cell::new(0),
         });
         let mut dom = VirtualDom::new_with_props(checkbox_field, Rc::clone(&probe));
         dom.rebuild_in_place();
@@ -297,6 +325,15 @@ mod tests {
             dioxus_ssr::render(&dom),
             "<div><input type=\"checkbox\" aria-invalid=\"false\" id=\"terms-accepted-input\" name=\"accepted\"/><div id=\"accepted-error\" aria-live=\"polite\"></div></div>"
         );
+
+        binding.commit();
+        render_reactive_updates(&mut dom);
+        assert!(!form.is_field_touched(CheckboxForm::fields().accepted()));
+        assert!(!form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(!meta.touched());
+        assert_eq!(probe.blur_listener_runs.get(), 0);
+        assert_eq!(probe.form_blur_listener_runs.get(), 0);
+        assert_eq!(validation_runs.get(), 1);
 
         binding.write(true, ChangeOrigin::Programmatic);
         render_reactive_updates(&mut dom);
@@ -323,11 +360,37 @@ mod tests {
             .call(());
         render_reactive_updates(&mut dom);
         assert!(!form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert_eq!(probe.blur_listener_runs.get(), 0);
+        assert_eq!(probe.form_blur_listener_runs.get(), 0);
+        assert_eq!(validation_runs.get(), 2);
         assert_eq!(meta.errors(), vec![Rc::from("Accept the terms")]);
         assert_eq!(
             dioxus_ssr::render(&dom),
             "<div><input type=\"checkbox\" aria-describedby=\"accepted-error\" aria-errormessage=\"accepted-error\" aria-invalid=\"true\" data-invalid=\"true\" data-touched=\"true\" id=\"terms-accepted-input\" name=\"accepted\"/><div id=\"accepted-error\" aria-live=\"polite\" data-invalid=\"true\" data-touched=\"true\"><div>Accept the terms</div></div></div>"
         );
+
+        binding.focus_exit();
+        render_reactive_updates(&mut dom);
+        assert!(form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert_eq!(probe.blur_listener_runs.get(), 1);
+        assert_eq!(probe.form_blur_listener_runs.get(), 1);
+        assert_eq!(validation_runs.get(), 2);
+
+        form.reset();
+        render_reactive_updates(&mut dom);
+        assert!(!form.is_field_touched(CheckboxForm::fields().accepted()));
+        assert!(!form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(!meta.touched());
+
+        binding.focus_exit();
+        render_reactive_updates(&mut dom);
+        assert!(form.is_field_touched(CheckboxForm::fields().accepted()));
+        assert!(form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(meta.touched());
+        assert_eq!(probe.blur_listener_runs.get(), 2);
+        assert_eq!(probe.form_blur_listener_runs.get(), 2);
+        assert_eq!(validation_runs.get(), 2);
+        assert!(meta.errors().is_empty());
     }
 
     #[derive(Clone)]

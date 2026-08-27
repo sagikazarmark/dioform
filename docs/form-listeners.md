@@ -44,7 +44,7 @@ Form-level listener context exposes the `FormHandle`, the triggering `FieldIdent
 
 ## Blur Listeners
 
-Use `use_field_blur_listener(form, path, listener)` when a side effect should run after that Field or a Field it contains is marked blurred. Reach is outward only: a listener on `invoice.customer` hears a blur of `invoice.customer.name`, while a listener on `invoice.customer.name` does not hear a blur of `invoice.customer`. A Collection Field listener hears blurs inside its own items, but sibling collections and static descendants of the collection path do not. The Identity Path Separator anchors the boundary, so a blur of `counterparty_account.name` does not reach a listener on `counterparty`.
+Use `use_field_blur_listener(form, path, listener)` when a side effect should run after that Field or a Field it contains is marked blurred. Reach is outward only: a listener on `invoice.customer` hears a blur of `invoice.customer.name`, while a listener on `invoice.customer.name` does not hear a blur of `invoice.customer`. A Collection Field listener hears blurs inside its own items, but sibling collections and static descendants of the collection path do not. The Identity Path Separator anchors the boundary, so a blur of `counterparty_account.name` does not reach a listener on `counterparty`. A Dioform-produced `dioxus-field` binding dispatches these listeners from **Focus Exit**, not from **Commit**.
 
 Each triggering blur produces one callback. Moving focus between two children of the same container therefore runs the container listener twice; the listener does not debounce or synthesize a single "left the container" event.
 

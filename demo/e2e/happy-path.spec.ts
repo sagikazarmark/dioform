@@ -1,13 +1,4 @@
-import type { Locator } from "@playwright/test";
-
-import { expect, openExample, test } from "./fixtures";
-
-function stateValue(demo: Locator, label: string) {
-  return demo
-    .locator("dt")
-    .filter({ hasText: label })
-    .locator("xpath=following-sibling::dd[1]");
-}
+import { expect, openExample, stateValue, test } from "./fixtures";
 
 test("happy path validates, submits, and exposes focused state", async ({ page }) => {
   const demo = await openExample(page, "/happy-path");
@@ -16,6 +7,8 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   const terms = demo.getByRole("switch", {
     name: "I agree to the code of conduct",
   });
+
+  await expect(stateValue(demo, "name.blurred")).toHaveText("false");
 
   await demo.getByRole("button", { name: "Register" }).click();
 
@@ -31,6 +24,7 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
 
   await name.fill("Ada Lovelace");
   await email.fill("ada@example.com");
+  await expect(stateValue(demo, "name.blurred")).toHaveText("true");
   await expect(stateValue(demo, "name.visible_errors")).toHaveText("0");
   await demo.getByRole("radio", { name: "Remote" }).click();
   await demo.getByRole("switch", { name: "Product updates" }).click();

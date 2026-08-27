@@ -13,7 +13,7 @@ use crate::components::{DemoPane, DemoSurface};
 
 /// Dioform produces the `dioxus-field` Binding and Field Meta consumed by the
 /// registry. The registry components know nothing about Dioform: each control
-/// resolves its value, writes, commit signal, metadata, and errors from the
+/// resolves its value, writes, Commit, Focus Exit, metadata, and errors from the
 /// Field Context provided by its surrounding `Field`. Closed composition sugar
 /// covers the common text fields; explicit parts remain available when a
 /// control needs custom structure.
@@ -41,7 +41,7 @@ pub fn DioxusFieldRegistryExample() -> Element {
     let form = use_form_handle(|| {
         let handle = FormHandle::<RegistryProfile>::from_config(
             FormConfig::new(RegistryProfile::default())
-                // Commit runs Blur validation without making this a Blurred Field.
+                // Keep Commit-only validation visible before a control reports Focus Exit (#96).
                 .error_visibility_policy(ErrorVisibilityPolicy::TouchedOrSubmit),
         )
         .with_id_namespace("registry-profile");
@@ -151,13 +151,17 @@ pub fn DioxusFieldRegistryExample() -> Element {
                             ("bio", snapshot.bio.clone()),
                             ("visibility", snapshot.visibility.clone()),
                             ("analytics", snapshot.analytics.to_string()),
+                            (
+                                "display_name.blurred",
+                                form.is_field_blurred(fields.display_name()).to_string(),
+                            ),
                         ],
                     }
                     p { class: "mt-4 text-sm leading-6 text-base-content/60",
                         "No registry-specific event handlers or value props are wired here. Field Context carries the binding and presentation metadata into both the composition sugar and explicit parts."
                     }
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
-                        "Touched-or-submit visibility lets Commit-triggered validation show errors without treating Commit as a DOM blur."
+                        "Touched-or-submit visibility lets Commit-triggered validation show errors before Focus Exit. Focus Exit independently records exact Blurred Field state."
                     }
                 }
             },

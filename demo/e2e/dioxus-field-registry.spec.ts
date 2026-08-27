@@ -1,4 +1,4 @@
-import { expect, openExample, test } from "./fixtures";
+import { expect, openExample, stateValue, test } from "./fixtures";
 
 test("registry fields stay inside their pane and hide native form controls", async ({
   page,
@@ -40,9 +40,11 @@ test("composition fields generate ids and show commit validation errors", async 
   await expect(error).toHaveAttribute("id", /^dxf-error-/);
 
   const errorId = await error.getAttribute("id");
+  await expect(stateValue(demo, "display_name.blurred")).toHaveText("false");
   await input.fill("ab");
   await input.blur();
 
+  await expect(stateValue(demo, "display_name.blurred")).toHaveText("true");
   await expect(input).toHaveAttribute("aria-invalid", "true");
   await expect(input).toHaveAttribute("aria-errormessage", errorId!);
   await expect(error).toHaveText("Use at least three characters.");

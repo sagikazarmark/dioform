@@ -371,7 +371,7 @@ The form-library-agnostic contract (crate: `dioxus-field`) that connects **Widge
 _Avoid_: Form library, form protocol, component kit
 
 **Value Binding**:
-The **Field Convention**'s form-agnostic two-way port to one field-shaped value: a reactive read, a write carrying a **Change Origin**, a **Commit** signal, and a comparable identity. Dioform produces one from a **Field Binding**; a bare signal produces one with no form library at all.
+The **Field Convention**'s form-agnostic two-way port to one field-shaped value: a reactive read, a write carrying a **Change Origin**, a **Commit** signal, an optional **Focus Exit** report, and a comparable identity. Dioform produces one from a **Field Binding**; a bare signal produces one with no form library at all.
 _Avoid_: Field binding, mutable signal prop, controlled component state
 
 **Binding Prop Trio**:
@@ -385,6 +385,10 @@ _Avoid_: Event source, DOM event type
 **Commit**:
 The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it feeds the Blur **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all.
 _Avoid_: Blur, change event, focusout relay
+
+**Focus Exit**:
+The **Field Convention** report that focus left a widget's complete logical focus scope, including its owned child controls and popup content. It is independent from **Commit**: Dioform maps it to exact touched and **Blurred Field** metadata and blur listeners without running validation again ([ADR-0050](docs/adr/0050-map-field-convention-focus-exit-without-validation.md)).
+_Avoid_: Commit, raw child blur, focusout relay
 
 **Field Meta**:
 The **Field Convention**'s signal-backed per-field presentation metadata: element ids, rendered name, required, disabled, invalid, pre-rendered error text, touched, and dirty. Producer-defined semantics; dioform produces it from form state, and a standalone Field fabricates it. It carries no typed errors and no validity logic — invalid is a flag its producer sets.
@@ -407,7 +411,7 @@ A component library authored against the **Field Convention**: its authors imple
 _Avoid_: Form component library, UI kit, primitives fork
 
 **Conformance Kit**:
-The **Field Convention**'s test suite that any **Widget Registry** runs against its components: commit observable before submit handling, writes carry their **Change Origin**, **Binding Resolution** precedence holds, focus round-trips, and error and description ids register into **Field Meta** on mount and drop.
+The **Field Convention**'s test suite that any **Widget Registry** runs against its components: commit observable before submit handling, writes carry their **Change Origin**, optional **Focus Exit** reporting is exact and ordered, **Binding Resolution** precedence holds, focus round-trips, and error and description ids register into **Field Meta** on mount and drop.
 _Avoid_: Integration tests, example suite
 
 **Variant Field**:
@@ -1011,6 +1015,10 @@ Domain expert: No. It knows one field at a time — a **Value Binding**, **Field
 Developer: Is a **Commit** just a renamed blur?
 
 Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform maps a **Commit** onto the Blur **Validation Trigger**, but the widget decides when it happens, not the DOM.
+
+Developer: Does **Focus Exit** run Blur validation too?
+
+Domain expert: No. The widget already reports **Commit** when the interaction needs validation. **Focus Exit** separately tells Dioform to update touched and **Blurred Field** metadata and dispatch blur listeners without validating a second time ([ADR-0050](docs/adr/0050-map-field-convention-focus-exit-without-validation.md)).
 
 Developer: Does a **Widget Registry** checkbox need to know dioform exists?
 
