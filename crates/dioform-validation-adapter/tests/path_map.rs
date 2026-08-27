@@ -1,4 +1,6 @@
-use dioform_core::{FieldIdentity, FieldPath, FormCore, ValidationTarget};
+use dioform_core::{
+    EnumerableStaticFields, FieldIdentity, FieldPath, FormCore, StaticFieldEntry, ValidationTarget,
+};
 use dioform_validation_adapter::{
     DuplicateCollectionValidationTargetRule, ExactPathLookup, PathMap,
     ValidationAdapterConfigurationIssue,
@@ -26,6 +28,15 @@ fn rows_path() -> FieldPath<Model, Vec<String>> {
         |model: &Model| &model.rows,
         |model: &mut Model| &mut model.rows,
     )
+}
+
+impl EnumerableStaticFields for Model {
+    fn static_field_entries() -> Vec<StaticFieldEntry<Self>> {
+        vec![
+            StaticFieldEntry::new("value", value_path()),
+            StaticFieldEntry::new("rows", rows_path()),
+        ]
+    }
 }
 
 fn captured_item_path() -> FieldPath<Model, String> {
@@ -132,6 +143,27 @@ fn path_map_reports_its_registered_path_count() {
     path_map.insert_field("value", value_path());
 
     assert_eq!(path_map.len(), 1);
+}
+
+#[test]
+fn derived_path_map_can_be_extended_and_overridden_explicitly() {
+    let path_map = PathMap::<Model>::derived()
+        .with_field("value", rows_path())
+        .with_field("extra", value_path());
+
+    assert_eq!(path_map.len(), 3);
+    assert_eq!(
+        path_map.target_for_path("value"),
+        ValidationTarget::field(rows_path())
+    );
+    assert_eq!(
+        path_map.target_for_path("rows"),
+        ValidationTarget::field(rows_path())
+    );
+    assert_eq!(
+        path_map.target_for_path("extra"),
+        ValidationTarget::field(value_path())
+    );
 }
 
 #[test]

@@ -3,9 +3,12 @@ mod tests {
     use std::{cell::RefCell, fmt, rc::Rc};
 
     use dioform::{
-        ErrorVisibilityPolicy, FieldIdentity, FieldPath, Form, FormHandle, ValidationTrigger,
+        ErrorVisibilityPolicy, FieldIdentity, FieldPath, Form, FormHandle, ValidationTarget,
+        ValidationTrigger, advanced::FormCore,
     };
-    use dioform_garde::{GardeCollectionRowMatcher, GardeValidationExt};
+    use dioform_garde::{
+        DiagnosticRouteProvenance, GardeCollectionRowMatcher, GardeDiagnostic, GardeValidationExt,
+    };
     use dioxus::prelude::*;
     use dioxus_field::{
         Binding, ChangeOrigin, Field, FieldContext, FieldError, FieldMeta, use_binding,
@@ -63,6 +66,126 @@ mod tests {
         form.validate_all(ValidationTrigger::Manual);
 
         assert_eq!(item.validation_errors()[0].error(), "rust");
+    }
+
+    #[derive(Clone, dioform::Form)]
+    struct DerivedSignupForm {
+        email: String,
+        password: String,
+    }
+
+    impl garde::Validate for DerivedSignupForm {
+        type Context = ();
+
+        fn validate_into(
+            &self,
+            _context: &Self::Context,
+            parent: &mut dyn FnMut() -> garde::Path,
+            report: &mut garde::Report,
+        ) {
+            report.append(parent().join("email"), garde::Error::new("email invalid"));
+            report.append(
+                parent().join("password"),
+                garde::Error::new("password invalid"),
+            );
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct RoutedGardeError {
+        target: ValidationTarget,
+        provenance: DiagnosticRouteProvenance,
+    }
+
+    fn routed_garde_error(diagnostic: GardeDiagnostic<'_>) -> RoutedGardeError {
+        RoutedGardeError {
+            target: diagnostic.target(),
+            provenance: diagnostic
+                .route_provenance()
+                .expect("first-party adapters classify every diagnostic route")
+                .clone(),
+        }
+    }
+
+    #[test]
+    fn derived_garde_path_map_routes_direct_fields_as_exact_static_targets() {
+        let mut form: FormCore<DerivedSignupForm, RoutedGardeError> =
+            FormCore::new_with_error_type(DerivedSignupForm {
+                email: String::new(),
+                password: String::new(),
+            });
+        form.garde_validation()
+            .derived_path_map()
+            .register(routed_garde_error);
+
+        form.validate_form(ValidationTrigger::Manual);
+
+        let fields = DerivedSignupForm::fields();
+        assert_eq!(
+            form.field_validation_errors(fields.email())[0].error(),
+            &RoutedGardeError {
+                target: ValidationTarget::field(fields.email()),
+                provenance: DiagnosticRouteProvenance::ExactStaticTarget,
+            }
+        );
+        assert_eq!(
+            form.field_validation_errors(fields.password())[0].error(),
+            &RoutedGardeError {
+                target: ValidationTarget::field(fields.password()),
+                provenance: DiagnosticRouteProvenance::ExactStaticTarget,
+            }
+        );
+        assert!(form.form_validation_errors().is_empty());
+    }
+
+    #[derive(Clone, dioform::Form)]
+    struct DerivedNestedForm {
+        account: NestedAccount,
+    }
+
+    #[derive(Clone)]
+    struct NestedAccount {
+        email: String,
+    }
+
+    impl garde::Validate for DerivedNestedForm {
+        type Context = ();
+
+        fn validate_into(
+            &self,
+            _context: &Self::Context,
+            parent: &mut dyn FnMut() -> garde::Path,
+            report: &mut garde::Report,
+        ) {
+            if self.account.email.is_empty() {
+                report.append(
+                    parent().join("account").join("email"),
+                    garde::Error::new("email invalid"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn derived_garde_path_map_still_reports_paths_beyond_direct_fields() {
+        let reported = Rc::new(RefCell::new(Vec::new()));
+        let reported_by_adapter = Rc::clone(&reported);
+        let mut form = FormCore::new(DerivedNestedForm {
+            account: NestedAccount {
+                email: String::new(),
+            },
+        });
+        form.garde_validation()
+            .derived_path_map()
+            .on_unmapped_path(move |path| {
+                reported_by_adapter.borrow_mut().push(path.to_string());
+            })
+            .register_string_errors();
+
+        form.validate_form(ValidationTrigger::Manual);
+
+        assert_eq!(reported.borrow().as_slice(), ["account.email"]);
+        assert_eq!(form.form_validation_errors().len(), 1);
     }
 
     #[derive(Clone, dioform::Form)]

@@ -6,9 +6,9 @@ use std::{
 };
 
 use dioform_core::{
-    FieldIdentity, FieldPath, FormCore, FormValidationError, SubmitError, SubmitErrors,
-    SubmitResult, SubmitStatus, ValidationStatus, ValidationTarget, ValidationTrigger,
-    ValidationTriggers,
+    EnumerableStaticFields, FieldIdentity, FieldPath, FormCore, FormValidationError,
+    StaticFieldEntry, SubmitError, SubmitErrors, SubmitResult, SubmitStatus, ValidationStatus,
+    ValidationTarget, ValidationTrigger, ValidationTriggers,
 };
 use dioform_validator::{ValidatorDiagnostic, ValidatorPathMap, ValidatorValidationExt};
 use validator::ValidationErrorsKind;
@@ -72,6 +72,15 @@ fn password_path() -> FieldPath<SignupForm, String> {
         |model: &SignupForm| &model.password,
         |model: &mut SignupForm| &mut model.password,
     )
+}
+
+impl EnumerableStaticFields for SignupForm {
+    fn static_field_entries() -> Vec<StaticFieldEntry<Self>> {
+        vec![
+            StaticFieldEntry::new("email", email_path()),
+            StaticFieldEntry::new("password", password_path()),
+        ]
+    }
 }
 
 #[derive(Clone)]
@@ -477,6 +486,23 @@ fn mapped_validator_paths_attach_to_typed_field_errors_sorted_by_path() {
             ),
         ],
     );
+}
+
+#[test]
+fn derived_validator_path_map_attaches_direct_field_diagnostics() {
+    let runs = Rc::new(Cell::new(0));
+    let mut form: FormCore<SignupForm, AppError> =
+        FormCore::new_with_error_type(SignupForm::new("", "short", Rc::clone(&runs)));
+    form.validator_validation()
+        .derived_path_map()
+        .register(app_error);
+
+    form.validate_form(ValidationTrigger::Manual);
+
+    assert_eq!(runs.get(), 1);
+    assert!(form.form_validation_errors().is_empty());
+    assert_eq!(form.field_validation_errors(email_path()).len(), 1);
+    assert_eq!(form.field_validation_errors(password_path()).len(), 1);
 }
 
 #[test]

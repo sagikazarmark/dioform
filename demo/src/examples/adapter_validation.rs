@@ -1,13 +1,13 @@
 use dioform::prelude::*;
-use dioform_garde::{GardePathMap, GardeValidationExt};
+use dioform_garde::GardeValidationExt;
 use dioxus::prelude::*;
 
 /// An existing `garde` schema can drive form validation without rewriting rules
 /// as native validators. The `dioform-garde` adapter registers a form
 /// validator that runs `garde`, then maps each diagnostic onto a typed field
-/// path through an explicit path map (rendered names are never treated as
-/// validation addresses). Here the shared error type is `String`, so
-/// `register_string_errors()` needs no mapper.
+/// path through a compile-time-derived explicit path map (rendered names are
+/// never treated as validation addresses). Here the shared error type is
+/// `String`, so `register_string_errors()` needs no mapper.
 #[derive(Clone, Debug, Default, PartialEq, Form, garde::Validate)]
 struct SignupForm {
     #[garde(email)]
@@ -23,14 +23,9 @@ pub fn AdapterValidationExample() -> Element {
             FormConfig::new(SignupForm::default()).validation_mode(ValidationMode::on_change()),
         );
         handle.write_advanced(|core| {
-            let fields = SignupForm::fields();
             core.garde_validation()
                 .triggers([ValidationTrigger::Change, ValidationTrigger::Submit])
-                .path_map(
-                    GardePathMap::new()
-                        .with_field("email", fields.email())
-                        .with_field("password", fields.password()),
-                )
+                .derived_path_map()
                 .register_string_errors();
         });
         handle

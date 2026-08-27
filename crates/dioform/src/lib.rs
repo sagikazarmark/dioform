@@ -51,12 +51,12 @@ use dioform_core::{
     ValidationStatusView, ValidatorId,
 };
 pub use dioform_core::{
-    CollectionItemIdentity, ErrorVisibilityPolicy, FieldGroup, FieldIdentity, FieldMetadata,
-    FieldPath, FieldUpdateOrigin, Form, FormSnapshot, FormValidationError, FormValidatorContext,
-    LastSubmitStatus, SubmissionSnapshot, SubmitAvailability, SubmitBlocker, SubmitError,
-    SubmitErrors, SubmitResult, SubmitStatus, ValidationErrorSnapshot, ValidationErrorView,
-    ValidationMode, ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
-    ValidatorContext, ValidatorSource,
+    CollectionItemIdentity, EnumerableStaticFields, ErrorVisibilityPolicy, FieldGroup,
+    FieldIdentity, FieldMetadata, FieldPath, FieldUpdateOrigin, Form, FormSnapshot,
+    FormValidationError, FormValidatorContext, LastSubmitStatus, StaticFieldEntry,
+    SubmissionSnapshot, SubmitAvailability, SubmitBlocker, SubmitError, SubmitErrors, SubmitResult,
+    SubmitStatus, ValidationErrorSnapshot, ValidationErrorView, ValidationMode, ValidationStatus,
+    ValidationTarget, ValidationTrigger, ValidationTriggers, ValidatorContext, ValidatorSource,
 };
 pub use dioform_derive::{FieldGroup, Form};
 

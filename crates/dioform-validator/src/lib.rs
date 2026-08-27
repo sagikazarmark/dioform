@@ -2,8 +2,8 @@
 
 pub use dioform_core::CollectionValidationTargetRuleError;
 use dioform_core::{
-    CollectionValidationTargetRule, FieldPath, FormCore, FormValidationError, FormValidatorContext,
-    ValidationTriggers, ValidatorId, ValidatorSource,
+    CollectionValidationTargetRule, EnumerableStaticFields, FieldPath, FormCore,
+    FormValidationError, FormValidatorContext, ValidationTriggers, ValidatorId, ValidatorSource,
 };
 pub use dioform_validation_adapter::{
     CollectionValidationTargetResolutionFailure, DiagnosticRouteProvenance,
@@ -210,6 +210,19 @@ impl<Model, Error> ValidatorValidationBuilder<'_, Model, Error> {
     /// the form without implicit field-name or Rust-field matching. The default map is empty.
     pub fn path_map(mut self, path_map: ValidatorPathMap<Model>) -> Self {
         self.path_map = path_map;
+        self
+    }
+
+    /// Uses the model's compile-time-derived direct fields as the exact external-path map.
+    ///
+    /// Keys are Rust field identifiers. Use [`Self::path_map`] with
+    /// `ValidatorPathMap::derived().with_field(...)` when the starting map needs explicit additions
+    /// or overrides.
+    pub fn derived_path_map(mut self) -> Self
+    where
+        Model: EnumerableStaticFields,
+    {
+        self.path_map = ValidatorPathMap::derived();
         self
     }
 

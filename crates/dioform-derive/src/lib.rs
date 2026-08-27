@@ -189,6 +189,10 @@ mod contract {
                 .static_fields
                 .iter()
                 .map(|field| field.expand_accessor(model_ident, crate_path));
+            let static_field_entries = self
+                .static_fields
+                .iter()
+                .map(|field| field.expand_static_field_entry(crate_path));
 
             quote! {
                 #visibility struct #fields_ident;
@@ -202,6 +206,13 @@ mod contract {
 
                     fn fields() -> Self::Fields {
                         #fields_ident
+                    }
+                }
+
+                impl #crate_path::EnumerableStaticFields for #model_ident {
+                    fn static_field_entries() -> ::std::vec::Vec<#crate_path::StaticFieldEntry<Self>> {
+                        let fields = <Self as #crate_path::Form>::fields();
+                        ::std::vec![#(#static_field_entries),*]
                     }
                 }
             }
@@ -340,6 +351,15 @@ mod contract {
                         |model: &mut #model_ident| &mut model.#field_ident,
                     )
                 }
+            }
+        }
+
+        fn expand_static_field_entry(&self, crate_path: &syn::Path) -> proc_macro2::TokenStream {
+            let field_ident = &self.field_ident;
+            let identity = &self.identity;
+
+            quote! {
+                #crate_path::StaticFieldEntry::new(#identity, fields.#field_ident())
             }
         }
 

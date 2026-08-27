@@ -139,7 +139,7 @@ pub fn AdapterValidation() -> Element {
             intro: rsx! {
                 "The model derives "
                 InlineCode { "garde::Validate" }
-                "; the adapter runs garde and attaches each diagnostic to a typed field path through an explicit path map. No native validators were written for these rules."
+                "; the adapter runs garde and attaches each diagnostic to a typed field path through the form's derived explicit path map. No native validators were written for these rules."
             },
             demo: rsx! { AdapterValidationExample {} },
             code: rsx! {
@@ -152,7 +152,7 @@ pub fn AdapterValidation() -> Element {
                 "docs/validation-adapters.md",
                 "https://github.com/sagikazarmark/dioform/blob/main/docs/validation-adapters.md",
             )),
-            "Both the garde and validator adapters, custom error mapping, path maps, and trigger choices are documented in the validation adapters guide."
+            "Both the garde and validator adapters, derived and extended path maps, custom error mapping, and trigger choices are documented in the validation adapters guide."
         }
     }
 }

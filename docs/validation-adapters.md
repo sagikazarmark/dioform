@@ -30,17 +30,17 @@ Simple forms whose shared validation error type is `String` can register the ada
 
 ```rust
 use dioform_core::{FormCore, ValidationTrigger};
-use dioform_garde::{GardePathMap, GardeValidationExt};
+use dioform_garde::GardeValidationExt;
 
 let mut form = FormCore::new(SignupForm::default());
 
 form.garde_validation()
     .triggers(ValidationTrigger::Submit)
-    .path_map(GardePathMap::new().with_field("email", email_path()))
+    .derived_path_map()
     .register_string_errors();
 ```
 
-`register_string_errors` stores `garde::Error::to_string()` as the validation error value. It still uses the path map for field or form attachment, but the `String` itself does not preserve the original external path or selected target.
+This assumes `SignupForm` derives Dioform's `Form`, which also implements `EnumerableStaticFields`. `register_string_errors` stores `garde::Error::to_string()` as the validation error value. It still uses the derived path map for field or form attachment, but the `String` itself does not preserve the original external path or selected target.
 
 Use this path for small forms where display text is enough. Use a custom enum or struct for richer applications.
 
@@ -50,7 +50,7 @@ Every validator in one form uses the same **Validation Error** type. Application
 
 ```rust
 use dioform_core::{FormCore, ValidationTarget, ValidationTrigger};
-use dioform_garde::{GardeDiagnostic, GardePathMap, GardeValidationExt};
+use dioform_garde::{GardeDiagnostic, GardeValidationExt};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ValidationError {
@@ -76,7 +76,7 @@ let mut form: FormCore<SignupForm, ValidationError> =
 form.garde_validation()
     .source("garde-model")
     .triggers(ValidationTrigger::Submit)
-    .path_map(GardePathMap::new().with_field("email", email_path()))
+    .derived_path_map()
     .register(map_garde);
 ```
 
@@ -84,14 +84,26 @@ The mapper receives a `GardeDiagnostic` containing the original `garde::Path`, t
 
 ## Explicit Path Mapping
 
-`garde` reports **External Diagnostic Paths**. Dioform renders and stores errors through typed **Field Paths**. The adapter never treats rendered **Field Names**, serde names, or Rust field names as implicit validation addresses.
+`garde` reports **External Diagnostic Paths**. Dioform renders and stores errors through typed **Field Paths**. The adapter never infers a target from rendered **Field Names**, serde names, or Rust field names at validation time.
 
-Map external paths explicitly:
+For a model with `#[derive(Form)]`, use its **Derived Path Map** as the default starting point:
 
 ```rust
-let path_map = GardePathMap::new()
-    .with_field("email", email_path())
-    .with_field("password", password_path());
+form.garde_validation()
+    .derived_path_map()
+    .register(map_garde);
+```
+
+The derive creates one **Static Field Entry** for every non-skipped direct field, then `derived_path_map()` registers those entries before validation. External keys are always Rust identifiers, even under `#[form(name = "...")]` or `#[form(rename_all = "camelCase")]`; rendered names never become adapter keys. The map is flat: a direct aggregate field receives one whole-field entry, but nested descendants and collection rows are not discovered recursively.
+
+`GardePathMap::derived()` returns the same ordinary map when external renames, extra paths, or overrides are needed. Compose it before registration with `with_field(...)`:
+
+```rust
+let path_map = GardePathMap::<SignupForm>::derived()
+    // Add an external-library rename without removing the unused `email` key.
+    .with_field("contact-email", SignupForm::fields().email())
+    // Re-registering an existing key explicitly replaces its derived target.
+    .with_field("password", replacement_password_path());
 
 form.garde_validation()
     .path_map(path_map)
@@ -167,7 +179,7 @@ Before a terminal registration method consumes the builder, `configuration_issue
 
 ## Trigger Choices
 
-The builder defaults to the `garde` source, `ValidationTriggers::all()`, and an empty `GardePathMap`. It therefore behaves like a native synchronous form validator and routes every non-empty diagnostic path to the form until mappings are added. Whole-model external validation can be more expensive than field-local validation, so choose triggers deliberately.
+The builder defaults to the `garde` source, `ValidationTriggers::all()`, and an empty `GardePathMap`. Call `derived_path_map()` explicitly for the normal derived starting map; without it, every non-empty diagnostic path routes to the form until mappings are added. Whole-model external validation can be more expensive than field-local validation, so choose triggers deliberately.
 
 Submit-only validation is often the right first choice:
 
@@ -249,14 +261,14 @@ Rerunning the `garde` adapter replaces only errors from that adapter source. A s
 
 ```rust
 use dioform_core::{FormCore, ValidationTrigger};
-use dioform_validator::{ValidatorPathMap, ValidatorValidationExt};
+use dioform_validator::ValidatorValidationExt;
 
 let mut form = FormCore::new(SignupForm::default());
 
 form.validator_validation()
     .source("validator")
     .triggers(ValidationTrigger::Submit)
-    .path_map(ValidatorPathMap::new().with_field("email", email_path()))
+    .derived_path_map()
     .register_string_errors();
 ```
 
@@ -319,7 +331,9 @@ form.validator_validation()
 
 ## Explicit Path Mapping
 
-Path matching is exact against the canonical flattened path and uses the same precedence and fallback classification described for `garde`: eligible static exact mapping, one live collection rule, collection resolution failure, then true miss. The adapter never treats rendered **Field Names**, serde names, `validator` field keys, or Rust field names as implicit validation addresses.
+Path matching is exact against the canonical flattened path and uses the same precedence and fallback classification described for `garde`: eligible static exact mapping, one live collection rule, collection resolution failure, then true miss. `derived_path_map()` is the normal starting point for `#[derive(Form)]` models and registers direct fields under their Rust identifiers before validation. It does not recursively register nested diagnostics or collection rows, and the adapter never infers targets from rendered **Field Names**, serde names, or unregistered runtime paths.
+
+Use `ValidatorPathMap::derived().with_field(...)` when the derived direct-field map needs an external rename, an extra nested path, or an explicit override. As with `GardePathMap`, a later registration for an existing key wins.
 
 ```rust
 use dioform_validator::{
@@ -336,7 +350,7 @@ let quantity_rule = ValidatorCollectionTargetRule::descendant(
 
 form.validator_validation()
     .path_map(
-        ValidatorPathMap::new()
+        ValidatorPathMap::derived()
             .with_field("email", email_path())
             .with_field("address.street", street_path()),
     )
@@ -396,7 +410,7 @@ The provider runs for each validation run. String-error forms can use `register_
 
 ## Trigger Choices And Coexistence
 
-The builder defaults to the `validator` source, `ValidationTriggers::all()`, and an empty `ValidatorPathMap`. It therefore routes every diagnostic to the form until mappings are added. Whole-model validation can be more expensive than field-local validation, so submit-only validation is often the right first choice. Adapter errors coexist with native **Field Validation**, native **Form Validation**, submit errors, and the `garde` adapter as long as they share the same **Validation Error** type. Rerunning the adapter replaces only errors from its own source; a successful run clears its own prior errors without touching other sources.
+The builder defaults to the `validator` source, `ValidationTriggers::all()`, and an empty `ValidatorPathMap`. Call `derived_path_map()` explicitly for the normal derived starting map; without it, every diagnostic routes to the form until mappings are added. Whole-model validation can be more expensive than field-local validation, so submit-only validation is often the right first choice. Adapter errors coexist with native **Field Validation**, native **Form Validation**, submit errors, and the `garde` adapter as long as they share the same **Validation Error** type. Rerunning the adapter replaces only errors from its own source; a successful run clears its own prior errors without touching other sources.
 
 # Live Collection Rule Lifecycle
 

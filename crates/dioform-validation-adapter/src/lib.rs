@@ -15,7 +15,7 @@
 
 use std::{collections::BTreeMap, fmt, marker::PhantomData};
 
-use dioform_core::{FieldPath, ValidationTarget};
+use dioform_core::{EnumerableStaticFields, FieldPath, ValidationTarget};
 
 /// The classified result of looking up one exact **External Diagnostic Path**.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,6 +219,24 @@ impl<Model> PathMap<Model> {
             targets: BTreeMap::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Creates an exact path map from the model's compile-time-derived direct field entries.
+    ///
+    /// External keys are Rust field identifiers, not rendered field names. The returned map is an
+    /// ordinary starting map: later [`Self::with_field`] calls can extend it or replace an existing
+    /// key explicitly.
+    pub fn derived() -> Self
+    where
+        Model: EnumerableStaticFields,
+    {
+        let mut path_map = Self::new();
+        for entry in Model::static_field_entries() {
+            path_map
+                .targets
+                .insert(entry.rust_identifier().to_owned(), entry.target());
+        }
+        path_map
     }
 
     /// Returns the number of registered external paths.

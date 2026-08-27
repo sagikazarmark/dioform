@@ -28,6 +28,66 @@ pub trait Form {
     fn fields() -> Self::Fields;
 }
 
+/// One compile-time-derived direct field available for explicit validation-adapter mapping.
+///
+/// The Rust identifier is independent from the rendered **Field Name**. The model parameter keeps
+/// manually constructed entries tied to the same **Form Model** as their typed field path.
+pub struct StaticFieldEntry<Model> {
+    rust_identifier: &'static str,
+    target: ValidationTarget,
+    _marker: PhantomData<fn() -> Model>,
+}
+
+impl<Model> Clone for StaticFieldEntry<Model> {
+    fn clone(&self) -> Self {
+        Self {
+            rust_identifier: self.rust_identifier,
+            target: self.target.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<Model> fmt::Debug for StaticFieldEntry<Model> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StaticFieldEntry")
+            .field("rust_identifier", &self.rust_identifier)
+            .field("target", &self.target)
+            .finish()
+    }
+}
+
+impl<Model> StaticFieldEntry<Model> {
+    /// Creates an entry from one Rust field identifier and its typed direct field path.
+    pub fn new<Value>(rust_identifier: &'static str, field: FieldPath<Model, Value>) -> Self {
+        Self {
+            rust_identifier,
+            target: ValidationTarget::field(field),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the Rust identifier used as the derived external diagnostic path.
+    pub const fn rust_identifier(&self) -> &'static str {
+        self.rust_identifier
+    }
+
+    /// Returns the erased validation target built from the typed field path.
+    pub fn target(&self) -> ValidationTarget {
+        self.target.clone()
+    }
+}
+
+/// A form model whose non-skipped direct fields can seed an explicit validation path map.
+///
+/// This trait is separate from [`Form`] so manual `Form` implementations need not enumerate their
+/// fields. `#[derive(Form)]` implements both traits from the same generated field accessors.
+pub trait EnumerableStaticFields: Sized {
+    /// Returns one entry for every non-skipped direct field in declaration order.
+    fn static_field_entries() -> Vec<StaticFieldEntry<Self>>;
+}
+
 /// A reusable typed group of fields that can be mounted into a form model.
 pub trait FieldGroup: Sized {
     /// The generated field group map for a host form model.
