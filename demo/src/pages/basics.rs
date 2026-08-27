@@ -7,6 +7,7 @@ use crate::components::{
 };
 use crate::examples::dioxus_field_registry::DioxusFieldRegistryExample;
 use crate::examples::field_bindings::FieldBindingsExample;
+use crate::examples::happy_path::HappyPathExample;
 use crate::examples::minimal::MinimalExample;
 use crate::examples::parsed_inputs::ParsedInputsExample;
 use dioxus_code::{Code, code};
@@ -98,6 +99,34 @@ pub fn Minimal() -> Element {
                 Code { src: code!("src/examples/minimal.rs"), theme: snippet_theme() }
             },
             layout: ExampleLayout::Columns,
+        }
+    }
+}
+
+#[component]
+pub fn HappyPath() -> Element {
+    rsx! {
+        PageHeader {
+            eyebrow: "Basics",
+            title: "The complete happy path",
+            intro: "A practical form using Dioform's form-owned Form Draft and Dioxus-Managed Submission together with dioxus-field registry controls, garde validation, a reusable Field Group, and field-scoped Form Selectors.",
+        }
+        ExampleSection {
+            title: "One form, end to end",
+            intro: rsx! {
+                InlineCode { "TextField" }
+                " and "
+                InlineCode { "TextareaField" }
+                " cover common controls; compound registry parts handle choices and switches. "
+                InlineCode { "derived_path_map" }
+                " routes garde diagnostics to typed direct Field Paths, while "
+                InlineCode { "FieldGroup" }
+                " mounts the nested preferences paths."
+            },
+            demo: rsx! { HappyPathExample {} },
+            code: rsx! {
+                Code { src: code!("src/examples/happy_path.rs"), theme: snippet_theme() }
+            },
         }
     }
 }

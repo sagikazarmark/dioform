@@ -14,6 +14,7 @@ pub mod error_summary;
 pub mod field_bindings;
 pub mod field_groups;
 pub mod file_fields;
+pub mod happy_path;
 pub mod minimal;
 pub mod nested_paths;
 pub mod observers;

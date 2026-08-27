@@ -17,6 +17,8 @@ pub enum Route {
     // Basics
     #[route("/minimal")]
     Minimal {},
+    #[route("/happy-path")]
+    HappyPath {},
     #[route("/fields")]
     FieldBindings {},
     #[route("/dioxus-field-registry")]
@@ -105,6 +107,7 @@ fn DemoLayout() -> Element {
                     SidebarNavSection { label: "Basics",
                         SidebarNavLink { route: Route::Home {}, label: "Overview" }
                         SidebarNavLink { route: Route::Minimal {}, label: "Minimal form" }
+                        SidebarNavLink { route: Route::HappyPath {}, label: "Complete happy path" }
                         SidebarNavLink { route: Route::FieldBindings {}, label: "Field bindings" }
                         SidebarNavLink { route: Route::DioxusFieldRegistry {}, label: "dioxus-field registry" }
                         SidebarNavLink { route: Route::ParsedInputs {}, label: "Parsed inputs" }
