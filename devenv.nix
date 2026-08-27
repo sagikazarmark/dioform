@@ -21,6 +21,7 @@
     dioxus-cli
     wasm-pack
     wasm-bindgen-cli_0_2_126
+    binaryen
   ];
 
   languages = {
