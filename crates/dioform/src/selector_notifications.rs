@@ -341,8 +341,9 @@ fn extend_field_value_ancestry(
 
 /// Wakes visible-error selectors for registered fields that contain the metadata change.
 ///
-/// Error Visibility reaches outward from a touched or blurred field, but the metadata selector
-/// itself remains exact. Filtering existing registrations preserves lazy selector registration.
+/// Error Visibility reaches outward from a committed, touched, or blurred field, but the metadata
+/// selector itself remains exact. Filtering existing registrations preserves lazy selector
+/// registration.
 fn extend_visible_validation_ancestry(
     notifications: &mut Vec<SelectorNotification>,
     tracked_fields: impl IntoIterator<Item = FieldIdentity>,

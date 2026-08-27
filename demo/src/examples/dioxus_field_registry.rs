@@ -39,12 +39,8 @@ impl Default for RegistryProfile {
 #[component]
 pub fn DioxusFieldRegistryExample() -> Element {
     let form = use_form_handle(|| {
-        let handle = FormHandle::<RegistryProfile>::from_config(
-            FormConfig::new(RegistryProfile::default())
-                // Keep Commit-only validation visible before a control reports Focus Exit (#96).
-                .error_visibility_policy(ErrorVisibilityPolicy::TouchedOrSubmit),
-        )
-        .with_id_namespace("registry-profile");
+        let handle = FormHandle::<RegistryProfile>::new(RegistryProfile::default())
+            .with_id_namespace("registry-profile");
         handle.write_advanced(|core| {
             let fields = RegistryProfile::fields();
             core.register_sync_field_validator(
@@ -161,7 +157,7 @@ pub fn DioxusFieldRegistryExample() -> Element {
                         "No registry-specific event handlers or value props are wired here. Field Context carries the binding and presentation metadata into both the composition sugar and explicit parts."
                     }
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
-                        "Touched-or-submit visibility lets Commit-triggered validation show errors before Focus Exit. Focus Exit independently records exact Blurred Field state."
+                        "Default visibility presents Commit-triggered validation before Focus Exit. Commit and Focus Exit retain independent committed and Blurred Field state."
                     }
                 }
             },

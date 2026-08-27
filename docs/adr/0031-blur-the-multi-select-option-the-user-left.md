@@ -29,10 +29,13 @@ it was not the defect.
 
 ## The defect is metadata, and it was visible in the UI
 
-`ErrorVisibilityPolicy::BlurOrSubmit` is the default and reads the **Field**'s own blurred flag.
+`ErrorVisibilityPolicy::BlurOrSubmit` was the default and read the **Field**'s own blurred flag.
 Marking every selected value blurred therefore made every selected value's stored error visible, and
 `aria-invalid` true, on controls the user had never focused. Selecting three topics, one of which
 fails an `item_validator`, and leaving a *different* checkbox announced an error on the invalid one.
+The current `CommitOrBlurOrSubmit` default added by
+[ADR-0051](0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md) preserves that
+exact blurred meaning while separately considering exact committed metadata.
 
 That is the harm [ADR-0028](0028-match-listener-reach-to-what-each-event-asserts.md) measured when
 it refused to aggregate the blurred flag upward — "a child's stored error **visible on an input the

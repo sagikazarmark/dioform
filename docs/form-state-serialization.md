@@ -11,11 +11,15 @@ specific selected value's control was left, rather than that the multi-select gr
 wire shape is unchanged, but older snapshots are rejected because their per-item metadata has the
 older meaning.
 
+Snapshot version 6 adds exact committed interaction metadata and the commit-aware default **Error
+Visibility** policy. A restored committed flag can reveal the same stored field error it revealed when
+the snapshot was captured without implying touched or **Blurred Field** state.
+
 Included in the current core snapshot:
 
 - **Form Draft** baseline and current values.
 - Field versions used for stale submit-error protection.
-- Field metadata such as touched and blurred state.
+- Field metadata such as touched, blurred, and committed state.
 - **Validation Mode** and **Error Visibility** policy.
 - Stored non-submit validator result state for matching validators after the application registers its normal validators.
 - Runtime **Collection Item Identity** state for tracked collection fields, including baseline and current item identity sequences plus the next identity counter.

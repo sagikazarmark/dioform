@@ -3,7 +3,9 @@
 **Error Visibility** for an error attached to a **Field** `F` will consider whether `F`, or any
 **Field** contained by `F`, has been blurred — or touched, under the touched-scoped policy. The
 widening is directional: a blur above `F` never makes `F`'s error visible. Blurred and touched
-**metadata** stay exact, and the serialized snapshot is unchanged.
+**metadata** stay exact, and the serialized snapshot is unchanged by this decision. The committed
+arm introduced later by [ADR-0051](0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)
+uses the same directional reach while keeping committed metadata exact.
 
 ## The defect is a contradiction between two rules about one event
 

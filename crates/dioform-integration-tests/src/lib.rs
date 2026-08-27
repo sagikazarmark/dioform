@@ -286,7 +286,6 @@ mod tests {
     fn checkbox_binding_drives_field_convention_metadata_and_errors() {
         let form = FormHandle::new_with_error_type(CheckboxForm { accepted: false })
             .with_id_namespace("terms");
-        form.set_error_visibility_policy(ErrorVisibilityPolicy::Always);
         let validation_runs = Rc::new(Cell::new(0));
         let validator_runs = Rc::clone(&validation_runs);
         form.field(CheckboxForm::fields().accepted())
@@ -321,6 +320,7 @@ mod tests {
         assert_eq!(meta.name().as_deref(), Some("accepted"));
         assert!(!meta.touched());
         assert!(!meta.dirty());
+        assert!(!form.is_field_committed(CheckboxForm::fields().accepted()));
         assert_eq!(
             dioxus_ssr::render(&dom),
             "<div><input type=\"checkbox\" aria-invalid=\"false\" id=\"terms-accepted-input\" name=\"accepted\"/><div id=\"accepted-error\" aria-live=\"polite\"></div></div>"
@@ -330,6 +330,7 @@ mod tests {
         render_reactive_updates(&mut dom);
         assert!(!form.is_field_touched(CheckboxForm::fields().accepted()));
         assert!(!form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(form.is_field_committed(CheckboxForm::fields().accepted()));
         assert!(!meta.touched());
         assert_eq!(probe.blur_listener_runs.get(), 0);
         assert_eq!(probe.form_blur_listener_runs.get(), 0);
@@ -380,12 +381,14 @@ mod tests {
         render_reactive_updates(&mut dom);
         assert!(!form.is_field_touched(CheckboxForm::fields().accepted()));
         assert!(!form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(!form.is_field_committed(CheckboxForm::fields().accepted()));
         assert!(!meta.touched());
 
         binding.focus_exit();
         render_reactive_updates(&mut dom);
         assert!(form.is_field_touched(CheckboxForm::fields().accepted()));
         assert!(form.is_field_blurred(CheckboxForm::fields().accepted()));
+        assert!(!form.is_field_committed(CheckboxForm::fields().accepted()));
         assert!(meta.touched());
         assert_eq!(probe.blur_listener_runs.get(), 2);
         assert_eq!(probe.form_blur_listener_runs.get(), 2);

@@ -163,7 +163,7 @@ A form-level policy that determines which **Validation Triggers** run automatica
 _Avoid_: Validator trigger set, error visibility
 
 **Error Visibility**:
-The presentation decision that determines when stored **Validation Errors** should be shown to a user, including which **Submit Intent** made submit-scoped errors relevant in intentful forms.
+The presentation decision that determines when stored **Validation Errors** should be shown to a user, including committed or blurred interaction under the default policy and which **Submit Intent** made submit-scoped errors relevant in intentful forms.
 _Avoid_: Validation trigger, validation state
 
 **Validation Source**:
@@ -257,6 +257,10 @@ _Avoid_: Dirty field, blurred field
 **Blurred Field**:
 A **Field** that has lost focus at least once during form interaction.
 _Avoid_: Touched field
+
+**Committed Field**:
+A **Field** whose widget has reported the end of at least one interaction unit through **Commit**, independently of whether focus left the **Field**. Under the default **Error Visibility** policy, committing a **Field** makes stored errors on it and the **Fields** that contain it visible without making any of them a **Blurred Field** ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
+_Avoid_: Blurred field, validation trigger, submitted field
 
 **Programmatic Update**:
 A form value change initiated by application code rather than direct user interaction with the field.
@@ -383,7 +387,7 @@ Whether a **Value Binding** write came from user interaction or from application
 _Avoid_: Event source, DOM event type
 
 **Commit**:
-The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it feeds the Blur **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all.
+The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it marks the exact **Field** committed for **Error Visibility** and feeds the Blur **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
 _Avoid_: Blur, change event, focusout relay
 
 **Focus Exit**:
@@ -1014,7 +1018,7 @@ Domain expert: No. It knows one field at a time — a **Value Binding**, **Field
 
 Developer: Is a **Commit** just a renamed blur?
 
-Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform maps a **Commit** onto the Blur **Validation Trigger**, but the widget decides when it happens, not the DOM.
+Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform records a **Committed Field** for default **Error Visibility** and maps the event onto the Blur **Validation Trigger**, but it does not make the **Field** blurred ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
 
 Developer: Does **Focus Exit** run Blur validation too?
 

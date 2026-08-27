@@ -932,7 +932,7 @@ impl Extend<ValidationTrigger> for ValidationTriggers {
 /// Public policy for automatic validation runs caused by semantic form events.
 ///
 /// The policy controls when validation executes. It does not control error visibility;
-/// the default visibility policy still waits for blur or submit attempts.
+/// the default visibility policy waits for commit, blur, or submit attempts.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValidationMode {
@@ -1059,9 +1059,12 @@ impl Default for ValidationMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorVisibilityPolicy {
+    /// Show field errors after that field or one it contains is committed or blurred, and all errors
+    /// after a submit attempt.
+    #[default]
+    CommitOrBlurOrSubmit,
     /// Show field errors after that field or one it contains is blurred, and all errors after a
     /// submit attempt.
-    #[default]
     BlurOrSubmit,
     /// Show field errors after that field or one it contains is touched, and all errors after a
     /// submit attempt.
@@ -3017,6 +3020,8 @@ type FormObserver = dyn FnMut(&FormObserverEvent) + 'static;
 pub struct FieldMetadata {
     touched: bool,
     blurred: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    committed: bool,
 }
 
 /// Adapter cleanup produced when a generic field replacement reaches tracked collections.
@@ -3055,6 +3060,11 @@ impl FieldMetadata {
     /// Returns whether this field has lost focus at least once.
     pub const fn is_blurred(self) -> bool {
         self.blurred
+    }
+
+    /// Returns whether an interaction with this field has been committed at least once.
+    pub const fn is_committed(self) -> bool {
+        self.committed
     }
 }
 
@@ -3193,7 +3203,7 @@ impl CollectionState {
 }
 
 /// Current compatibility version for serialized form-state snapshots.
-pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 5;
+pub const FORM_STATE_SERIALIZATION_VERSION: u32 = 6;
 
 /// Current compatibility version for serialized collection identity state.
 pub const COLLECTION_IDENTITY_SERIALIZATION_VERSION: u32 = 2;
@@ -3901,8 +3911,9 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
     /// Restores one field to its current baseline value and clears related field-scoped state.
     ///
     /// The field value is reset to the current **Baseline Value** (so a reinitialized baseline is
-    /// honored, not the original configuration value), the field's touched and blurred metadata is
-    /// cleared (dirty is derived and becomes clean once the value matches the baseline). Validator
+    /// honored, not the original configuration value), the field's committed, touched, and blurred
+    /// metadata is cleared (dirty is derived and becomes clean once the value matches the baseline).
+    /// Validator
     /// results and pending validation are cleared for the field and every field in **Field
     /// Ancestry** with it because their values were also replaced. Other fields' metadata, unrelated
     /// synchronous field-validator results, and submit state for unrelated fields are left
@@ -5209,6 +5220,11 @@ impl<Model, Error> FormCore<Model, Error> {
         self.field_metadata(path).is_blurred()
     }
 
+    /// Returns whether an interaction with one field has been committed at least once.
+    pub fn is_field_committed<Value>(&self, path: FieldPath<Model, Value>) -> bool {
+        self.field_metadata(path).is_committed()
+    }
+
     /// Returns whether a field identity has received user interaction.
     pub fn is_field_identity_touched(&self, field: &FieldIdentity) -> bool {
         self.field_metadata_by_identity(field).is_touched()
@@ -5217,6 +5233,11 @@ impl<Model, Error> FormCore<Model, Error> {
     /// Returns whether a field identity has lost focus at least once.
     pub fn is_field_identity_blurred(&self, field: &FieldIdentity) -> bool {
         self.field_metadata_by_identity(field).is_blurred()
+    }
+
+    /// Returns whether an interaction with a field identity has been committed at least once.
+    pub fn is_field_identity_committed(&self, field: &FieldIdentity) -> bool {
+        self.field_metadata_by_identity(field).is_committed()
     }
 
     /// Registers a synchronous validator for one direct field and every trigger.
@@ -7415,6 +7436,21 @@ impl<Model, Error> FormCore<Model, Error> {
         self.mark_field_metadata(field, false);
     }
 
+    /// Marks a field as having completed one committed interaction.
+    pub fn mark_field_committed<Value>(&mut self, path: FieldPath<Model, Value>) {
+        self.mark_field_identity_committed(&path.identity());
+    }
+
+    /// Marks a field identity as having completed one committed interaction.
+    pub fn mark_field_identity_committed(&mut self, field: &FieldIdentity) {
+        if self.field_store.metadata(field).committed {
+            return;
+        }
+
+        self.field_metadata_mut(field).committed = true;
+        self.increment_submit_validation_generation();
+    }
+
     /// Records a user change for field-like state that lives outside the form draft.
     ///
     /// This preserves the same field-scoped lifecycle invariants as ordinary field replacement
@@ -9239,33 +9275,30 @@ impl<Model, Error> FormCore<Model, Error> {
     }
 
     fn should_show_validation_errors(&self, target: &ValidationTarget) -> bool {
+        if self.error_visibility_policy == ErrorVisibilityPolicy::Always
+            || self.submission.attempt_count() > 0
+        {
+            return true;
+        }
+
+        let Some(field) = target.as_field() else {
+            return false;
+        };
+
         match self.error_visibility_policy {
             ErrorVisibilityPolicy::Always => true,
-            ErrorVisibilityPolicy::SubmitOnly => self.submission.attempt_count() > 0,
-            ErrorVisibilityPolicy::BlurOrSubmit => {
-                if self.submission.attempt_count() > 0 {
-                    return true;
-                }
-
-                match target {
-                    ValidationTarget::Form => false,
-                    ValidationTarget::Field(field) => self
-                        .field_store
-                        .subtree_metadata_any(field, FieldMetadata::is_blurred),
-                }
+            ErrorVisibilityPolicy::SubmitOnly => false,
+            ErrorVisibilityPolicy::CommitOrBlurOrSubmit => {
+                self.field_store.subtree_metadata_any(field, |metadata| {
+                    metadata.is_committed() || metadata.is_blurred()
+                })
             }
-            ErrorVisibilityPolicy::TouchedOrSubmit => {
-                if self.submission.attempt_count() > 0 {
-                    return true;
-                }
-
-                match target {
-                    ValidationTarget::Form => false,
-                    ValidationTarget::Field(field) => self
-                        .field_store
-                        .subtree_metadata_any(field, FieldMetadata::is_touched),
-                }
-            }
+            ErrorVisibilityPolicy::BlurOrSubmit => self
+                .field_store
+                .subtree_metadata_any(field, FieldMetadata::is_blurred),
+            ErrorVisibilityPolicy::TouchedOrSubmit => self
+                .field_store
+                .subtree_metadata_any(field, FieldMetadata::is_touched),
         }
     }
 

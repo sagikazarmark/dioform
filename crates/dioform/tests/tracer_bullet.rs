@@ -5179,7 +5179,7 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
         .expect("restored form state snapshot should serialize");
     let reserialized_value: serde_json::Value =
         serde_json::from_str(&reserialized).expect("reserialized snapshot should be JSON");
-    assert_eq!(serialized_value["version"], serde_json::json!(5));
+    assert_eq!(serialized_value["version"], serde_json::json!(6));
     assert_eq!(reserialized_value["version"], serialized_value["version"]);
 
     let serialized_metadata = serialized

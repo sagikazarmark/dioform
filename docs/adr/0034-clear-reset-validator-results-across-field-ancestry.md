@@ -70,8 +70,8 @@ siblings remain untouched. Resetting a **Collection Field** clears kept rows' it
 place while existing collection cleanup removes dropped rows' state.
 
 The adapter's existing validation-changed transition wakes mounted validation-error readers after the
-core clear. Descendant touched and blurred metadata survives a container reset: metadata is validator
-input, and mutating it without recomputing verdicts was separately declined in issue #63.
+core clear. Descendant touched, blurred, and committed metadata survives a container reset: metadata
+is validator input, and mutating it without recomputing verdicts was separately declined in issue #63.
 
 Sync form validators that emit field-targeted errors are outside this decision. Their source state
 cannot be partially cleared without falsely turning an un-run validator valid.

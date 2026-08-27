@@ -6122,10 +6122,10 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     ///
     /// The single-field analog of [`Self::reset`]: it restores this field to the current
     /// **Baseline Value** (honoring any [`Self::reinitialize`], not the original config value),
-    /// clears the field's touched, blurred, and dirty metadata, and clears any mounted **Parse
-    /// Error** / **Raw Input State** for the field. Field-scoped **Validation Errors** and pending
-    /// validation are cleared for the field and every field in **Field Ancestry** with it because
-    /// their values were also replaced. Other fields' metadata, unrelated synchronous
+    /// clears the field's committed, touched, blurred, and dirty metadata, and clears any mounted
+    /// **Parse Error** / **Raw Input State** for the field. Field-scoped **Validation Errors** and
+    /// pending validation are cleared for the field and every field in **Field Ancestry** with it
+    /// because their values were also replaced. Other fields' metadata, unrelated synchronous
     /// field-validator results, and the submit lifecycle are left untouched. When reset enters its
     /// state-clearing branch, model-dependent async field validation and pending async form
     /// validation are invalidated. In-flight async validation for the field is superseded by the
@@ -8988,6 +8988,11 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.field_metadata(path).is_blurred()
     }
 
+    /// Returns whether an interaction with one typed field has been committed at least once.
+    pub fn is_field_committed<Value>(&self, path: FieldPath<Model, Value>) -> bool {
+        self.field_metadata(path).is_committed()
+    }
+
     /// Returns every stored validation error across the whole form in one call.
     ///
     /// This is the whole-form aggregate (the source-aware analog of TanStack Form's
@@ -10390,11 +10395,14 @@ impl<Model, Error> FormHandle<Model, Error> {
 
     #[cfg(feature = "dioxus-field")]
     fn commit_field<Value>(&self, path: FieldPath<Model, Value>) {
-        let validates_on_blur = {
-            let core = self.core.borrow();
+        let field = path.identity();
+        let validates_on_blur = self.write_core(|core| {
+            core.mark_field_committed(path.clone());
             core.validation_mode()
                 .should_validate_on_blur(core.submit_attempt_count())
-        };
+        });
+        self.notify_selectors(SelectorTransition::FieldMetadataChanged(field));
+        self.adapter.wake_validation_waiters();
         if validates_on_blur {
             self.validate_field(path, ValidationTrigger::Blur);
         }

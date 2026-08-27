@@ -351,6 +351,7 @@ mod tests {
             *store.metadata_mut(identity) = FieldMetadata {
                 touched: value & 1 != 0,
                 blurred: value & 2 != 0,
+                committed: value & 4 != 0,
             };
         }
 
@@ -365,7 +366,11 @@ mod tests {
         ]);
 
         for container in containers {
-            for predicate in [FieldMetadata::is_blurred, FieldMetadata::is_touched] {
+            for predicate in [
+                FieldMetadata::is_blurred,
+                FieldMetadata::is_touched,
+                FieldMetadata::is_committed,
+            ] {
                 let expected = store.metadata.iter().any(|(field, metadata)| {
                     FieldAncestry::contains(&container, field) && predicate(*metadata)
                 });

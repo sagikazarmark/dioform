@@ -1712,6 +1712,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
         },
     );
     source.mark_collection_item_field_blurred(lines.clone(), inserted, description.clone());
+    source.mark_field_identity_committed(&inserted_description);
     source.set_user_collection_item_field(
         lines.clone(),
         inserted,
@@ -1723,6 +1724,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
     assert_eq!(source.snapshot().lines[0].description, "Build");
     assert_eq!(source.snapshot().lines[1].description, "");
     assert!(source.is_field_identity_blurred(&inserted_description));
+    assert!(source.is_field_identity_committed(&inserted_description));
     assert_eq!(
         source.field_validation_errors_by_identity(&inserted_description)[0].error(),
         &"required",
@@ -1733,7 +1735,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
     );
 
     let snapshot = source.state_snapshot();
-    assert_eq!(snapshot.version(), 5);
+    assert_eq!(snapshot.version(), 6);
     let identity_state = snapshot.collection_identity_state();
     let lines_state = identity_state
         .collections()
@@ -1775,6 +1777,7 @@ fn form_state_snapshot_round_trips_collection_item_identities_and_item_scoped_st
     assert_eq!(restored.snapshot().lines[0].description, "Build");
     assert_eq!(restored.snapshot().lines[1].description, "");
     assert!(restored.is_field_identity_blurred(&inserted_description));
+    assert!(restored.is_field_identity_committed(&inserted_description));
     assert_eq!(
         restored.field_validation_errors_by_identity(&inserted_description)[0].error(),
         &"required",
@@ -7190,25 +7193,32 @@ fn configured_value_change_runs_changed_field_and_form_validators() {
 }
 
 #[test]
-fn default_visible_errors_wait_for_blur_or_submit_attempt() {
-    let mut blur_form: FormCore<ContactForm, &'static str> =
+fn default_visible_errors_wait_for_commit_or_submit_attempt() {
+    let mut commit_form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
             name: String::new(),
         });
-    blur_form.register_sync_field_validator(name_path(), "required", |_value, _context| {
+    assert_eq!(
+        commit_form.error_visibility_policy(),
+        ErrorVisibilityPolicy::CommitOrBlurOrSubmit
+    );
+    commit_form.register_sync_field_validator(name_path(), "required", |_value, _context| {
         vec!["required"]
     });
-    blur_form.validate_field(name_path(), ValidationTrigger::Manual);
+    commit_form.validate_field(name_path(), ValidationTrigger::Manual);
 
-    assert_eq!(blur_form.validation_errors().len(), 1);
-    assert!(blur_form.visible_validation_errors().is_empty());
+    assert_eq!(commit_form.validation_errors().len(), 1);
+    assert!(commit_form.visible_validation_errors().is_empty());
 
-    blur_form.mark_field_blurred(name_path());
+    commit_form.mark_field_committed(name_path());
 
     assert_eq!(
-        blur_form.visible_validation_errors()[0].error(),
+        commit_form.visible_validation_errors()[0].error(),
         &"required"
     );
+    assert!(commit_form.is_field_committed(name_path()));
+    assert!(!commit_form.is_field_touched(name_path()));
+    assert!(!commit_form.is_field_blurred(name_path()));
 
     let mut submit_form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
@@ -7244,6 +7254,26 @@ fn blurring_a_contained_field_reveals_its_container_error_without_blurring_the_c
         &"customer_invalid"
     );
     assert!(!form.is_field_blurred(nested_customer_path()));
+}
+
+#[test]
+fn committing_a_contained_field_reveals_its_container_error_without_committing_the_container() {
+    let mut form: FormCore<NestedPage, &'static str> =
+        FormCore::new_with_error_type(NestedPage::default());
+    form.register_sync_field_validator(
+        nested_customer_path(),
+        "customer_invalid",
+        |_customer, _context| vec!["customer_invalid"],
+    );
+    form.validate_field(nested_customer_path(), ValidationTrigger::Manual);
+
+    form.mark_field_committed(nested_customer_name_path());
+
+    assert_eq!(
+        form.visible_field_validation_errors(nested_customer_path())[0].error(),
+        &"customer_invalid"
+    );
+    assert!(!form.is_field_committed(nested_customer_path()));
 }
 
 #[test]
@@ -7449,6 +7479,7 @@ fn blurring_a_collection_item_field_reveals_the_collection_error_but_not_sibling
 #[test]
 fn field_interaction_does_not_reveal_form_errors_before_submit() {
     for policy in [
+        ErrorVisibilityPolicy::CommitOrBlurOrSubmit,
         ErrorVisibilityPolicy::BlurOrSubmit,
         ErrorVisibilityPolicy::TouchedOrSubmit,
     ] {
@@ -7465,6 +7496,9 @@ fn field_interaction_does_not_reveal_form_errors_before_submit() {
         form.validate_all(ValidationTrigger::Manual);
 
         match policy {
+            ErrorVisibilityPolicy::CommitOrBlurOrSubmit => {
+                form.mark_field_committed(name_path());
+            }
             ErrorVisibilityPolicy::BlurOrSubmit => {
                 form.mark_field_blurred_without_validation(name_path());
             }
@@ -7478,6 +7512,30 @@ fn field_interaction_does_not_reveal_form_errors_before_submit() {
 
 #[test]
 fn error_visibility_policy_controls_visible_error_selectors() {
+    let mut blur_only_form: FormCore<ContactForm, &'static str> =
+        FormCore::new_with_error_type(ContactForm {
+            name: String::new(),
+        })
+        .with_error_visibility_policy(ErrorVisibilityPolicy::BlurOrSubmit);
+    blur_only_form.register_sync_field_validator(name_path(), "required", |_value, _context| {
+        vec!["required"]
+    });
+    blur_only_form.validate_field(name_path(), ValidationTrigger::Manual);
+    blur_only_form.mark_field_committed(name_path());
+
+    assert!(
+        blur_only_form
+            .visible_field_validation_errors(name_path())
+            .is_empty()
+    );
+
+    blur_only_form.mark_field_blurred_without_validation(name_path());
+
+    assert_eq!(
+        blur_only_form.visible_field_validation_errors(name_path())[0].error(),
+        &"required"
+    );
+
     let mut touched_form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
             name: String::new(),
@@ -10330,6 +10388,7 @@ fn reset_restores_baseline_values_and_clears_interaction_metadata() {
 
     form.set_user_field(name_path(), "Ada".to_owned());
     form.mark_field_blurred(name_path());
+    form.mark_field_committed(name_path());
 
     form.reset();
 
@@ -10337,6 +10396,7 @@ fn reset_restores_baseline_values_and_clears_interaction_metadata() {
     assert!(!form.is_dirty());
     assert!(!form.is_field_touched(name_path()));
     assert!(!form.is_field_blurred(name_path()));
+    assert!(!form.is_field_committed(name_path()));
 }
 
 #[test]
@@ -10367,12 +10427,14 @@ fn reset_field_clears_interaction_state_when_the_value_matches_the_baseline() {
     form.observe(move |event| observed_events.borrow_mut().push(event.clone()));
     form.set_user_field(name_path(), "Grace".to_owned());
     form.mark_field_blurred(name_path());
+    form.mark_field_committed(name_path());
     observed.borrow_mut().clear();
 
     form.reset_field(name_path());
 
     assert!(!form.is_field_touched(name_path()));
     assert!(!form.is_field_blurred(name_path()));
+    assert!(!form.is_field_committed(name_path()));
     assert!(observed.borrow().iter().any(|event| matches!(
         event,
         FormObserverEvent::FieldReset { field, .. }
@@ -10656,6 +10718,7 @@ fn reinitialize_explicitly_replaces_baseline_and_current_values() {
 
     form.set_user_field(name_path(), "Ada".to_owned());
     form.mark_field_blurred(name_path());
+    form.mark_field_committed(name_path());
 
     form.reinitialize(ContactForm {
         name: "Lin".to_owned(),
@@ -10666,6 +10729,7 @@ fn reinitialize_explicitly_replaces_baseline_and_current_values() {
     assert!(!form.is_dirty());
     assert!(!form.is_field_touched(name_path()));
     assert!(!form.is_field_blurred(name_path()));
+    assert!(!form.is_field_committed(name_path()));
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

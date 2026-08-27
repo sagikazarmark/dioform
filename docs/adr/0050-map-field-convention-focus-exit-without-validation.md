@@ -13,8 +13,9 @@ while focus stays inside the widget. Keeping validation on Commit and state/list
 preserves both facts and their ordering.
 
 The Dioform 0.3 API retains its legacy Blur trigger and listener names. Renaming the validation
-concept around Commit is a separate breaking change; this compatibility step does not change
-validator reach, default visibility, or serialized metadata meaning. A **Blurred Field** still means
-the user left that Field's logical focus scope. See
+concept around Commit is a separate breaking change. This compatibility step did not itself change
+validator reach, default visibility, or serialized metadata meaning; [ADR-0051](0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)
+subsequently adds exact committed metadata and commit-aware default visibility without changing this
+event mapping. A **Blurred Field** still means the user left that Field's logical focus scope. See
 [dioxus-field#8](https://github.com/sagikazarmark/dioxus-field/issues/8) and
 [dioxus-daisyui-registry#105](https://github.com/sagikazarmark/dioxus-daisyui-registry.orig/issues/105).
