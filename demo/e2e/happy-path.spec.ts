@@ -27,9 +27,11 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   ).toBeVisible();
   await expect(stateValue(demo, "submit.status")).toHaveText("blocked");
   await expect(stateValue(demo, "submit.attempts")).toHaveText("1");
+  await expect(stateValue(demo, "name.visible_errors")).toHaveText("1");
 
   await name.fill("Ada Lovelace");
   await email.fill("ada@example.com");
+  await expect(stateValue(demo, "name.visible_errors")).toHaveText("0");
   await demo.getByRole("radio", { name: "Remote" }).click();
   await demo.getByRole("switch", { name: "Product updates" }).click();
   await terms.click();

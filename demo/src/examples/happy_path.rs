@@ -274,7 +274,12 @@ pub fn HappyPathExample() -> Element {
                         rows: vec![
                             ("form.dirty", form.is_dirty().to_string()),
                             ("name.touched", form.is_field_touched(fields.name()).to_string()),
-                            ("name.blurred", form.is_field_blurred(fields.name()).to_string()),
+                            (
+                                "name.visible_errors",
+                                form.visible_field_validation_errors(fields.name())
+                                    .len()
+                                    .to_string(),
+                            ),
                             ("terms.touched", form.is_field_touched(fields.accepted_terms()).to_string()),
                             ("submit.attempts", form.submit_attempt_count().to_string()),
                             ("submit.status", status_label(form.last_submit_status())),
@@ -300,8 +305,25 @@ pub fn HappyPathExample() -> Element {
                     p { class: "mt-5 text-sm leading-6 text-base-content/60",
                         "The panel uses field-scoped Form Selectors rather than subscribing each control to the whole form. Optional fields stay optional; every Dioxus-Managed Submission still reruns garde before producing a Submission Snapshot."
                     }
+                    p { class: "mt-2 text-sm leading-6 text-base-content/60",
+                        "The Field Convention reports Commit rather than DOM focus state. Dioform uses Commit for Blur validation without making a Blurred Field, so registry controls do not drive is_field_blurred."
+                    }
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_explain_commit_without_claiming_blurred_state() {
+        let html = dioxus::ssr::render_element(rsx! { HappyPathExample {} });
+
+        assert!(html.contains("name.visible_errors"));
+        assert!(!html.contains("name.blurred"));
+        assert!(html.contains("Commit rather than DOM focus state"));
     }
 }
