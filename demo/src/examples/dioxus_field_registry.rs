@@ -1,11 +1,11 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
 use dioxus_daisyui::components::{
-    field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel},
-    input::Input,
+    field::{Field as DaisyField, FieldLabel},
+    input::TextField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     switch::{Switch, SwitchColor},
-    textarea::Textarea,
+    textarea::TextareaField,
 };
 
 use super::StateGrid;
@@ -14,7 +14,9 @@ use crate::components::{DemoPane, DemoSurface};
 /// Dioform produces the `dioxus-field` Binding and Field Meta consumed by the
 /// registry. The registry components know nothing about Dioform: each control
 /// resolves its value, writes, commit signal, metadata, and errors from the
-/// Field Context provided by its surrounding `Field`.
+/// Field Context provided by its surrounding `Field`. Closed composition sugar
+/// covers the common text fields; explicit parts remain available when a
+/// control needs custom structure.
 #[derive(Clone, Debug, PartialEq, Form)]
 struct RegistryProfile {
     display_name: String,
@@ -37,9 +39,12 @@ impl Default for RegistryProfile {
 #[component]
 pub fn DioxusFieldRegistryExample() -> Element {
     let form = use_form_handle(|| {
-        let handle =
-            FormHandle::<RegistryProfile>::from_config(FormConfig::new(RegistryProfile::default()))
-                .with_id_namespace("registry-profile");
+        let handle = FormHandle::<RegistryProfile>::from_config(
+            FormConfig::new(RegistryProfile::default())
+                // Commit runs Blur validation without making this a Blurred Field.
+                .error_visibility_policy(ErrorVisibilityPolicy::TouchedOrSubmit),
+        )
+        .with_id_namespace("registry-profile");
         handle.write_advanced(|core| {
             let fields = RegistryProfile::fields();
             core.register_sync_field_validator(
@@ -74,44 +79,22 @@ pub fn DioxusFieldRegistryExample() -> Element {
             primary: rsx! {
                 DemoPane { label: "Git registry components",
                     div { class: "space-y-5",
-                        DaisyField {
+                        TextField {
                             context: form.text(fields.display_name()),
-                            class: "min-w-0 grid-cols-1",
-                            FieldLabel { class: "font-medium", "Display name" }
-                            Input {
-                                class: "min-w-0 w-full",
-                                required: true,
-                                placeholder: "Ada Lovelace",
-                            }
-                            FieldDescription {
-                                id: "registry-display-name-help",
-                                class: "min-w-0 whitespace-normal text-base-content/60",
-                                "This label, description, and error are associated through Field Meta."
-                            }
-                            FieldError {
-                                id: "registry-display-name-error",
-                                class: "text-sm",
-                            }
+                            label: "Display name",
+                            description: "The registry generates and registers the description and error ids.",
+                            class: "min-w-0 w-full",
+                            required: true,
+                            placeholder: "Ada Lovelace",
                         }
 
-                        DaisyField {
+                        TextareaField {
                             context: form.textarea(fields.bio()),
-                            class: "min-w-0 grid-cols-1",
-                            FieldLabel { class: "font-medium", "Short bio" }
-                            Textarea {
-                                class: "min-w-0 w-full",
-                                rows: "3",
-                                placeholder: "What are you working on?",
-                            }
-                            FieldDescription {
-                                id: "registry-bio-help",
-                                class: "min-w-0 whitespace-normal text-base-content/60",
-                                "The registry commits this field when the native change event ends the edit."
-                            }
-                            FieldError {
-                                id: "registry-bio-error",
-                                class: "text-sm",
-                            }
+                            label: "Short bio",
+                            description: "The registry commits this field when the native change event ends the edit.",
+                            class: "min-w-0 w-full",
+                            rows: "3",
+                            placeholder: "What are you working on?",
                         }
 
                         DaisyField {
@@ -171,7 +154,10 @@ pub fn DioxusFieldRegistryExample() -> Element {
                         ],
                     }
                     p { class: "mt-4 text-sm leading-6 text-base-content/60",
-                        "No registry-specific event handlers or value props are wired here. Field Context carries the binding and presentation metadata."
+                        "No registry-specific event handlers or value props are wired here. Field Context carries the binding and presentation metadata into both the composition sugar and explicit parts."
+                    }
+                    p { class: "mt-2 text-sm leading-6 text-base-content/60",
+                        "Touched-or-submit visibility lets Commit-triggered validation show errors without treating Commit as a DOM blur."
                     }
                 }
             },

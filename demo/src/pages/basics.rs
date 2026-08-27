@@ -135,14 +135,17 @@ pub fn DioxusFieldRegistry() -> Element {
         PageHeader {
             eyebrow: "Basics",
             title: "dioxus-field registry integration",
-            intro: "Dioform bindings plug directly into dioxus-field compatible controls. This example uses dioxus-daisyui from Git and lets the registry own interaction, styling, and accessibility markup.",
+            intro: "Dioform bindings plug directly into dioxus-field compatible controls. This example uses dioxus-daisyui from Git and shows both concise field composition and the customizable parts beneath it.",
         }
         ExampleSection {
             title: "Dioform Field Context + dioxus-daisyui",
             intro: rsx! {
-                "Each registry "
+                InlineCode { "TextField" }
+                " and "
+                InlineCode { "TextareaField" }
+                " compose the common label, control, description, and error path. The radio group and switch use "
                 InlineCode { "Field" }
-                " receives a Dioform text, textarea, radio-group, or checkbox binding as its context. Descendant controls resolve the value, user writes, commits, field metadata, and formatted errors without adapter code."
+                " parts directly when their structure needs more control. Both layers resolve values, user writes, commits, field metadata, and formatted errors from Dioform Field Context."
             },
             demo: rsx! { DioxusFieldRegistryExample {} },
             code: rsx! {

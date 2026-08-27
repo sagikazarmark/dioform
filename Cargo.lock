@@ -838,9 +838,9 @@ dependencies = [
 
 [[package]]
 name = "dioxus-field"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4463a10c2a949a226ca2fe11b8994214ce5ff8469bd0092de0245264c127d147"
+checksum = "b15d0daafc30e23c8f9fabe7416c3e5936c94ba734a440d2159dc4a472ffaec4"
 dependencies = [
  "dioxus",
  "dioxus-core",
