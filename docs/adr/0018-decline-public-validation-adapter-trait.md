@@ -70,7 +70,7 @@ on `dioform-core` + `dioform-validation-adapter` + its library, owns its externa
 This is exactly the seam used by the two first-party adapters after
 [ADR-0043](0043-resolve-collection-diagnostic-targets-against-current-identities.md), without a public
 trait. `#[derive(Form)]`-derived path maps
-([#138](https://github.com/sagikazarmark/dioform/issues/138)) plug into this seam without a
+([#95](https://github.com/sagikazarmark/dioform/issues/95)) plug into this seam without a
 trait, because a derived map is just a `PathMap` fed to the existing `.path_map(...)` builder step.
 
 ## When to revisit

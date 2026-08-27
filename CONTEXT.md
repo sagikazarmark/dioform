@@ -126,8 +126,16 @@ _Avoid_: Validation error, parser error
 A path emitted by an external validation library as part of an **External Validation Diagnostic**, separate from a typed **Field Path** or rendered **Field Name** until a **Validation Adapter** explicitly maps it.
 _Avoid_: Field path, field name
 
+**Static Field Entry**:
+Compile-time-derived metadata for one non-skipped direct field of a **Named Form Struct**, pairing its Rust identifier with an erased **Validation Target** built from the same **Static Field Path** as its generated accessor. The entry remains tied to its **Form Model** and describes one direct field root, not recursively discovered nested fields or collection rows.
+_Avoid_: Rendered field entry, validation schema field, recursive field descriptor
+
+**Derived Path Map**:
+An **Explicit Path Mapping** populated before validation from a **Form Model**'s **Static Field Entries**, keyed by Rust field identifiers. It is a starting map for direct fields that may be explicitly extended or overwritten, not runtime path inference or recursive schema discovery.
+_Avoid_: Runtime path inference, rendered-name map, inferred schema
+
 **Explicit Path Mapping**:
-The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs; an unregistered path is never matched by **Field Name**, serde name, or Rust field name, and resolves to the form. For a collection-row path, each validation run resolves the external row index to the **Collection Item Identity** currently at that index.
+The rule that a **Validation Adapter** attaches an **External Validation Diagnostic** to a typed **Validation Target** only through an **External Diagnostic Path** registered before validation runs, either individually or through a **Derived Path Map**. Registration may use compile-time **Static Field Entries**, but validation never infers a target from **Field Name**, serde name, or Rust field name; an unregistered path resolves to the form. For a collection-row path, each validation run resolves the external row index to the **Collection Item Identity** currently at that index.
 _Avoid_: Field name matching, string path map, implicit binding, path inference
 
 **Collection Validation Target Rule**:

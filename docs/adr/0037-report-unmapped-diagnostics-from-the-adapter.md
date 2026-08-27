@@ -1,5 +1,10 @@
 # Report Unmapped Diagnostics from the adapter, not from the Validation Target
 
+> **Premise amended by
+> [ADR-0049](0049-derive-explicit-validation-path-maps-from-static-field-entries.md).**
+> `#[derive(Form)]` will expose an enumerable direct field set, but it still cannot describe every
+> external path a validator can emit. The validation-time reporting decision below remains in force.
+
 A **Validation Adapter** gains an opt-in configuration step that reports the **External Diagnostic
 Paths** it could not route, alongside `source`, `triggers`, and `path_map`. **Form Core** gains
 nothing: `ValidationTarget::Form` stays a unit variant, so a stored **Validation Error** still cannot
@@ -43,13 +48,15 @@ example maps fewer paths than its model can emit. A registration-time check repo
 is least likely to reach and stays silent on the case the documentation itself produces.
 
 It also has no true predicate to check. `PathMap` registers the paths an application chose to address;
-it does not declare the set an external library can emit, and neither `#[derive(Form)]` nor
-`#[derive(FieldGroup)]` yields an enumerable field set to compare against. Because `insert_field` is the
-only inserter, a form-scoped outcome cannot distinguish "deliberately whole-model" from "not yet
-mapped" — `garde` emits genuinely whole-model diagnostics at the empty path, and `validator` keys
-schema-level rules by an arbitrary string. A mandatory `path_map` would therefore force applications
-whose diagnostics are all whole-model to register an empty map to say so, and would make the library's
-own tests for **Explicit Path Mapping**'s fallback inexpressible without a second opt-out method.
+it does not declare the set an external library can emit. At the time of this decision, neither
+`#[derive(Form)]` nor `#[derive(FieldGroup)]` yielded an enumerable field set to compare against;
+ADR-0049 adds the direct `Form` field set without claiming it is the complete external path set.
+Because `insert_field` is the only inserter, a form-scoped outcome cannot distinguish "deliberately
+whole-model" from "not yet mapped" — `garde` emits genuinely whole-model diagnostics at the empty path,
+and `validator` keys schema-level rules by an arbitrary string. A mandatory `path_map` would therefore
+force applications whose diagnostics are all whole-model to register an empty map to say so, and would
+make the library's own tests for **Explicit Path Mapping**'s fallback inexpressible without a second
+opt-out method.
 
 Reporting at validation time has the predicate the guardrail lacks: the paths the library actually
 emitted and the classified route selected for this run on this **Form Draft**. `on_unmapped_path` reports
