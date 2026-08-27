@@ -1,12 +1,12 @@
 # Reveal Field errors after Commit without marking Fields blurred
 
 Dioform records exact, sticky `committed` metadata when a Dioform-produced `dioxus-field` binding
-reports **Commit**. The default **Error Visibility** policy is `CommitOrBlurOrSubmit`: an error
-attached to a **Field** becomes visible after that **Field** or one it contains has been committed or
-blurred, or after a submit attempt. The existing `BlurOrSubmit` policy remains available when an
-application explicitly wants focus-exit-driven presentation.
+reports **Commit**. The default **Error Visibility** policy is `CommitOrSubmit`: an error attached to
+a **Field** becomes visible after that **Field** or one it contains has been committed, or after a
+submit attempt. The existing `BlurOrSubmit` policy remains available when an application explicitly
+wants focus-exit-driven presentation.
 
-Commit still feeds the legacy Blur **Validation Trigger**, but it does not mark the **Field** touched
+Commit feeds the Commit **Validation Trigger**, but it does not mark the **Field** touched
 or blurred and does not dispatch blur listeners. **Focus Exit** remains the only Field Convention
 report that Dioform maps to exact touched and **Blurred Field** metadata plus blur listeners. A switch
 can therefore validate and present an error when toggled while `is_field_blurred()` remains false.
@@ -20,7 +20,7 @@ errors remain hidden until submit.
 
 Changing the default to `TouchedOrSubmit` was declined because a user write marks a **Field** touched
 before the widget reports that its interaction unit has ended. Inferring presentation from a stored
-Blur-triggered result was also declined because the Blur trigger can run without a Field Convention
+Commit-triggered result was also declined because the Commit trigger can run without a Field Convention
 Commit and does not preserve which event made the result presentation-relevant.
 
 Committed metadata clears on **Reset**, field reset, and **Reinitialization**, and participates in

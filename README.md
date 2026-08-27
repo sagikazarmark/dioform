@@ -18,7 +18,7 @@ interoperability, not as the main addressing mechanism.
 - **Typed field paths**: a compile-time form model with `FieldPath<Model, Value>` addressing, derived by `#[derive(Form)]`.
 - **Headless Dioxus bindings**: explicit `FormHandle` APIs, input bindings, parse blockers, and managed submission, with no styled components.
 - **Renderer-agnostic core**: form draft, validation, submission, reset, and reinitialization semantics live in `dioform-core`, independent of Dioxus.
-- **Validation modes and triggers**: blur/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
+- **Validation modes and triggers**: Commit/change/submit modes, async and debounced validators, stale-result handling, and observer diagnostics.
 - **Form-owned collections**: repeatable items with library-owned, opaque item identity.
 - **Reusable field groups**: `#[derive(FieldGroup)]` typed field-group maps, mountable under nested paths or explicitly remapped.
 - **Optional field traversal**: `FieldPath::or` derives a total path through an `Option<Inner>` from a fallback supplied at the call site.
@@ -140,7 +140,7 @@ Field groups do not own validation or collection item identity. Register cross-f
 
 Either way, a component boundary is a hook-ownership boundary. Bindings that call a `use_` hook — `use_parsed_text`, `use_number`, `use_date`, the collection-item helpers — own hook state in the scope that calls them, so they belong to the component that renders them; `docs/collection-fields.md` covers what that means for keyed collection rows. Value bindings such as `form.text(...)` own no hook state and can be built anywhere, which is why the field-group helper above stays a plain `fn`: it is parameterised by a field group map rather than by a form, which is not something a prop boundary or context could supply. A component that receives a handle uses it directly and must not re-adopt it with `use_form_handle`, whose cleanup would deactivate the owner's form at the child's unmount.
 
-`ValidationMode::on_blur()` is the default validation mode: validators run on blur and submit, but not on every change. Use `ValidationMode::on_submit()` for true submit-only validation, `ValidationMode::on_change()` when value changes should also run validation, or `ValidationMode::submit_then_revalidate()` to validate on submit before the first submit attempt and then revalidate on change or blur. Validator registration still uses explicit `ValidationTriggers`; the validation mode only controls automatic execution, and `ErrorVisibilityPolicy` controls when stored errors are shown.
+`ValidationMode::on_commit()` is the default validation mode: validators run on **Commit** and submit, but not on every change. Use `ValidationMode::on_submit()` for true submit-only validation, `ValidationMode::on_change()` when value changes should also run validation, or `ValidationMode::submit_then_revalidate()` to validate on submit before the first submit attempt and then revalidate on change or Commit. Validator registration still uses explicit `ValidationTriggers`; the validation mode only controls automatic execution, and `ErrorVisibilityPolicy` controls when stored errors are shown. A binding's native `onblur()` convenience reports Commit and then **Focus Exit**; custom widgets can report the two events independently.
 
 Design terminology lives in [`CONTEXT.md`](CONTEXT.md).
 

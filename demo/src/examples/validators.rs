@@ -65,7 +65,7 @@ pub fn ValidatorsExample() -> Element {
                     name: email.name(),
                     value: email.value(),
                     oninput: move |e| email_oninput.on_input(e.value()),
-                    onblur: move |_| email.on_blur(),
+                    onblur: email.onblur(),
                 }
                 for error in email_errors {
                     p { class: "mt-1 text-sm text-error", "{error.error()}" }
@@ -79,7 +79,7 @@ pub fn ValidatorsExample() -> Element {
                     name: password.name(),
                     value: password.value(),
                     oninput: move |e| password_oninput.on_input(e.value()),
-                    onblur: move |_| password.on_blur(),
+                    onblur: password.onblur(),
                 }
             }
             label { class: "block",
@@ -90,7 +90,7 @@ pub fn ValidatorsExample() -> Element {
                     name: confirm.name(),
                     value: confirm.value(),
                     oninput: move |e| confirm_oninput.on_input(e.value()),
-                    onblur: move |_| confirm.on_blur(),
+                    onblur: confirm.onblur(),
                 }
                 for error in confirm_errors {
                     p { class: "mt-1 text-sm text-error", "{error.error()}" }

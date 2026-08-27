@@ -6,7 +6,7 @@ use crate::components::{DemoPane, DemoSurface};
 /// `ValidationMode` decides *when* registered validators run automatically. The
 /// same "at least 3 characters" rule feels different under each mode: type into
 /// both fields and watch when the error appears. On-change validates every
-/// keystroke; on-blur (the default) waits until you leave the field.
+/// keystroke; on-Commit (the default) waits until the widget commits an interaction.
 #[derive(Clone, Debug, Default, PartialEq, Form)]
 struct AccountForm {
     username: String,
@@ -46,7 +46,7 @@ fn ModeCard(mode: ValidationMode, title: String, hint: String) -> Element {
                 name: username.name(),
                 value: username.value(),
                 oninput: move |e| username_oninput.on_input(e.value()),
-                onblur: move |_| username.on_blur(),
+                onblur: username.onblur(),
             }
             div { class: "mt-1 min-h-5",
                 for error in errors {
@@ -70,9 +70,9 @@ pub fn ValidationModesExample() -> Element {
             },
             secondary: rsx! {
                 ModeCard {
-                    mode: ValidationMode::on_blur(),
-                    title: "ValidationMode::on_blur() (default)",
-                    hint: "Validates when the field loses focus.",
+                    mode: ValidationMode::on_commit(),
+                    title: "ValidationMode::on_commit() (default)",
+                    hint: "Validates when the widget commits an interaction.",
                 }
             },
         }

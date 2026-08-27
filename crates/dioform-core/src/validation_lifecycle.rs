@@ -665,9 +665,9 @@ mod tests {
         assert_eq!(state.status(), ValidationStatus::Invalid);
         assert_eq!(state.errors(), &["required", "blank"]);
 
-        let outcome = state.replace_errors(ValidationTrigger::Blur, None, Vec::new());
+        let outcome = state.replace_errors(ValidationTrigger::Commit, None, Vec::new());
 
-        assert_eq!(outcome.trigger(), ValidationTrigger::Blur);
+        assert_eq!(outcome.trigger(), ValidationTrigger::Commit);
         assert_eq!(outcome.status(), ValidationStatus::Valid);
         assert_eq!(outcome.kind(), TransitionKind::ValidationRan);
         assert_eq!(state.status(), ValidationStatus::Valid);

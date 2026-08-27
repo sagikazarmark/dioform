@@ -174,7 +174,8 @@ clone precisely so the binding stays usable for `value()`. Once the item is gone
 - **Metadata and validation errors report nothing**: `is_touched()` and `is_blurred()` are `false` and
   `validation_errors()` is empty. Removal releases the item's scoped state, so this is a true statement
   about state that no longer exists.
-- **Writes are silent no-ops**: `set_value`, `on_input`, `on_change`, `select` and `on_blur` leave the
+- **Writes and interaction reports are silent no-ops**: `set_value`, `on_input`, `on_change`,
+  `select`, `on_commit`, and `on_focus_exit` leave the
   collection and its metadata unchanged. Setters do not report whether the write landed, because the
   ready-made handlers are `impl FnMut(Event<..>)` and cannot propagate a result.
 
@@ -352,11 +353,13 @@ values can be inspected through `selected_values()` or `items()`. Each `MultiSel
 opaque `CollectionItemIdentity`, item-level metadata, dirty state, accessibility helper, and
 validation errors.
 
-The blur entry point determines which **Fields** are marked. `MultiSelectOptionBinding::on_blur`
-marks the **Collection Field** and that option's selected value; an unselected option marks only the
-collection. `MultiSelectBinding::on_blur` marks the collection alone, while
-`MultiSelectItem::on_blur` marks that selected value alone. Per-value blur validation therefore runs
-only for the selected value whose control the user left.
+The event entry point determines which **Fields** it names. `MultiSelectOptionBinding::on_commit`
+runs Commit validation for the **Collection Field** and that option's selected value; an unselected
+option commits only the collection. `on_focus_exit` marks those same exact Fields touched and
+blurred and dispatches their blur listeners without validation. `MultiSelectBinding` names the
+collection alone, while `MultiSelectItem` names that selected value alone. A native `onblur()`
+handler composes Commit and then Focus Exit, so per-value validation runs only for the selected value
+whose control the user left.
 
 A multi-select is keyed by **value** rather than by identity: `is_selected(value)`,
 `selected_item(value)` and `selected_identity(value)` are the lookups, and `select` / `deselect` /

@@ -290,7 +290,7 @@ mod tests {
         let validator_runs = Rc::clone(&validation_runs);
         form.field(CheckboxForm::fields().accepted())
             .validator("required")
-            .on(ValidationTrigger::Blur)
+            .on(ValidationTrigger::Commit)
             .check_optional(move |accepted, _context| {
                 validator_runs.set(validator_runs.get() + 1);
                 (!accepted).then_some(CheckboxError("Accept the terms"))
@@ -426,7 +426,7 @@ mod tests {
         form.set_error_visibility_policy(ErrorVisibilityPolicy::Always);
         form.field(CheckboxForm::fields().accepted())
             .validator("required")
-            .on(ValidationTrigger::Blur)
+            .on(ValidationTrigger::Commit)
             .check_optional(|accepted, _context| {
                 (!accepted).then_some(CodeError { code: "TERMS" })
             });

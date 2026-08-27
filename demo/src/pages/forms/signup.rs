@@ -14,7 +14,7 @@ struct SignupForm {
 
 fn build() -> FormHandle<SignupForm> {
     let form = FormHandle::<SignupForm>::from_config(
-        FormConfig::new(SignupForm::default()).validation_mode(ValidationMode::on_blur()),
+        FormConfig::new(SignupForm::default()).validation_mode(ValidationMode::on_commit()),
     );
     form.write_advanced(|core| {
         let fields = SignupForm::fields();

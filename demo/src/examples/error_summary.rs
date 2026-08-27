@@ -92,7 +92,7 @@ pub fn ErrorSummaryExample() -> Element {
                             name: email.name(),
                             value: email.value(),
                             oninput: move |e| email_oninput.on_input(e.value()),
-                            onblur: move |_| email.on_blur(),
+                            onblur: email.onblur(),
                         }
                         input {
                             class: "input input-bordered input-sm w-full",
@@ -100,7 +100,7 @@ pub fn ErrorSummaryExample() -> Element {
                             name: phone.name(),
                             value: phone.value(),
                             oninput: move |e| phone_oninput.on_input(e.value()),
-                            onblur: move |_| phone.on_blur(),
+                            onblur: phone.onblur(),
                         }
                         input {
                             class: "input input-bordered input-sm w-full",
@@ -109,7 +109,7 @@ pub fn ErrorSummaryExample() -> Element {
                             name: age.name(),
                             value: age.value(),
                             oninput: move |e| age_oninput.on_input(e.value()),
-                            onblur: move |_| age.on_blur(),
+                            onblur: age.onblur(),
                         }
                         button {
                             class: "btn btn-primary btn-sm",

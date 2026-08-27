@@ -48,7 +48,7 @@ pub fn StateMetaExample() -> Element {
                                 name: name.name(),
                                 value: name.value(),
                                 oninput: move |e| name_oninput.on_input(e.value()),
-                                onblur: move |_| name.on_blur(),
+                                onblur: name.onblur(),
                             }
                         }
                         label { class: "block",
@@ -58,7 +58,7 @@ pub fn StateMetaExample() -> Element {
                                 name: email.name(),
                                 value: email.value(),
                                 oninput: move |e| email_oninput.on_input(e.value()),
-                                onblur: move |_| email.on_blur(),
+                                onblur: email.onblur(),
                             }
                         }
                     }

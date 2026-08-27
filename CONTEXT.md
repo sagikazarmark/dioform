@@ -87,7 +87,7 @@ The part of **Field Ancestry** one **Form Listener** surface uses to decide whic
 _Avoid_: Bubbling, event propagation, subscription filter
 
 **Validator Selection Reach**:
-The part of **Field Ancestry** a **Validation Trigger** uses to decide which validators one **Field**'s event runs: a value change asserts the value at a path was replaced and reaches both directions, while a blur asserts something happened inside a **Field** and reaches only outward, to the **Fields** that contain it ([ADR-0035](docs/adr/0035-select-blur-validators-outward-from-the-field-that-blurred.md)).
+The part of **Field Ancestry** a **Validation Trigger** uses to decide which validators one **Field**'s event runs: a value change asserts the value at a path was replaced and reaches both directions, while a Commit asserts an interaction completed at one **Field** and reaches only outward, to the **Fields** that contain it ([ADR-0035](docs/adr/0035-select-commit-validators-outward-from-the-field-that-committed.md)).
 _Avoid_: Validator scope, subtree validation
 
 **Identity Path Separator**:
@@ -155,15 +155,15 @@ Ephemeral **Validation Adapter** information describing how an **External Valida
 _Avoid_: Validation source, stored target metadata, external path in core
 
 **Validation Trigger**:
-A semantic form event that determines when validation runs, such as a value change, field blur, submit request, or form initialization.
+A semantic form event that determines when validation runs, such as a value change, field Commit, submit request, or form initialization.
 _Avoid_: DOM event, Dioxus event
 
 **Validation Mode**:
-A form-level policy that determines which **Validation Triggers** run automatically during interaction, such as validating on blur, on change, or after a submit attempt.
+A form-level policy that determines which **Validation Triggers** run automatically during interaction, such as validating on Commit, on change, or after a submit attempt.
 _Avoid_: Validator trigger set, error visibility
 
 **Error Visibility**:
-The presentation decision that determines when stored **Validation Errors** should be shown to a user, including committed or blurred interaction under the default policy and which **Submit Intent** made submit-scoped errors relevant in intentful forms.
+The presentation decision that determines when stored **Validation Errors** should be shown to a user, including committed interaction under the default policy and which **Submit Intent** made submit-scoped errors relevant in intentful forms. An explicit policy may instead use blurred or touched interaction.
 _Avoid_: Validation trigger, validation state
 
 **Validation Source**:
@@ -387,7 +387,7 @@ Whether a **Value Binding** write came from user interaction or from application
 _Avoid_: Event source, DOM event type
 
 **Commit**:
-The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it marks the exact **Field** committed for **Error Visibility** and feeds the Blur **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
+The widget-defined end of one interaction unit on a **Value Binding**, originating from focus leaving the widget's focus scope, from a widget-state transition such as a popup closing or a drag ending, or from form submit. In dioform it marks the exact **Field** committed for **Error Visibility** and feeds the Commit **Validation Trigger**; it is not a DOM blur, and a widget may commit with no focus change at all ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
 _Avoid_: Blur, change event, focusout relay
 
 **Focus Exit**:
@@ -986,11 +986,11 @@ Domain expert: Yes. **Field Ancestry** means a write to a **Field** reaches the 
 
 Developer: Does a **Blurred Field** work the same way — does blurring a leaf blur the object containing it?
 
-Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the event through **Listener Reach**, run their validators through outward **Validator Selection Reach**, and their **Validation Errors** may become visible under outward **Error Visibility**, all because a blur happened inside them — but none of them becomes a **Blurred Field**.
+Domain expert: No. A **Blurred Field** is one that lost focus, and only the **Field** the user left did. Its containing **Fields** hear the **Focus Exit** through **Listener Reach**, and their **Validation Errors** may become visible under outward **Error Visibility**, but none of them becomes a **Blurred Field**. Commit is reported separately and runs validators through outward **Validator Selection Reach**.
 
 Developer: And the other way round — does blurring a nested object validate the **Fields** inside it?
 
-Domain expert: No. A blur asserts that focus left one **Field**, which says nothing about the **Fields** it contains, so **Validator Selection Reach** admits only the **Fields** that contain the blurred one. Writing that object still validates them, because a write replaces their values ([ADR-0035](docs/adr/0035-select-blur-validators-outward-from-the-field-that-blurred.md)).
+Domain expert: No. A Commit asserts that one **Field** completed an interaction, which says nothing about the **Fields** it contains, so **Validator Selection Reach** admits only the **Fields** that contain the committed one. Writing that object still validates them, because a write replaces their values ([ADR-0035](docs/adr/0035-select-commit-validators-outward-from-the-field-that-committed.md)).
 
 Developer: A multi-select option control renders under the **Collection Field**'s **Field Name** but represents one selected value. Which one did the user leave?
 
@@ -1018,9 +1018,9 @@ Domain expert: No. It knows one field at a time — a **Value Binding**, **Field
 
 Developer: Is a **Commit** just a renamed blur?
 
-Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform records a **Committed Field** for default **Error Visibility** and maps the event onto the Blur **Validation Trigger**, but it does not make the **Field** blurred ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
+Domain expert: No. A **Commit** is the widget-defined end of one interaction unit. A slider commits at drag-end with no focus change at all; a select commits when its popup closes. Dioform records a **Committed Field** for default **Error Visibility** and maps the event onto the Commit **Validation Trigger**, but it does not make the **Field** blurred ([ADR-0051](docs/adr/0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md)).
 
-Developer: Does **Focus Exit** run Blur validation too?
+Developer: Does **Focus Exit** run Commit validation too?
 
 Domain expert: No. The widget already reports **Commit** when the interaction needs validation. **Focus Exit** separately tells Dioform to update touched and **Blurred Field** metadata and dispatch blur listeners without validating a second time ([ADR-0050](docs/adr/0050-map-field-convention-focus-exit-without-validation.md)).
 

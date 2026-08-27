@@ -83,9 +83,8 @@ dioform in sight — that is the test that the layering holds.
 - **Commit is not a renamed blur.** A **Commit** is the widget-defined end of one interaction unit,
   with three origins: focus leaving the widget's focus scope, widget-state transitions (popup close,
   slider drag-end, combobox Enter), and form submit. On the dioform side `on_commit()` feeds the
-  existing Blur **Validation Trigger** (sound per ADR-0031/ADR-0035: outward-only reach, idempotent
-  double-fire); a `Blur | Commit` trigger split is deferred until a real case needs different
-  validators for the two.
+  Commit **Validation Trigger** with outward-only validator reach; **Focus Exit** separately feeds
+  exact touched and blurred metadata plus blur listeners without validation.
 - **Change Origin**: `User | Programmatic`. `User` implies touched-marking and user-event validation
   semantics; `Programmatic` maps to dioform's **Programmatic Update** (dirty possible, not touched).
   Prop-trio-only widgets imply `User`.
@@ -171,7 +170,7 @@ Donatability to dioxus-primitives is a standing design constraint.
   focus round-trip; error/description ids appear in meta on mount and vanish on drop.
 - dioform producer surface (in dioform, not dioxus-field): `From<CheckboxBinding<M, E>> for
   Binding<bool>` and friends; `binding.meta()` (Display-based error formatting, override
-  available); `on_commit()` feeding the Blur trigger; Focus Exit feeding exact blurred/touched
+  available); `on_commit()` feeding the Commit trigger; Focus Exit feeding exact blurred/touched
   metadata and blur listeners without validation. `FieldAccessibility` demoted to producing Field
   Meta.
 

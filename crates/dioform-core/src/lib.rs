@@ -835,8 +835,8 @@ pub enum ValidationTrigger {
     Change,
     /// Validation was requested directly by application code.
     Manual,
-    /// Validation was requested after a field blur event.
-    Blur,
+    /// Validation was requested after a field committed one interaction unit.
+    Commit,
     /// Validation was requested as part of a submit attempt.
     Submit,
 }
@@ -932,95 +932,95 @@ impl Extend<ValidationTrigger> for ValidationTriggers {
 /// Public policy for automatic validation runs caused by semantic form events.
 ///
 /// The policy controls when validation executes. It does not control error visibility;
-/// the default visibility policy waits for commit, blur, or submit attempts.
+/// the default visibility policy waits for Commit or submit attempts.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValidationMode {
-    #[cfg_attr(feature = "serde", serde(default = "default_validate_on_blur"))]
-    validate_on_blur: bool,
+    #[cfg_attr(feature = "serde", serde(default = "default_validate_on_commit"))]
+    validate_on_commit: bool,
     validate_on_change: bool,
     #[cfg_attr(feature = "serde", serde(default))]
-    revalidate_on_blur_after_submit: bool,
+    revalidate_on_commit_after_submit: bool,
     #[cfg_attr(feature = "serde", serde(default))]
     revalidate_on_change_after_submit: bool,
 }
 
 #[cfg(feature = "serde")]
-fn default_validate_on_blur() -> bool {
+fn default_validate_on_commit() -> bool {
     true
 }
 
 impl ValidationMode {
-    /// Creates a submit-only mode that does not validate on blur or change.
+    /// Creates a submit-only mode that does not validate on commit or change.
     pub const fn on_submit() -> Self {
         Self {
-            validate_on_blur: false,
+            validate_on_commit: false,
             validate_on_change: false,
-            revalidate_on_blur_after_submit: false,
+            revalidate_on_commit_after_submit: false,
             revalidate_on_change_after_submit: false,
         }
     }
 
-    /// Creates the default mode: validate on blur and submit, but not on every change.
-    pub const fn on_blur() -> Self {
+    /// Creates the default mode: validate on commit and submit, but not on every change.
+    pub const fn on_commit() -> Self {
         Self {
-            validate_on_blur: true,
+            validate_on_commit: true,
             validate_on_change: false,
-            revalidate_on_blur_after_submit: false,
+            revalidate_on_commit_after_submit: false,
             revalidate_on_change_after_submit: false,
         }
     }
 
-    /// Creates the default mode: validate on blur and submit, but not on every change.
-    pub const fn on_blur_or_submit() -> Self {
-        Self::on_blur()
+    /// Creates the default mode: validate on commit and submit, but not on every change.
+    pub const fn on_commit_or_submit() -> Self {
+        Self::on_commit()
     }
 
-    /// Creates a mode that validates after field value changes as well as blur and submit.
+    /// Creates a mode that validates after field value changes as well as commit and submit.
     pub const fn on_change() -> Self {
         Self {
-            validate_on_blur: true,
+            validate_on_commit: true,
             validate_on_change: true,
-            revalidate_on_blur_after_submit: false,
+            revalidate_on_commit_after_submit: false,
             revalidate_on_change_after_submit: false,
         }
     }
 
-    /// Creates a mode that validates on submit first, then revalidates on blur and change after a submit attempt.
+    /// Creates a mode that validates on submit first, then revalidates on commit and change after a submit attempt.
     ///
     /// This preserves submit-triggered validation correctness while avoiding live validation before
     /// the user has tried to submit the form.
     pub const fn submit_then_revalidate() -> Self {
         Self {
-            validate_on_blur: false,
+            validate_on_commit: false,
             validate_on_change: false,
-            revalidate_on_blur_after_submit: true,
+            revalidate_on_commit_after_submit: true,
             revalidate_on_change_after_submit: true,
         }
     }
 
-    /// Enables immediate blur validation on this mode.
-    pub const fn validate_on_blur(mut self) -> Self {
-        self.validate_on_blur = true;
+    /// Enables immediate commit validation on this mode.
+    pub const fn validate_on_commit(mut self) -> Self {
+        self.validate_on_commit = true;
         self
     }
 
-    /// Configures whether immediate blur validation runs after field blur events.
-    pub const fn with_blur_validation(mut self, enabled: bool) -> Self {
-        self.validate_on_blur = enabled;
+    /// Configures whether immediate commit validation runs after field Commit events.
+    pub const fn with_commit_validation(mut self, enabled: bool) -> Self {
+        self.validate_on_commit = enabled;
         self
     }
 
-    /// Returns whether this mode validates immediately after field blur events.
+    /// Returns whether this mode validates immediately after field Commit events.
     ///
-    /// Use [`ValidationMode::should_validate_on_blur`] when submit-attempt-aware behavior matters.
-    pub const fn validates_on_blur(self) -> bool {
-        self.validate_on_blur
+    /// Use [`ValidationMode::should_validate_on_commit`] when submit-attempt-aware behavior matters.
+    pub const fn validates_on_commit(self) -> bool {
+        self.validate_on_commit
     }
 
-    /// Returns whether this mode should validate after a blur event for the current submit history.
-    pub const fn should_validate_on_blur(self, submit_attempts: u64) -> bool {
-        self.validate_on_blur || (self.revalidate_on_blur_after_submit && submit_attempts > 0)
+    /// Returns whether this mode should validate after a Commit for the current submit history.
+    pub const fn should_validate_on_commit(self, submit_attempts: u64) -> bool {
+        self.validate_on_commit || (self.revalidate_on_commit_after_submit && submit_attempts > 0)
     }
 
     /// Enables immediate change validation on this mode.
@@ -1050,7 +1050,7 @@ impl ValidationMode {
 
 impl Default for ValidationMode {
     fn default() -> Self {
-        Self::on_blur()
+        Self::on_commit()
     }
 }
 
@@ -1059,10 +1059,10 @@ impl Default for ValidationMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorVisibilityPolicy {
-    /// Show field errors after that field or one it contains is committed or blurred, and all errors
-    /// after a submit attempt.
+    /// Show field errors after that field or one it contains is committed, and all errors after a
+    /// submit attempt.
     #[default]
-    CommitOrBlurOrSubmit,
+    CommitOrSubmit,
     /// Show field errors after that field or one it contains is blurred, and all errors after a
     /// submit attempt.
     BlurOrSubmit,
@@ -5160,19 +5160,11 @@ impl<Model, Error> FormCore<Model, Error> {
             &collection_item_field_identity(&collection, item, &field),
             true,
         );
-
-        if self
-            .validation_mode
-            .should_validate_on_blur(self.submission.attempt_count())
-        {
-            self.validate_collection_item_field_blur(collection, item, field);
-        }
-
         true
     }
 
-    /// Marks one child field inside a logical collection item as blurred without running validation.
-    pub fn mark_collection_item_field_blurred_without_validation<Item, Value>(
+    /// Marks one child field inside a logical collection item as having completed an interaction.
+    pub fn mark_collection_item_field_committed<Item, Value>(
         &mut self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
@@ -5182,10 +5174,31 @@ impl<Model, Error> FormCore<Model, Error> {
             return false;
         }
 
-        self.mark_field_metadata(
-            &collection_item_field_identity(&collection, item, &field),
-            true,
-        );
+        self.mark_field_identity_committed(&collection_item_field_identity(
+            &collection,
+            item,
+            &field,
+        ));
+        true
+    }
+
+    /// Records a committed interaction for one child field inside a logical collection item.
+    pub fn commit_collection_item_field<Item, Value>(
+        &mut self,
+        collection: FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+        field: FieldPath<Item, Value>,
+    ) -> bool {
+        if !self.mark_collection_item_field_committed(collection.clone(), item, field.clone()) {
+            return false;
+        }
+
+        if self
+            .validation_mode
+            .should_validate_on_commit(self.submission.attempt_count())
+        {
+            self.validate_collection_item_field_commit(collection, item, field);
+        }
         true
     }
 
@@ -7441,6 +7454,18 @@ impl<Model, Error> FormCore<Model, Error> {
         self.mark_field_identity_committed(&path.identity());
     }
 
+    /// Records a committed interaction and runs configured Commit validation for one field.
+    pub fn commit_field<Value>(&mut self, path: FieldPath<Model, Value>) {
+        self.mark_field_committed(path.clone());
+
+        if self
+            .validation_mode
+            .should_validate_on_commit(self.submission.attempt_count())
+        {
+            self.validate_field(path, ValidationTrigger::Commit);
+        }
+    }
+
     /// Marks a field identity as having completed one committed interaction.
     pub fn mark_field_identity_committed(&mut self, field: &FieldIdentity) {
         if self.field_store.metadata(field).committed {
@@ -7449,6 +7474,19 @@ impl<Model, Error> FormCore<Model, Error> {
 
         self.field_metadata_mut(field).committed = true;
         self.increment_submit_validation_generation();
+    }
+
+    /// Records a committed interaction and runs configured Commit validation for a field identity.
+    pub fn commit_field_identity(&mut self, field: &FieldIdentity) {
+        self.mark_field_identity_committed(field);
+
+        if self
+            .validation_mode
+            .should_validate_on_commit(self.submission.attempt_count())
+        {
+            self.validate_field_chain(field, ValidationTrigger::Commit);
+            self.validate_form_chain(ValidationTrigger::Commit);
+        }
     }
 
     /// Records a user change for field-like state that lives outside the form draft.
@@ -7479,33 +7517,13 @@ impl<Model, Error> FormCore<Model, Error> {
         }
     }
 
-    /// Marks a field identity as blurred and touched by user interaction.
+    /// Marks a field identity as blurred and touched by user interaction without running validation.
     pub fn mark_field_identity_blurred(&mut self, field: &FieldIdentity) {
         self.mark_field_metadata(field, true);
-
-        if self
-            .validation_mode
-            .should_validate_on_blur(self.submission.attempt_count())
-        {
-            self.validate_field_chain(field, ValidationTrigger::Blur);
-            self.validate_form_chain(ValidationTrigger::Blur);
-        }
     }
 
-    /// Marks a field as blurred and touched by user interaction.
+    /// Marks a field as blurred and touched by user interaction without running validation.
     pub fn mark_field_blurred<Value>(&mut self, path: FieldPath<Model, Value>) {
-        self.mark_field_blurred_without_validation(path.clone());
-
-        if self
-            .validation_mode
-            .should_validate_on_blur(self.submission.attempt_count())
-        {
-            self.validate_field(path, ValidationTrigger::Blur);
-        }
-    }
-
-    /// Marks a field as blurred and touched without running blur validation.
-    pub fn mark_field_blurred_without_validation<Value>(&mut self, path: FieldPath<Model, Value>) {
         self.mark_field_metadata(&path.identity(), true);
     }
 
@@ -8223,15 +8241,15 @@ impl<Model, Error> FormCore<Model, Error> {
         }
     }
 
-    fn validate_collection_item_field_blur<Item, Value>(
+    fn validate_collection_item_field_commit<Item, Value>(
         &mut self,
         collection: FieldPath<Model, Vec<Item>>,
         item: CollectionItemIdentity,
         field: FieldPath<Item, Value>,
     ) {
         let field = collection_item_field_identity(&collection, item, &field);
-        self.validate_field_chain(&field, ValidationTrigger::Blur);
-        self.validate_form_chain(ValidationTrigger::Blur);
+        self.validate_field_chain(&field, ValidationTrigger::Commit);
+        self.validate_form_chain(ValidationTrigger::Commit);
     }
 
     fn clear_collection_item_state(
@@ -9288,11 +9306,9 @@ impl<Model, Error> FormCore<Model, Error> {
         match self.error_visibility_policy {
             ErrorVisibilityPolicy::Always => true,
             ErrorVisibilityPolicy::SubmitOnly => false,
-            ErrorVisibilityPolicy::CommitOrBlurOrSubmit => {
-                self.field_store.subtree_metadata_any(field, |metadata| {
-                    metadata.is_committed() || metadata.is_blurred()
-                })
-            }
+            ErrorVisibilityPolicy::CommitOrSubmit => self
+                .field_store
+                .subtree_metadata_any(field, FieldMetadata::is_committed),
             ErrorVisibilityPolicy::BlurOrSubmit => self
                 .field_store
                 .subtree_metadata_any(field, FieldMetadata::is_blurred),

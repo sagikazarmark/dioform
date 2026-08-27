@@ -48,7 +48,7 @@ fn initial() -> InvoiceForm {
 
 fn build() -> FormHandle<InvoiceForm> {
     let form = FormHandle::<InvoiceForm>::from_config(
-        FormConfig::new(initial()).validation_mode(ValidationMode::on_blur()),
+        FormConfig::new(initial()).validation_mode(ValidationMode::on_commit()),
     );
     let f = InvoiceForm::fields();
     form.write_advanced(|core| {
@@ -149,7 +149,7 @@ fn LineRow(
                         name: description.name(),
                         value: description.value(),
                         oninput: move |e| description_oninput.on_input(e.value()),
-                        onblur: move |_| description.on_blur(),
+                        onblur: description.onblur(),
                     }
                 }
                 label { class: "block",
@@ -161,7 +161,7 @@ fn LineRow(
                         name: quantity.name(),
                         value: quantity.value(),
                         oninput: move |e| quantity_oninput.on_input(e.value()),
-                        onblur: move |_| quantity.on_blur(),
+                        onblur: quantity.onblur(),
                     }
                 }
                 label { class: "block",
@@ -171,7 +171,7 @@ fn LineRow(
                         name: unit.name(),
                         value: unit.value(),
                         oninput: move |e| unit_oninput.on_input(e.value()),
-                        onblur: move |_| unit.on_blur(),
+                        onblur: unit.onblur(),
                     }
                 }
                 div { class: "flex gap-1",
@@ -244,7 +244,7 @@ pub fn Invoice() -> Element {
                                 name: due_date.name(),
                                 value: due_date.value(),
                                 oninput: move |e| due_date_oninput.on_input(e.value()),
-                                onblur: move |_| due_date.on_blur(),
+                                onblur: due_date.onblur(),
                             }
                         }
                         {field_select("Terms", &terms, [("net-7", "Net 7"), ("net-14", "Net 14"), ("net-30", "Net 30")])}

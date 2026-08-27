@@ -44,7 +44,6 @@ fn profile_form(form: FormHandle<ProfileForm, &'static str>) -> Element {
     let avatar = form.file(avatar_key.clone());
 
     let avatar_for_change = avatar.clone();
-    let avatar_for_blur = avatar.clone();
 
     rsx! {
         form {
@@ -57,7 +56,7 @@ fn profile_form(form: FormHandle<ProfileForm, &'static str>) -> Element {
                 r#type: "file",
                 name: avatar.name(),
                 onchange: move |event| avatar_for_change.on_change(event),
-                onblur: move |_| avatar_for_blur.on_blur(),
+                onblur: avatar.onblur(),
             }
         }
     }
@@ -104,7 +103,7 @@ let result = form.managed_submit().on_submit_async_with_files(event, move |submi
 ## Validation
 
 File-selection validators are scoped to the file field identity. They run when that file selection is
-validated, blurred, changed under a validation mode that validates changes, or when submit validation
+validated, committed, changed under a validation mode that validates changes, or when submit validation
 requires them. They do not rerun just because an unrelated typed field changes. Async validators
 registered with `check_with_context(...)` are model-context-aware: if the form draft changes while
 one is pending, its late result is treated as stale instead of applying to the file field.

@@ -13,7 +13,9 @@ older meaning.
 
 Snapshot version 6 adds exact committed interaction metadata and the commit-aware default **Error
 Visibility** policy. A restored committed flag can reveal the same stored field error it revealed when
-the snapshot was captured without implying touched or **Blurred Field** state.
+the snapshot was captured without implying touched or **Blurred Field** state. It also serializes
+**Validation Mode** with Commit-named state. Version 5 snapshots are rejected because their interaction
+and validation terminology cannot be interpreted as the version 6 Commit semantics.
 
 Included in the current core snapshot:
 

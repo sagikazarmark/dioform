@@ -40,7 +40,7 @@ pub fn MinimalExample() -> Element {
                 value: name.value(),
                 placeholder: "Your name",
                 oninput: move |event| name_for_input.on_input(event.value()),
-                onblur: move |_| name_for_blur.on_blur(),
+                onblur: name_for_blur.onblur(),
             }
             button { class: "btn btn-primary", r#type: "submit", "Greet" }
         }

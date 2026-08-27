@@ -58,7 +58,7 @@ pub fn AsyncValidationExample() -> Element {
                 value: username.value(),
                 placeholder: "try: ada, admin, or your own",
                 oninput: move |e| username_oninput.on_input(e.value()),
-                onblur: move |_| username.on_blur(),
+                onblur: username.onblur(),
             }
         }
         div { class: "mt-2 min-h-6 text-sm",

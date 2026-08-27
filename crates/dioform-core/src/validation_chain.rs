@@ -587,8 +587,8 @@ impl<Model, Error> ValidationChainRegistry<Model, Error> {
 
     /// Selects the synchronous field validators one chain runs for a field event.
     ///
-    /// Value replacement spans **Field Ancestry** in both directions, while blur reaches only the
-    /// validators on the blurred field and the fields containing it. This widens the filter rather
+    /// Value replacement spans **Field Ancestry** in both directions, while Commit reaches only the
+    /// validators on the committed field and the fields containing it. This widens the filter rather
     /// than the pass count — the chain entry point re-materializes collection item validator states
     /// and clones-and-sorts the validator table per call, so running it once per related field would
     /// multiply all of that.

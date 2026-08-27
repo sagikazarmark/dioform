@@ -82,7 +82,7 @@ pub fn FileFieldsExample() -> Element {
                                     accept: "image/*",
                                     name: avatar.name(),
                                     onchange: move |e| avatar_change.on_change(e),
-                                    onblur: move |_| avatar_blur.on_blur(),
+                                    onblur: avatar_blur.onblur(),
                                 }
                             }
                             button { class: "btn btn-primary btn-sm", r#type: "submit", "Submit" }

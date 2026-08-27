@@ -46,7 +46,7 @@ would be reporting a focus event that did not happen, on the surface most people
 Reversed, the same predicate is right: `invoice.customer` genuinely does contain the widget that
 blurred, and `use_field_blur_listener` on a container path is currently a registration that compiles,
 registers, and can never fire from any DOM-driven blur, because blur enters only through a leaf
-binding's `on_blur` and a container has no element.
+binding's `on_focus_exit` and a container has no element.
 
 This matches the platform. `focusout` bubbles; `blur` does not. Moving focus between two inputs inside
 one container fires the container's listener twice, and neither the DOM nor Dioform has a
@@ -70,7 +70,7 @@ announcing `aria-invalid` for it. It would also fork the meaning of serialized m
 domain change, and it does not belong in a fix to listener dispatch.
 
 A related defect predates this decision and is not fixed here: ADR-0020 widened validator *selection*
-without widening error *visibility*, so a child blur can store a container validator's error that
+without widening error *visibility*, so a child Commit can store a container validator's error that
 blocks submit while being invisible. That is a visibility-policy question and has its own issue.
 
 ## Binding lifecycle reaches outward only, and its replay has to carry identities
@@ -105,9 +105,9 @@ The nearer registration receives strictly less than the further one.
 The fix is a listener-side widening to ancestor-**or-equal** on the collection component, in the
 listener filters. Co-dispatching the collection identity alongside the item identity at each dispatch
 site was the alternative and is worse on two counts. It has to enumerate call sites, and the
-enumeration is easy to get wrong — `mark_collection_item_field_blurred_without_validation` is a
-distinct site reached whenever a binding holds a parse error, so an incomplete list yields a listener
-that hears a row blur when the text parses and silently does not when it fails. And the identity it
+enumeration is easy to get wrong — `mark_collection_item_field_blurred` is a distinct non-validating
+site reached from Focus Exit even when a binding holds a parse error, so an incomplete list yields a
+listener that hears a row blur when the text parses and silently does not when it fails. And the identity it
 co-dispatches is a `Static` one, which the symmetric static clause then relates *downward*: every
 static descendant of the collection path starts receiving every item-field edit, which is exactly the
 relation `a_static_descendant_of_a_collection_path_does_not_relate_to_its_items` forbids. Co-dispatch

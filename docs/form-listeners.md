@@ -95,13 +95,15 @@ For direct field value replacements and direct collection-backed value replaceme
 5. Dispatch matching form-level listeners.
 6. Dispatch matching field-scoped listeners.
 
-For direct field and direct collection item field blur events, Dioform applies listener ordering as follows:
+For direct field and direct collection item field Commit events, Dioform applies this ordering:
 
-1. Mark the Field touched and blurred.
-2. Notify Dioxus metadata selectors.
-3. Run configured blur validation and notify validation selectors when configured.
-4. Dispatch matching form-level blur listeners.
-5. Dispatch matching field-scoped blur listeners.
+1. Mark the Field committed.
+2. Run configured synchronous Commit validation.
+3. Notify Dioxus selectors and schedule runtime async Commit validation when configured.
+
+Commit does not dispatch blur listeners. For direct **Focus Exit** events, Dioform instead marks the
+Field touched and blurred, notifies metadata selectors, and then dispatches matching form-level and
+field-scoped blur listeners. Focus Exit does not run validation.
 
 For direct hook-owned field binding lifecycle events, Dioform records active binding counts per `FieldIdentity`, dispatches mount listeners after the binding is created, and dispatches unmount listeners during hook cleanup before the binding is dropped. Newly registered listeners receive `Mounted` for each active binding at or below their registered Field so mount/unmount events remain balanced regardless of listener hook order.
 

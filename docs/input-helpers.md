@@ -43,9 +43,10 @@ for plan_option in ["starter", "pro"] {
 }
 ```
 
-These cover the common cases. When a handler needs extra logic, fall back to a plain
-`move |event| { ...; binding.on_input(event.value()) }` closure with an explicit `binding.clone()`;
-the `on_input` / `on_change` / `on_blur` methods used above remain available for that.
+These cover the common cases. `onblur()` reports **Commit** and then **Focus Exit**; it does not
+write the current value again. Custom widgets can report the two events independently through
+`on_commit()` and `on_focus_exit()`. When a handler needs extra logic, fall back to a plain
+`move |event| { ...; binding.on_input(event.value()) }` closure with an explicit `binding.clone()`.
 
 ## Tri-State Checkboxes
 
@@ -58,7 +59,8 @@ only reports `checked: bool`; the application or widget owns the cycle and indet
 
 Use `FormHandle::select(path)` when the application can pass typed values directly, such
 as from custom controls or typed option handlers. The binding exposes `value()`, `is_selected(...)`,
-`on_change(value)`, `select(value)`, `on_blur()`, `name()`, and `accessibility()`.
+`on_change(value)`, `select(value)`, `on_commit()`, `on_focus_exit()`, `name()`, and
+`accessibility()`.
 
 Native select elements usually emit rendered string option values. Use
 `FormHandle::select_with(path, parser, formatter)` for enum-like or custom typed fields:
@@ -156,8 +158,10 @@ check typed values. A failed parse:
 - Exposes a binding-level Parse Error separately from Validation Errors.
 - Registers a mounted Parse Blocker so Dioxus-Managed Submission cannot submit stale typed values.
 - Marks the field touched without running typed validation for a value that does not exist.
-- On blur, marks the field blurred but does not run typed blur validation while the Parse Error is
-  active.
+- On Commit, marks the field committed but does not run typed Commit validation while the Parse
+  Error is active.
+- On Focus Exit, marks the field touched and blurred and dispatches blur listeners without running
+  validation.
 
 A successful parse updates the typed field through the user update path, clears the binding's Parse
 Error and Parse Blocker, and participates in configured value-change validation.

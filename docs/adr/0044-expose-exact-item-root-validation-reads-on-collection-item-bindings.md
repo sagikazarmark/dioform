@@ -13,7 +13,7 @@ currently visible validation errors attached there, and visible validation error
 Publish error as a Save Draft error merely because both target the same item value.
 
 The binding does not gain a whole-item value read, rendered **Field Name**, accessibility helper,
-metadata or dirty-state selectors, `on_blur`, setters, or event handlers. A collection row normally
+metadata or dirty-state selectors, `on_commit`, `on_focus_exit`, setters, or event handlers. A collection row normally
 renders several descendant controls and is not itself evidence that one control representing the whole
 item was rendered, focused, blurred, or edited. Those broader reads require their own use cases and, for
 item value and dirty state, correct identity-preserving replacement notifications.

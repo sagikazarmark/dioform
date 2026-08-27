@@ -69,7 +69,7 @@ pub fn CollectionValidationExample() -> Element {
                                     name: name.name(),
                                     value: name.value(),
                                     oninput: move |e| name_oninput.on_input(e.value()),
-                                    onblur: move |_| name.on_blur(),
+                                    onblur: name.onblur(),
                                 }
                                 button {
                                     class: "btn btn-xs btn-outline btn-error",

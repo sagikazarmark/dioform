@@ -11,9 +11,9 @@ is unconditional on trigger set and on **Validation Mode**.
 
 A stored synchronous validator result was invalidated only when a **Validation Trigger** the
 validator is registered for ran again. Nothing invalidated it when the value it was computed over
-changed. A blur-narrowed validator driven invalid by a blur kept its **Validation Error** through a
+changed. A Commit-narrowed validator driven invalid by a Commit kept its **Validation Error** through a
 write that corrected the value — at exact **Field Identity**, with no containment involved — and
-the error stayed *visible*, because the written **Field**'s blurred flag survives a write.
+the error stayed *visible*, because the written **Field**'s committed flag survives a write.
 
 The consequence is a contradiction inside one core. **Submit Availability** counts stored errors
 without a trigger gate, so `can_submit()` reported a blocker, while `submit()` on the same state
@@ -68,10 +68,10 @@ unit tests; selectors and validator selection depend on a collection staying unr
 items.
 
 A symmetric clear on a write and the outward-only selection
-[ADR-0035](0035-select-blur-validators-outward-from-the-field-that-blurred.md) chose for a blur are
+[ADR-0035](0035-select-commit-validators-outward-from-the-field-that-committed.md) chose for a Commit are
 one criterion applied to two events, not two rules. A value change asserts that the value at a path
-was replaced, which is true of the **Fields** it contains and the **Fields** that contain it. A blur
-asserts only that focus left one **Field**.
+was replaced, which is true of the **Fields** it contains and the **Fields** that contain it. A Commit
+asserts only that an interaction completed at one **Field**.
 
 ## Every write path, identified by what it already clears
 
@@ -106,17 +106,17 @@ validator did not pass, its verdict was discarded.
 A form validator's error can be *caused* by a **Field** outside the ancestry of the **Field** it is
 *targeted* at, so a write to that cause clears nothing. This under-reach is accepted and is the same
 loss accepted above for field validators. It fails safe: the stale error stays visible and blocking
-until the next blur or submit attempt, both of which re-run the whole form chain unconditionally.
+until the next Commit or submit attempt, both of which re-run the whole form chain unconditionally.
 
 ## Consequences
 
-Under a blur-scoped **Validation Mode**, an error stored by a blur stops rendering on the next
-keystroke and returns on the following blur if the value is still invalid. This is a user-visible
+Under a Commit-scoped **Validation Mode**, an error stored by a Commit stops rendering on the next
+keystroke and returns on the following Commit if the value is still invalid. This is a user-visible
 change and it applies under every **Error Visibility** policy, because clearing removes the error
 from the store rather than filtering it from a view.
 
 `can_submit()` stops reporting a blocker for a verdict whose value has been replaced. For a
-validator registered for neither blur nor submit, nothing re-runs it, so its verdict is gone until
+validator registered for neither Commit nor submit, nothing re-runs it, so its verdict is gone until
 an explicit `validate_field` call. This is deliberate: an unrefuted verdict about a value that no
 longer exists is not evidence, and the alternative — blocking submission on a verdict the user is no
 longer shown — is the invisible submit blocker ADR-0035 removed.

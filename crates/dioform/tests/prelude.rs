@@ -102,7 +102,8 @@ fn bindings_expose_common_field_state_directly() {
     assert_eq!(email.validation_errors()[0].error(), &"email_required");
 
     email.on_input("ada@example.com");
-    email.on_blur();
+    email.on_commit();
+    email.on_focus_exit();
 
     assert!(email.is_touched());
     assert!(email.is_blurred());
@@ -316,7 +317,7 @@ fn file_field_identity_does_not_collide_with_ordinary_model_field_identity() {
     let ordinary_attachments = form.text(PreludeAttachmentForm::fields().attachments());
     let file_attachments = form.file(FileFieldKey::new("attachments"));
 
-    file_attachments.on_blur();
+    file_attachments.on_focus_exit();
 
     assert!(file_attachments.is_blurred());
     assert!(!ordinary_attachments.is_blurred());
@@ -352,7 +353,7 @@ fn file_selection_binding_tracks_blur_metadata() {
     assert!(!attachments.is_touched());
     assert!(!attachments.is_blurred());
 
-    attachments.on_blur();
+    attachments.on_focus_exit();
 
     assert!(attachments.is_touched());
     assert!(attachments.is_blurred());
@@ -421,6 +422,7 @@ fn file_selection_binding_exposes_visible_validation_errors_after_blur() {
         });
     let attachments = form.file(FileFieldKey::new("attachments"));
     let attachment_identity = attachments.identity();
+    form.set_error_visibility_policy(ErrorVisibilityPolicy::BlurOrSubmit);
 
     form.validator("attachments")
         .on(ValidationTrigger::Manual)
@@ -434,7 +436,7 @@ fn file_selection_binding_exposes_visible_validation_errors_after_blur() {
 
     assert!(attachments.visible_validation_errors().is_empty());
 
-    attachments.on_blur();
+    attachments.on_focus_exit();
 
     let visible_errors: Vec<_> = attachments
         .visible_validation_errors()
@@ -979,20 +981,20 @@ fn collection_mutation_preserves_context_free_file_async_validation_state() {
 }
 
 #[test]
-fn file_selection_blur_runs_configured_form_blur_validation() {
+fn file_selection_commit_runs_configured_form_commit_validation() {
     let form: FormHandle<PreludeSignupForm, &'static str> = FormHandle::from_config(
         FormConfig::new(PreludeSignupForm {
             email: String::new(),
             accepts_terms: false,
             topics: Vec::new(),
         })
-        .validation_mode(ValidationMode::on_blur()),
+        .validation_mode(ValidationMode::on_commit()),
     );
     let attachments = form.file(FileFieldKey::new("attachments"));
     let attachment_identity = attachments.identity();
 
     form.validator("attachments")
-        .on(ValidationTrigger::Blur)
+        .on(ValidationTrigger::Commit)
         .check_optional(move |_context| {
             Some(FormValidationError::field_identity(
                 attachment_identity.clone(),
@@ -1002,13 +1004,13 @@ fn file_selection_blur_runs_configured_form_blur_validation() {
 
     assert!(attachments.validation_errors().is_empty());
 
-    attachments.on_blur();
+    attachments.on_commit();
 
     assert_eq!(attachments.validation_errors()[0].error(), &"file_required");
 }
 
 #[test]
-fn submit_only_validation_mode_does_not_run_blur_validation() {
+fn submit_only_validation_mode_does_not_run_commit_validation() {
     let form: FormHandle<PreludeSignupForm, &'static str> = FormHandle::from_config(
         FormConfig::new(PreludeSignupForm {
             email: String::new(),
@@ -1021,11 +1023,12 @@ fn submit_only_validation_mode_does_not_run_blur_validation() {
     let email_validator = form
         .field(email_path.clone())
         .validator("email")
-        .on(ValidationTrigger::Blur)
+        .on(ValidationTrigger::Commit)
         .check_optional(|value, _context| value.is_empty().then_some("email_required"));
     let email = form.text(email_path.clone());
 
-    email.on_blur();
+    email.on_commit();
+    email.on_focus_exit();
 
     assert!(email.is_blurred());
     assert_eq!(email.validation_errors().len(), 0);

@@ -1,7 +1,7 @@
 # Blur the multi-select option the user left
 
-`MultiSelectOptionBinding::on_blur` marks the **Collection Field** and *its own* selected value. It
-no longer delegates to `MultiSelectBinding::on_blur`, which fans one gesture out across every
+`MultiSelectOptionBinding::on_focus_exit` marks the **Collection Field** and *its own* selected value.
+It does not delegate to `MultiSelectBinding::on_focus_exit`, which would fan one gesture out across every
 selected value. The dispatch count falls from `1 + N` to at most `1 + 1` as a consequence of marking
 the right **Fields**, not as a separate concession.
 
@@ -11,14 +11,9 @@ the right **Fields**, not as a separate concession.
 binding an application wires a checkbox to, through `onblur()`. Every fact needed to name the value
 whose control lost focus was in hand at the call site:
 
-```rust
-pub fn on_blur(&self) {
-    self.multi_select.on_blur();   // discards self.value
-}
-```
-
-`MultiSelectBinding::on_blur` then marked the **Collection Field** and looped `item.on_blur()` over
-the whole selection, because by that point the value was gone and every selected value looked
+The former option-level path delegated to the group after discarding its value.
+The group then marked the **Collection Field** and looped over the whole selection, because by that
+point the value was gone and every selected value looked
 equally likely. One `onblur` on one checkbox produced `1 + N` blur dispatches, `N` of them naming
 values the user never focused.
 
@@ -33,7 +28,7 @@ it was not the defect.
 Marking every selected value blurred therefore made every selected value's stored error visible, and
 `aria-invalid` true, on controls the user had never focused. Selecting three topics, one of which
 fails an `item_validator`, and leaving a *different* checkbox announced an error on the invalid one.
-The current `CommitOrBlurOrSubmit` default added by
+The current `CommitOrSubmit` default added by
 [ADR-0051](0051-reveal-field-errors-after-commit-without-marking-fields-blurred.md) preserves that
 exact blurred meaning while separately considering exact committed metadata.
 
@@ -49,26 +44,28 @@ Identity**, so deselecting and reselecting a value mints a fresh one
 flag. The same invalid value oscillated between showing its error and hiding it, driven by selection
 history rather than by anything the user did with focus.
 
-## Removing the fan-out without replacing it would have removed the validation
+## Commit preserves exact per-value validation
 
-The fan-out did two jobs. `mark_collection_item_field_blurred` marks *and* runs blur validation
-inline, and the strict collection clause means nothing else reaches an item from a collection blur:
+The former fan-out did two jobs: it marked fields blurred and ran validation inline. Commit and Focus
+Exit are now separate. `MultiSelectOptionBinding::on_commit` explicitly names the collection and its
+selected item for validation, while `on_focus_exit` marks those same exact fields. The strict
+collection clause means a collection Commit alone does not reach an item:
 `FieldAncestry` relates a static identity to a `CollectionItem` only when it is a *strict* ancestor
 of the collection component, so `topics` does not relate to `topics[item]`. That strictness is
 deliberate and load-bearing
-([ADR-0020](0020-derive-field-ancestry-from-identity-paths.md)), and it means a collection-level blur
+([ADR-0020](0020-derive-field-ancestry-from-identity-paths.md)), and it means a collection-level Commit
 selects no item validators at all.
 
-Measured, with `ValidationMode::on_blur()` and one failing `item_validator`:
+Measured, with `ValidationMode::on_commit()` and one failing `item_validator`:
 
 ```
-collection blur only          -> stored=0, visible=0 on every item   (validator never ran)
-blur the item the user left   -> that item stored=1, visible=1; siblings untouched
+collection Commit only        -> stored=0, visible=0 on every item   (validator never ran)
+Commit the selected item      -> that item stored=1, visible=1; siblings untouched
 ```
 
-So "stop marking the items" is not available as a fix on its own — it silently disables per-value
-validation. Naming the one value whose control blurred keeps the validator running exactly where the
-user can act on the result.
+Naming the one selected value on Commit keeps its validator running exactly where the user can act
+on the result. Naming it separately on Focus Exit keeps blurred metadata and listeners exact without
+running validation again.
 
 ## One control, two addresses — and why that is not upward aggregation
 
@@ -86,7 +83,7 @@ about a **Field** from an event that happened somewhere else inside it: one DOM 
 The two other readings were considered:
 
 - **Item only.** The most literal reading, and it leaves a rendering that binds one listbox to the
-  whole **Field** — `MultiSelectBinding::on_blur`, which names no value — marking nothing, so a
+  whole **Field** — `MultiSelectBinding::on_focus_exit`, which names no value — marking nothing, so a
   collection-scoped validator's error never becomes visible before a submit attempt. That is a
   regression for an entry point that is correct today.
 - **Collection only.** The radio-group analogue: one **Field**, many inputs, blur marks the
@@ -95,14 +92,14 @@ The two other readings were considered:
   a blur bug would relate every static descendant of a collection path to its items, which is what
   `a_static_descendant_of_a_collection_path_does_not_relate_to_its_items` forbids.
 
-## What each entry point marks
+## What each Focus Exit entry point marks
 
-- `MultiSelectOptionBinding::on_blur` — the **Collection Field**, plus its own selected value when
+- `MultiSelectOptionBinding::on_focus_exit` — the **Collection Field**, plus its own selected value when
   the option is selected. An unselected option has no item, so it marks the collection alone. This is
   the DOM-driven path.
-- `MultiSelectBinding::on_blur` — the **Collection Field** alone. It names no value, so it marks no
+- `MultiSelectBinding::on_focus_exit` — the **Collection Field** alone. It names no value, so it marks no
   value. This is the entry point for a rendering that binds one control to the whole **Field**.
-- `MultiSelectItem::on_blur` — that value alone. It is already public and is the per-chip entry point
+- `MultiSelectItem::on_focus_exit` — that value alone. It is the per-chip entry point
   for the chip, listbox, and command-palette renderings `docs/collection-fields.md` promises.
 
 Each is exact about what its caller named, which is the property the fan-out lacked.

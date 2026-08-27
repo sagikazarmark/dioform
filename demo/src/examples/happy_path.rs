@@ -68,13 +68,14 @@ fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
 
 fn build_form() -> FormHandle<WorkshopRegistration> {
     let handle = FormHandle::<WorkshopRegistration>::from_config(
-        FormConfig::new(WorkshopRegistration::default()).validation_mode(ValidationMode::on_blur()),
+        FormConfig::new(WorkshopRegistration::default())
+            .validation_mode(ValidationMode::on_commit()),
     )
     .with_id_namespace("workshop-registration");
 
     handle.write_advanced(|core| {
         core.garde_validation()
-            .triggers([ValidationTrigger::Blur, ValidationTrigger::Submit])
+            .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
             .derived_path_map()
             .register_string_errors();
     });
@@ -304,7 +305,7 @@ pub fn HappyPathExample() -> Element {
                         "The panel uses field-scoped Form Selectors rather than subscribing each control to the whole form. Optional fields stay optional; every Dioxus-Managed Submission still reruns garde before producing a Submission Snapshot."
                     }
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
-                        "The Field Convention reports Commit and Focus Exit separately. Dioform uses Commit for committed Error Visibility and Blur validation, then Focus Exit for exact touched and Blurred Field state without validating twice."
+                        "The Field Convention reports Commit and Focus Exit separately. Dioform uses Commit for validation and committed Error Visibility, then Focus Exit for exact touched and Blurred Field state without validating twice."
                     }
                 }
             },

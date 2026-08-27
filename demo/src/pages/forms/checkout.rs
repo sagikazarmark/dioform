@@ -53,7 +53,7 @@ fn required(
 
 fn build() -> FormHandle<CheckoutForm> {
     let form = FormHandle::<CheckoutForm>::from_config(
-        FormConfig::new(initial()).validation_mode(ValidationMode::on_blur()),
+        FormConfig::new(initial()).validation_mode(ValidationMode::on_commit()),
     );
     form.write_advanced(|core| {
         let f = CheckoutForm::fields();

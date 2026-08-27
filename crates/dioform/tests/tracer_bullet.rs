@@ -35,7 +35,8 @@ use dioform::{
     use_select_with, use_submit_listener,
 };
 use dioxus::prelude::{
-    Props, Signal, WritableExt, component, dioxus_signals, rsx, use_memo, use_signal,
+    FocusData, HasFocusData, Props, Signal, WritableExt, component, dioxus_signals, rsx, use_memo,
+    use_signal,
 };
 use dioxus_core::{Element, Event, VNode, VirtualDom, use_hook};
 use dioxus_signals::{ReadSignal, ReadableExt};
@@ -52,6 +53,18 @@ const USER_UPDATE_ROUNDS: usize = 64;
 
 fn managed_submit_event() -> Event<()> {
     Event::new(Rc::new(()), true)
+}
+
+struct TestFocusData;
+
+impl HasFocusData for TestFocusData {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+fn focus_event() -> Event<FocusData> {
+    Event::new(Rc::new(FocusData::new(TestFocusData)), true)
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
@@ -596,6 +609,7 @@ struct FormListenerProbe {
     rich_events: RefCell<Vec<(String, String, FormListenerEvent, FieldUpdateOrigin)>>,
     blur_events: RefCell<Vec<String>>,
     rich_blur_events: RefCell<Vec<(String, String)>>,
+    native_interaction_order: RefCell<Vec<&'static str>>,
     autosaved_snapshots: RefCell<Vec<ProfileForm>>,
 }
 
@@ -970,6 +984,10 @@ fn form_blur_listener_field_identification_probe(probe: Rc<FormListenerProbe>) -
 
     use_form_blur_listener(form.clone(), move |context| {
         let field = context.field_identity();
+        listener_probe
+            .native_interaction_order
+            .borrow_mut()
+            .push("focus_exit");
         listener_probe
             .blur_events
             .borrow_mut()
@@ -2546,8 +2564,8 @@ fn field_blur_listener_on_a_container_hears_each_nested_child_without_widening_m
         .expect("probe should expose its form handle")
         .clone();
 
-    handle.text(nested_customer_name_path()).on_blur();
-    handle.text(nested_customer_tax_id_path()).on_blur();
+    handle.text(nested_customer_name_path()).on_focus_exit();
+    handle.text(nested_customer_tax_id_path()).on_focus_exit();
 
     assert_eq!(
         probe.customer_events.borrow().as_slice(),
@@ -2577,7 +2595,9 @@ fn field_blur_listener_on_a_container_hears_each_nested_child_without_widening_m
     assert!(!handle.is_field_blurred(nested_customer_path()));
     assert!(!handle.is_field_touched(nested_customer_path()));
 
-    handle.text(nested_customer_account_name_path()).on_blur();
+    handle
+        .text(nested_customer_account_name_path())
+        .on_focus_exit();
 
     assert_eq!(probe.customer_events.borrow().len(), 2);
 }
@@ -2677,6 +2697,71 @@ fn form_blur_listener_exposes_rendered_field_name() {
 }
 
 #[test]
+fn native_onblur_helper_commits_then_reports_focus_exit_for_changed_and_unchanged_inputs() {
+    let probe = Rc::new(FormListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        form_blur_listener_field_identification_probe,
+        Rc::clone(&probe),
+    );
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let email_path = ProfileForm::fields().email();
+    let observer_probe = Rc::clone(&probe);
+    let validator_probe = Rc::clone(&probe);
+    handle.write_advanced(|core| {
+        core.observe(move |event| {
+            if matches!(event, FormObserverEvent::FieldUpdated { .. }) {
+                observer_probe
+                    .native_interaction_order
+                    .borrow_mut()
+                    .push("write");
+            }
+        });
+        core.register_sync_field_validator_for_triggers(
+            email_path.clone(),
+            "native_commit",
+            ValidationTrigger::Commit,
+            move |_value, _context| {
+                validator_probe
+                    .native_interaction_order
+                    .borrow_mut()
+                    .push("commit");
+                Vec::new()
+            },
+        );
+    });
+    let email = handle.text(email_path.clone());
+
+    email.on_input("ada@example.com");
+    email.onblur()(focus_event());
+
+    assert_eq!(
+        probe.native_interaction_order.borrow().as_slice(),
+        ["write", "commit", "focus_exit"]
+    );
+    assert!(handle.is_field_committed(email_path.clone()));
+    assert!(handle.is_field_blurred(email_path.clone()));
+
+    handle.reset();
+    probe.native_interaction_order.borrow_mut().clear();
+
+    email.onblur()(focus_event());
+
+    assert_eq!(
+        probe.native_interaction_order.borrow().as_slice(),
+        ["commit", "focus_exit"]
+    );
+    assert!(handle.is_field_committed(email_path.clone()));
+    assert!(handle.is_field_blurred(email_path));
+}
+
+#[test]
 fn form_listener_reports_file_selection_changes() {
     let probe = Rc::new(FormListenerProbe::default());
     let mut dom =
@@ -2723,8 +2808,38 @@ fn form_blur_listener_reports_file_selection_blur() {
         .expect("probe should expose its form handle")
         .clone();
 
-    handle.file(FileFieldKey::new("attachments")).on_blur();
+    handle
+        .file(FileFieldKey::new("attachments"))
+        .on_focus_exit();
 
+    assert_eq!(
+        probe.rich_blur_events.borrow().as_slice(),
+        [("attachments".to_owned(), "attachments".to_owned())]
+    );
+}
+
+#[test]
+fn file_selection_native_onblur_helper_reports_commit_then_focus_exit() {
+    let probe = Rc::new(FormListenerProbe::default());
+    let mut dom = VirtualDom::new_with_props(
+        form_blur_listener_field_identification_probe,
+        Rc::clone(&probe),
+    );
+    dom.rebuild_in_place();
+
+    let handle = probe
+        .handle
+        .borrow()
+        .as_ref()
+        .expect("probe should expose its form handle")
+        .clone();
+    let attachments = handle.file(FileFieldKey::new("attachments"));
+
+    attachments.onblur()(focus_event());
+
+    assert!(attachments.metadata().is_committed());
+    assert!(attachments.metadata().is_touched());
+    assert!(attachments.metadata().is_blurred());
     assert_eq!(
         probe.rich_blur_events.borrow().as_slice(),
         [("attachments".to_owned(), "attachments".to_owned())]
@@ -2746,7 +2861,7 @@ fn form_blur_listener_reports_collection_item_field_blur() {
         .expect("probe should expose collection item description binding")
         .clone();
 
-    description.on_blur();
+    description.on_focus_exit();
 
     assert_eq!(
         probe.events.borrow().as_slice(),
@@ -2771,7 +2886,7 @@ fn collection_field_blur_listener_hears_its_item_but_siblings_and_descendants_do
         .borrow()
         .as_ref()
         .expect("probe should expose the collection item description binding")
-        .on_blur();
+        .on_focus_exit();
 
     let lines_events = probe.lines_events.borrow();
 
@@ -2863,7 +2978,7 @@ fn multi_select_option_blur_dispatches_for_the_collection_and_that_option_only()
         .selected_item(&Topic::Accessibility)
         .expect("Accessibility should be selected");
 
-    topics.option(Topic::Dioxus).on_blur();
+    topics.option(Topic::Dioxus).on_focus_exit();
 
     assert_eq!(
         probe.events.borrow().as_slice(),
@@ -2901,7 +3016,7 @@ fn multi_select_item_blur_dispatches_for_that_value_only() {
         .selected_item(&Topic::Dioxus)
         .expect("Dioxus should be selected");
 
-    dioxus.on_blur();
+    dioxus.on_focus_exit();
 
     assert_eq!(
         probe.events.borrow().as_slice(),
@@ -2931,7 +3046,7 @@ fn multi_select_option_blur_uses_the_selection_from_when_blur_started() {
         .select_on_collection_blur
         .set(Some(Topic::Accessibility));
 
-    accessibility.on_blur();
+    accessibility.on_focus_exit();
 
     assert_eq!(
         probe.events.borrow().as_slice(),
@@ -4895,9 +5010,14 @@ fn dioxus_facade_text_binding_updates_the_typed_field() {
         "ada@example.com"
     );
 
-    email.on_blur();
+    email.on_commit();
 
     assert!(handle.is_field_touched(email_path.clone()));
+    assert!(handle.is_field_committed(email_path.clone()));
+    assert!(!handle.is_field_blurred(email_path.clone()));
+
+    email.on_focus_exit();
+
     assert!(handle.is_field_blurred(email_path));
 }
 
@@ -5119,7 +5239,8 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
 
     let inserted_description = lines.items()[1].text(description_path.clone());
     inserted_description.on_input("");
-    inserted_description.on_blur();
+    inserted_description.on_commit();
+    inserted_description.on_focus_exit();
     source.validate_all(ValidationTrigger::Manual);
 
     assert_eq!(source.submit_attempt_count(), 0);
@@ -5139,6 +5260,15 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
         .expect("form state snapshot should serialize");
     let serialized_value: serde_json::Value =
         serde_json::from_str(&serialized).expect("serialized snapshot should be JSON");
+    assert_eq!(
+        serialized_value["validation_mode"]["validate_on_commit"],
+        serde_json::json!(true)
+    );
+    assert!(
+        serialized_value["validation_mode"]
+            .get("validate_on_blur")
+            .is_none()
+    );
     let empty_states = Vec::new();
     let validator_states = serialized_value["collection_item_validator_states"]
         .as_array()
@@ -5220,6 +5350,30 @@ fn dioform_state_snapshot_serializes_deserializes_and_restores_core_state() {
     assert_eq!(
         restored.error_visibility_policy(),
         dioform::ErrorVisibilityPolicy::Always
+    );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn form_state_snapshot_v6_rejects_v5_interaction_semantics() {
+    let source: FormHandle<SignupForm, String> = FormHandle::new_with_error_type(SignupForm {
+        email: "ada@example.com".to_owned(),
+    });
+    let mut serialized = serde_json::to_value(source.state_snapshot())
+        .expect("form state snapshot should serialize");
+    serialized["version"] = serde_json::json!(5);
+    let snapshot =
+        serde_json::from_value(serialized).expect("v5-shaped snapshot should deserialize");
+    let target: FormHandle<SignupForm, String> = FormHandle::new_with_error_type(SignupForm {
+        email: String::new(),
+    });
+
+    assert_eq!(
+        target.restore_state_snapshot(snapshot),
+        Err(FormStateRestoreError::UnsupportedFormStateVersion {
+            expected: 6,
+            actual: 5,
+        })
     );
 }
 
@@ -5311,7 +5465,7 @@ fn collection_parsed_input_listener_sees_cleared_parse_blocker_after_successful_
 }
 
 #[test]
-fn dioxus_collection_parsed_binding_blur_with_parse_error_does_not_validate_stale_typed_value() {
+fn dioxus_collection_parsed_binding_commit_with_parse_error_does_not_validate_stale_typed_value() {
     let validation_runs = Rc::new(Cell::new(0));
     let validation_runs_for_validator = Rc::clone(&validation_runs);
     let seen_values = Rc::new(RefCell::new(Vec::new()));
@@ -5325,12 +5479,12 @@ fn dioxus_collection_parsed_binding_blur_with_parse_error_does_not_validate_stal
     let quantity = item.number(quantity_path.clone());
 
     lines
-        .item_field_validator(quantity_path.clone(), "minimum_quantity_on_blur")
-        .on(ValidationTrigger::Blur)
+        .item_field_validator(quantity_path.clone(), "minimum_quantity_on_commit")
+        .on(ValidationTrigger::Commit)
         .check(move |value, context| {
             validation_runs_for_validator.set(validation_runs_for_validator.get() + 1);
             seen_values_for_validator.borrow_mut().push(*value);
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
 
             if *value < 3 {
                 vec!["quantity_too_low"]
@@ -5340,18 +5494,24 @@ fn dioxus_collection_parsed_binding_blur_with_parse_error_does_not_validate_stal
         });
 
     quantity.on_input("not-a-number");
-    quantity.on_blur();
+    quantity.on_commit();
 
     assert!(quantity.is_touched());
-    assert!(quantity.is_blurred());
+    assert!(quantity.metadata().is_committed());
+    assert!(!quantity.is_blurred());
     assert_eq!(handle.snapshot().lines[0].quantity, 2);
     assert!(quantity.parse_error().is_some());
     assert_eq!(validation_runs.get(), 0);
     assert!(seen_values.borrow().is_empty());
     assert!(quantity.validation_errors().is_empty());
 
+    quantity.on_focus_exit();
+
+    assert!(quantity.is_blurred());
+    assert_eq!(validation_runs.get(), 0);
+
     quantity.on_input("1");
-    quantity.on_blur();
+    quantity.on_commit();
 
     assert!(quantity.parse_error().is_none());
     assert_eq!(handle.snapshot().lines[0].quantity, 1);
@@ -6374,7 +6534,7 @@ fn dioxus_collection_item_validator_templates_cover_inserted_and_reordered_items
     assert_eq!(description.validation_errors()[0].error(), &"required");
     assert!(description.visible_validation_errors().is_empty());
 
-    description.on_blur();
+    description.on_commit();
 
     assert_eq!(
         description.visible_validation_errors()[0].error(),
@@ -6556,7 +6716,7 @@ fn descendant_blur_wakes_an_item_root_visible_error_reader_without_running_valid
     probe
         .item
         .text(InvoiceCollectionLine::fields().description())
-        .on_blur();
+        .on_focus_exit();
     dom.render_immediate_to_vec();
 
     assert_eq!(
@@ -6660,7 +6820,8 @@ fn collection_item_addressing_tracks_one_logical_item_across_public_surfaces() {
     let initial_quantity_input_id = quantity.accessibility().input_id().to_owned();
 
     description.on_input("");
-    description.on_blur();
+    description.on_commit();
+    description.on_focus_exit();
     quantity.on_input("not-a-number");
 
     let description_identity = description.validation_errors()[0].expect_field();
@@ -7067,7 +7228,7 @@ fn dioform_handle_updates_dependent_ui_reactively() {
         })
     );
 
-    handle.mark_field_blurred(email_path.clone());
+    handle.commit_field(email_path.clone());
     dom.render_immediate_to_vec();
 
     assert_eq!(
@@ -7309,7 +7470,7 @@ fn dioform_handle_runs_initialization_validation_only_when_requested() {
             .is_empty()
     );
 
-    handle.mark_field_blurred(email.clone());
+    handle.commit_field(email.clone());
 
     assert_eq!(
         handle.visible_field_validation_errors(email)[0].error(),
@@ -7580,7 +7741,7 @@ fn dioxus_submit_then_revalidate_mode_runs_change_validation_after_submit_attemp
 }
 
 #[test]
-fn dioxus_submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt() {
+fn dioxus_submit_then_revalidate_mode_runs_commit_validation_after_submit_attempt() {
     let runs = Rc::new(Cell::new(0));
     let validator_runs = Rc::clone(&runs);
     let email = SignupForm::fields().email();
@@ -7593,10 +7754,10 @@ fn dioxus_submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt(
     handle
         .field(email.clone())
         .validator("required")
-        .on(ValidationTrigger::Blur)
+        .on(ValidationTrigger::Commit)
         .check(move |value, context| {
             validator_runs.set(validator_runs.get() + 1);
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
 
             if value.is_empty() {
                 vec!["required"]
@@ -7606,7 +7767,7 @@ fn dioxus_submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt(
         });
 
     let email_binding = handle.text(email.clone());
-    email_binding.on_blur();
+    email_binding.on_commit();
 
     assert_eq!(runs.get(), 0);
     assert_eq!(
@@ -7621,7 +7782,7 @@ fn dioxus_submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt(
             .on_submit(managed_submit_event(), |_submitted| ()),
         SubmitResult::Succeeded
     );
-    email_binding.on_blur();
+    email_binding.on_commit();
 
     assert_eq!(runs.get(), 1);
     assert_eq!(
@@ -10043,7 +10204,8 @@ fn dioxus_facade_textarea_binding_updates_the_typed_field() {
         "Ada\nLovelace"
     );
 
-    biography.on_blur();
+    biography.on_commit();
+    biography.on_focus_exit();
 
     assert!(handle.is_field_touched(biography_path.clone()));
     assert!(handle.is_field_blurred(biography_path));
@@ -10108,7 +10270,8 @@ fn dioxus_facade_checkbox_binding_updates_the_typed_field() {
     assert!(accepts_terms.checked());
     assert!(handle.is_field_dirty(accepts_terms_path.clone()));
 
-    accepts_terms.on_blur();
+    accepts_terms.on_commit();
+    accepts_terms.on_focus_exit();
 
     assert!(handle.is_field_touched(accepts_terms_path.clone()));
     assert!(handle.is_field_blurred(accepts_terms_path));
@@ -10146,7 +10309,8 @@ fn dioxus_facade_tri_state_checkbox_binding_round_trips_none() {
     assert_eq!(handle.field_value(subscription_path.clone()), None);
     assert!(!handle.is_field_dirty(subscription_path.clone()));
 
-    subscription.on_blur();
+    subscription.on_commit();
+    subscription.on_focus_exit();
 
     assert!(handle.is_field_touched(subscription_path.clone()));
     assert!(handle.is_field_blurred(subscription_path));
@@ -10227,7 +10391,7 @@ fn multi_select_validation_notify_probe(probe: Rc<MultiSelectValidationNotifyPro
 }
 
 #[test]
-fn multi_select_item_blur_notifies_validation_selectors_only_when_configured() {
+fn multi_select_item_focus_exit_does_not_notify_form_validation_selectors() {
     let probe = Rc::new(MultiSelectValidationNotifyProbe::new());
     let mut dom =
         VirtualDom::new_with_props(multi_select_validation_notify_probe, Rc::clone(&probe));
@@ -10235,7 +10399,7 @@ fn multi_select_item_blur_notifies_validation_selectors_only_when_configured() {
     dom.rebuild_in_place();
     assert_eq!(probe.form_error_reads.get(), 1);
 
-    probe.item.on_blur();
+    probe.item.on_focus_exit();
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.form_error_reads.get(), 1);
@@ -10337,7 +10501,8 @@ fn dioxus_collection_checkbox_binding_updates_metadata_and_reorders() {
         (true, false)
     );
 
-    enabled.on_blur();
+    enabled.on_commit();
+    enabled.on_focus_exit();
 
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), enabled_path.clone()),
@@ -10396,7 +10561,8 @@ fn dioxus_collection_select_binding_updates_metadata_and_reorders() {
         (true, false)
     );
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -10462,7 +10628,8 @@ fn dioxus_collection_rendered_select_binding_updates_metadata_and_reorders() {
         (true, false)
     );
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -10515,7 +10682,8 @@ fn dioxus_collection_radio_group_binding_updates_metadata_and_reorders() {
         (true, false)
     );
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert_eq!(
         collection_helper_metadata(&handle, second.identity(), plan_path.clone()),
@@ -10651,7 +10819,8 @@ fn dioxus_multi_select_item_reads_an_unselected_value_without_panicking() {
     assert!(!rust.is_blurred());
     assert!(rust.validation_errors().is_empty());
 
-    rust.on_blur();
+    rust.on_commit();
+    rust.on_focus_exit();
 
     assert_eq!(handle.snapshot(), after_deselect);
     assert!(!rust.is_touched());
@@ -10957,7 +11126,8 @@ fn dioxus_collection_writes_through_an_unresolved_binding_are_no_ops() {
     leaves.rendered_plan.on_change("enterprise");
     leaves.radio_plan.select(Plan::Enterprise);
     leaves.starts_on.on_input("2027-03-03");
-    leaves.label.on_blur();
+    leaves.label.on_commit();
+    leaves.label.on_focus_exit();
 
     assert_eq!(handle.snapshot(), after_removal);
     assert_eq!(handle.snapshot().rows.len(), 1);
@@ -11009,7 +11179,8 @@ fn dioxus_a_binding_retained_across_reinitialize_never_resolves_again() {
     assert_eq!(retained.value(), "");
 
     retained.on_input("written through a retired identity");
-    retained.on_blur();
+    retained.on_commit();
+    retained.on_focus_exit();
 
     assert_eq!(handle.snapshot(), reinitialized_invoice_collection_form());
     assert!(!retained.is_touched());
@@ -11148,7 +11319,8 @@ fn collection_item_date_hook_preserves_parse_state_and_updates_name_after_reorde
         (true, false)
     );
 
-    starts_on.on_blur();
+    starts_on.on_commit();
+    starts_on.on_focus_exit();
 
     assert_eq!(
         collection_helper_metadata(&handle, tracked_item, starts_on_path.clone()),
@@ -11229,7 +11401,7 @@ trait CommonFieldBindingContract<Value> {
 
     fn contract_set_user(&self, value: Value);
 
-    fn contract_blur(&self);
+    fn contract_commit_and_focus_exit(&self);
 }
 
 impl<Model> CommonFieldBindingContract<String> for dioform::TextBinding<Model, &'static str> {
@@ -11253,8 +11425,9 @@ impl<Model> CommonFieldBindingContract<String> for dioform::TextBinding<Model, &
         self.on_input(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11279,8 +11452,9 @@ impl<Model> CommonFieldBindingContract<String> for dioform::TextareaBinding<Mode
         self.on_input(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11305,8 +11479,9 @@ impl<Model> CommonFieldBindingContract<bool> for dioform::CheckboxBinding<Model,
         self.on_change(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11335,8 +11510,9 @@ where
         self.on_change(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11365,8 +11541,9 @@ where
         self.select(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11395,8 +11572,9 @@ where
         self.on_change(value);
     }
 
-    fn contract_blur(&self) {
-        self.on_blur();
+    fn contract_commit_and_focus_exit(&self) {
+        self.on_commit();
+        self.on_focus_exit();
     }
 }
 
@@ -11418,8 +11596,8 @@ fn assert_common_field_binding_contract<Model, Value, Binding>(
     let captured_events = Rc::clone(&observer_events);
     let value_change_runs = Rc::new(Cell::new(0));
     let value_change_runs_for_validator = Rc::clone(&value_change_runs);
-    let blur_runs = Rc::new(Cell::new(0));
-    let blur_runs_for_validator = Rc::clone(&blur_runs);
+    let commit_runs = Rc::new(Cell::new(0));
+    let commit_runs_for_validator = Rc::clone(&commit_runs);
 
     handle.write_advanced(|core| {
         core.observe(move |event| captured_events.borrow_mut().push(event.clone()));
@@ -11435,11 +11613,11 @@ fn assert_common_field_binding_contract<Model, Value, Binding>(
         );
         core.register_sync_field_validator_for_triggers(
             path.clone(),
-            "contract_blur",
-            ValidationTrigger::Blur,
+            "contract_commit",
+            ValidationTrigger::Commit,
             move |_value, context| {
-                blur_runs_for_validator.set(blur_runs_for_validator.get() + 1);
-                assert_eq!(context.trigger(), ValidationTrigger::Blur);
+                commit_runs_for_validator.set(commit_runs_for_validator.get() + 1);
+                assert_eq!(context.trigger(), ValidationTrigger::Commit);
                 Vec::new()
             },
         );
@@ -11482,10 +11660,10 @@ fn assert_common_field_binding_contract<Model, Value, Binding>(
         )
     }));
 
-    binding.contract_blur();
+    binding.contract_commit_and_focus_exit();
 
     assert!(handle.is_field_blurred(path));
-    assert_eq!(blur_runs.get(), 1);
+    assert_eq!(commit_runs.get(), 1);
 }
 
 #[test]
@@ -11614,7 +11792,8 @@ fn dioxus_facade_select_binding_updates_a_typed_field() {
         .iter()
         .any(|event| matches!(event, FormObserverEvent::FieldUpdated { field, origin: FieldUpdateOrigin::User, .. } if field.field_name() == "plan")));
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert!(handle.is_field_touched(plan_path.clone()));
     assert!(handle.is_field_blurred(plan_path.clone()));
@@ -11704,7 +11883,8 @@ fn dioxus_facade_rendered_select_binding_maps_native_select_values() {
         &"contact_sales"
     );
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert!(handle.is_field_blurred(plan_path));
 }
@@ -11870,28 +12050,28 @@ fn dioxus_multi_select_binding_selects_deselects_resets_and_submits_values() {
 }
 
 #[test]
-fn dioxus_multi_select_binding_blur_marks_only_the_collection() {
+fn dioxus_multi_select_focus_exit_marks_only_the_collection_blurred() {
     let handle = FormHandle::new(MultiSelectForm {
         topics: vec![Topic::Rust, Topic::Dioxus, Topic::Accessibility],
     });
     let topics = handle.multi_select(MultiSelectForm::fields().topics());
     let items = topics.items();
 
-    topics.on_blur();
+    topics.on_focus_exit();
 
     assert!(topics.is_blurred());
     assert!(items.iter().all(|item| !item.is_blurred()));
 }
 
 #[test]
-fn dioxus_unselected_multi_select_option_blur_marks_only_the_collection() {
+fn dioxus_unselected_multi_select_option_focus_exit_marks_only_the_collection() {
     let handle = FormHandle::new(MultiSelectForm {
         topics: vec![Topic::Rust, Topic::Dioxus],
     });
     let topics = handle.multi_select(MultiSelectForm::fields().topics());
     let items = topics.items();
 
-    topics.option(Topic::Accessibility).on_blur();
+    topics.option(Topic::Accessibility).on_focus_exit();
 
     assert!(topics.is_blurred());
     assert!(items.iter().all(|item| !item.is_blurred()));
@@ -11934,9 +12114,10 @@ fn dioxus_multi_select_item_validation_attaches_to_selected_value_identity() {
     assert_eq!(dioxus.validation_errors()[0].error(), &"topic_unavailable");
     assert!(dioxus.visible_validation_errors().is_empty());
 
-    topics.option(Topic::Dioxus).on_blur();
+    topics.option(Topic::Dioxus).on_commit();
 
-    assert!(dioxus.is_blurred());
+    assert!(dioxus.metadata().is_committed());
+    assert!(!dioxus.is_blurred());
     assert!(
         !topics
             .selected_item(&Topic::Rust)
@@ -11972,7 +12153,7 @@ fn dioxus_multi_select_item_validation_attaches_to_selected_value_identity() {
 }
 
 #[test]
-fn dioxus_multi_select_option_blur_reveals_only_that_selected_value_errors() {
+fn dioxus_multi_select_option_commit_reveals_only_that_selected_value_errors() {
     let handle: FormHandle<MultiSelectForm, &'static str> =
         FormHandle::new_with_error_type(MultiSelectForm {
             topics: vec![Topic::Rust],
@@ -12003,23 +12184,24 @@ fn dioxus_multi_select_option_blur_reveals_only_that_selected_value_errors() {
     assert!(dioxus.visible_validation_errors().is_empty());
     assert!(accessibility.visible_validation_errors().is_empty());
 
-    topics.option(Topic::Accessibility).on_blur();
+    topics.option(Topic::Accessibility).on_commit();
 
     assert!(!dioxus.is_blurred());
     assert!(dioxus.visible_validation_errors().is_empty());
     assert!(!dioxus.accessibility().aria_invalid());
-    assert!(accessibility.is_blurred());
+    assert!(!accessibility.is_blurred());
+    assert!(accessibility.metadata().is_committed());
     assert_eq!(accessibility.visible_validation_errors().len(), 1);
     assert!(accessibility.accessibility().aria_invalid());
 }
 
 #[test]
-fn dioxus_multi_select_option_blur_runs_item_validation() {
+fn dioxus_multi_select_option_commit_runs_item_validation_without_blurring() {
     let handle: FormHandle<MultiSelectForm, &'static str> =
         FormHandle::new_with_error_type(MultiSelectForm {
             topics: vec![Topic::Dioxus],
         })
-        .with_validation_mode(ValidationMode::on_blur());
+        .with_validation_mode(ValidationMode::on_commit());
     let topics = handle.multi_select(MultiSelectForm::fields().topics());
 
     topics
@@ -12031,9 +12213,10 @@ fn dioxus_multi_select_option_blur_runs_item_validation() {
 
     assert!(dioxus.validation_errors().is_empty());
 
-    topics.option(Topic::Dioxus).on_blur();
+    topics.option(Topic::Dioxus).on_commit();
 
-    assert!(dioxus.is_blurred());
+    assert!(dioxus.metadata().is_committed());
+    assert!(!dioxus.is_blurred());
     assert_eq!(dioxus.validation_errors().len(), 1);
     assert_eq!(dioxus.visible_validation_errors().len(), 1);
     assert!(dioxus.accessibility().aria_invalid());
@@ -12099,7 +12282,8 @@ fn dioxus_facade_radio_group_binding_updates_a_typed_field() {
         .iter()
         .any(|event| matches!(event, FormObserverEvent::FieldUpdated { field, origin: FieldUpdateOrigin::User, .. } if field.field_name() == "plan")));
 
-    plan.on_blur();
+    plan.on_commit();
+    plan.on_focus_exit();
 
     assert!(handle.is_field_touched(plan_path.clone()));
     assert!(handle.is_field_blurred(plan_path.clone()));
@@ -12202,7 +12386,7 @@ fn dioxus_controlled_helpers_run_configured_value_change_validation() {
             .is_empty()
     );
 
-    handle.text(title_path.clone()).on_blur();
+    handle.text(title_path.clone()).on_commit();
 
     assert_eq!(
         handle.visible_field_validation_errors(title_path)[0].error(),
@@ -12368,7 +12552,7 @@ fn dioxus_value_change_policy_starts_registered_async_field_validation() {
         })
     );
 
-    handle.mark_field_blurred(email);
+    handle.commit_field(email);
     probe.gate.complete(vec!["email_unavailable"]);
     dom.render_immediate_to_vec();
 
@@ -12594,27 +12778,27 @@ fn async_validation_on_a_contained_field_restarts_when_its_container_is_written(
 }
 
 #[derive(Default)]
-struct NestedAsyncBlurValidationProbe {
-    blur_name: RefCell<Option<Box<ActionHandler>>>,
-    blur_customer: RefCell<Option<Box<ActionHandler>>>,
+struct NestedAsyncCommitValidationProbe {
+    commit_name: RefCell<Option<Box<ActionHandler>>>,
+    commit_customer: RefCell<Option<Box<ActionHandler>>>,
     name_runs: Cell<u32>,
     customer_runs: Cell<u32>,
 }
 
-fn nested_async_blur_validation_probe(probe: Rc<NestedAsyncBlurValidationProbe>) -> Element {
+fn nested_async_commit_validation_probe(probe: Rc<NestedAsyncCommitValidationProbe>) -> Element {
     let form = use_form_handle({
         let probe = Rc::clone(&probe);
 
         move || {
             let form: FormHandle<NestedCustomerForm, &'static str> =
                 FormHandle::new_with_error_type(NestedCustomerForm::default())
-                    .with_validation_mode(ValidationMode::on_blur());
+                    .with_validation_mode(ValidationMode::on_commit());
             let name_runs_probe = Rc::clone(&probe);
             let customer_runs_probe = Rc::clone(&probe);
 
             form.field(nested_customer_name_path())
                 .async_validator("name_available")
-                .on(ValidationTrigger::Blur)
+                .on(ValidationTrigger::Commit)
                 .check(move |_value, _snapshot| {
                     name_runs_probe
                         .name_runs
@@ -12623,7 +12807,7 @@ fn nested_async_blur_validation_probe(probe: Rc<NestedAsyncBlurValidationProbe>)
                 });
             form.field(nested_customer_path())
                 .async_validator("customer_allowed")
-                .on(ValidationTrigger::Blur)
+                .on(ValidationTrigger::Commit)
                 .check(move |_value, _snapshot| {
                     customer_runs_probe
                         .customer_runs
@@ -12637,49 +12821,53 @@ fn nested_async_blur_validation_probe(probe: Rc<NestedAsyncBlurValidationProbe>)
 
     let runtime = dioxus_core::Runtime::current();
     let scope = runtime.current_scope_id();
-    let blur_name = {
+    let commit_name = {
         let runtime = Rc::clone(&runtime);
         let form = form.clone();
 
         move || {
             runtime.in_scope(scope, || {
-                form.mark_field_blurred(nested_customer_name_path());
+                form.commit_field(nested_customer_name_path());
             });
         }
     };
-    let blur_customer = {
+    let commit_customer = {
         let form = form.clone();
 
         move || {
             runtime.in_scope(scope, || {
-                form.mark_field_blurred(nested_customer_path());
+                form.commit_field(nested_customer_path());
             });
         }
     };
 
-    probe.blur_name.borrow_mut().replace(Box::new(blur_name));
     probe
-        .blur_customer
+        .commit_name
         .borrow_mut()
-        .replace(Box::new(blur_customer));
+        .replace(Box::new(commit_name));
+    probe
+        .commit_customer
+        .borrow_mut()
+        .replace(Box::new(commit_customer));
 
     VNode::empty()
 }
 
 #[test]
-fn async_blur_validation_reaches_only_the_blurred_field_and_its_containers() {
-    let probe = Rc::new(NestedAsyncBlurValidationProbe::default());
-    let mut dom = VirtualDom::new_with_props(nested_async_blur_validation_probe, Rc::clone(&probe));
+fn async_commit_validation_reaches_only_the_committed_field_and_its_containers() {
+    let probe = Rc::new(NestedAsyncCommitValidationProbe::default());
+    let mut dom =
+        VirtualDom::new_with_props(nested_async_commit_validation_probe, Rc::clone(&probe));
 
     dom.rebuild_in_place();
 
-    run_probe_action(&probe.blur_customer);
+    run_probe_action(&probe.commit_customer);
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.name_runs.get(), 0);
     assert_eq!(probe.customer_runs.get(), 1);
 
-    run_probe_action(&probe.blur_name);
+    run_probe_action(&probe.commit_name);
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.name_runs.get(), 1);
@@ -12687,14 +12875,14 @@ fn async_blur_validation_reaches_only_the_blurred_field_and_its_containers() {
 }
 
 #[derive(Default)]
-struct CollectionAsyncBlurValidationProbe {
-    blur_description: RefCell<Option<Box<ActionHandler>>>,
+struct CollectionAsyncCommitValidationProbe {
+    commit_description: RefCell<Option<Box<ActionHandler>>>,
     collection_runs: Cell<u32>,
     form_runs: Cell<u32>,
 }
 
-fn collection_async_blur_validation_probe(
-    probe: Rc<CollectionAsyncBlurValidationProbe>,
+fn collection_async_commit_validation_probe(
+    probe: Rc<CollectionAsyncCommitValidationProbe>,
 ) -> Element {
     let form = use_form_handle({
         let probe = Rc::clone(&probe);
@@ -12702,13 +12890,13 @@ fn collection_async_blur_validation_probe(
         move || {
             let form: FormHandle<InvoiceCollectionForm, &'static str> =
                 FormHandle::new_with_error_type(invoice_collection_form())
-                    .with_validation_mode(ValidationMode::on_blur());
+                    .with_validation_mode(ValidationMode::on_commit());
             let collection_runs_probe = Rc::clone(&probe);
             let form_runs_probe = Rc::clone(&probe);
 
             form.field(InvoiceCollectionForm::fields().lines())
                 .async_validator("lines_allowed")
-                .on(ValidationTrigger::Blur)
+                .on(ValidationTrigger::Commit)
                 .check(move |_value, _snapshot| {
                     collection_runs_probe
                         .collection_runs
@@ -12716,7 +12904,7 @@ fn collection_async_blur_validation_probe(
                     async { Vec::new() }
                 });
             form.async_validator("invoice_allowed")
-                .on(ValidationTrigger::Blur)
+                .on(ValidationTrigger::Commit)
                 .check(move |_snapshot| {
                     form_runs_probe
                         .form_runs
@@ -12733,27 +12921,27 @@ fn collection_async_blur_validation_probe(
         .text(InvoiceCollectionLine::fields().description());
     let runtime = dioxus_core::Runtime::current();
     let scope = runtime.current_scope_id();
-    let blur_description = move || {
-        runtime.in_scope(scope, || description.on_blur());
+    let commit_description = move || {
+        runtime.in_scope(scope, || description.on_commit());
     };
 
     probe
-        .blur_description
+        .commit_description
         .borrow_mut()
-        .replace(Box::new(blur_description));
+        .replace(Box::new(commit_description));
 
     VNode::empty()
 }
 
 #[test]
-fn collection_item_blur_starts_async_collection_and_form_validation() {
-    let probe = Rc::new(CollectionAsyncBlurValidationProbe::default());
+fn collection_item_commit_starts_async_collection_and_form_validation() {
+    let probe = Rc::new(CollectionAsyncCommitValidationProbe::default());
     let mut dom =
-        VirtualDom::new_with_props(collection_async_blur_validation_probe, Rc::clone(&probe));
+        VirtualDom::new_with_props(collection_async_commit_validation_probe, Rc::clone(&probe));
 
     dom.rebuild_in_place();
 
-    run_probe_action(&probe.blur_description);
+    run_probe_action(&probe.commit_description);
     dom.render_immediate_to_vec();
 
     assert_eq!(probe.collection_runs.get(), 1);
@@ -12869,7 +13057,7 @@ fn debounce_bypass_probe(probe: Rc<DebounceBypassProbe>) -> Element {
                 .on(ValidationTriggers::new([
                     ValidationTrigger::Initial,
                     ValidationTrigger::Manual,
-                    ValidationTrigger::Blur,
+                    ValidationTrigger::Commit,
                     ValidationTrigger::Submit,
                 ]))
                 .debounce({
@@ -12904,7 +13092,7 @@ fn debounce_bypass_probe(probe: Rc<DebounceBypassProbe>) -> Element {
             runtime.in_scope(scope, || {
                 form.validate_field(email.clone(), ValidationTrigger::Manual)
             });
-            runtime.in_scope(scope, || form.mark_field_blurred(email.clone()));
+            runtime.in_scope(scope, || form.commit_field(email.clone()));
             runtime.in_scope(scope, || {
                 assert!(form.validate_initialization());
             });
@@ -12956,7 +13144,7 @@ fn dioxus_manual_validation_starts_registered_async_field_validation() {
         }]
     );
 
-    handle.mark_field_blurred(email);
+    handle.commit_field(email);
     probe.gate.complete(vec!["email_unavailable"]);
     dom.render_immediate_to_vec();
 
@@ -17083,7 +17271,7 @@ fn dioxus_adapter_async_field_validation_updates_reactive_selectors() {
         }]
     );
 
-    handle.mark_field_blurred(email.clone());
+    handle.commit_field(email.clone());
     dom.render_immediate_to_vec();
 
     assert_eq!(
@@ -17243,7 +17431,7 @@ fn dioxus_adapter_debounced_value_change_async_validation_updates_reactive_selec
         }]
     );
 
-    handle.mark_field_blurred(email.clone());
+    handle.commit_field(email.clone());
     probe.delay.complete(());
     dom.render_immediate_to_vec();
 
@@ -19026,13 +19214,14 @@ fn dioxus_parsed_text_binding_keeps_raw_input_and_parse_errors_separate() {
     );
     assert_eq!(handle.parse_errors(), vec![parse_error]);
 
-    age.on_blur();
+    age.on_commit();
+    age.on_focus_exit();
 
     assert!(handle.is_field_blurred(age_path));
 }
 
 #[test]
-fn dioxus_parsed_text_blur_with_parse_error_does_not_validate_stale_typed_value() {
+fn dioxus_parsed_text_commit_with_parse_error_does_not_validate_stale_typed_value() {
     let validation_runs = Rc::new(Cell::new(0));
     let validation_runs_for_validator = Rc::clone(&validation_runs);
     let seen_values = Rc::new(RefCell::new(Vec::new()));
@@ -19044,12 +19233,12 @@ fn dioxus_parsed_text_blur_with_parse_error_does_not_validate_stale_typed_value(
 
     handle
         .field(age_path.clone())
-        .validator("adult_on_blur")
-        .on(ValidationTrigger::Blur)
+        .validator("adult_on_commit")
+        .on(ValidationTrigger::Commit)
         .check(move |value, context| {
             validation_runs_for_validator.set(validation_runs_for_validator.get() + 1);
             seen_values_for_validator.borrow_mut().push(*value);
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
 
             if *value < 18 {
                 vec!["must be adult"]
@@ -19059,18 +19248,24 @@ fn dioxus_parsed_text_blur_with_parse_error_does_not_validate_stale_typed_value(
         });
 
     age.on_input("not-a-number");
-    age.on_blur();
+    age.on_commit();
 
     assert!(handle.is_field_touched(age_path.clone()));
-    assert!(handle.is_field_blurred(age_path.clone()));
+    assert!(handle.is_field_committed(age_path.clone()));
+    assert!(!handle.is_field_blurred(age_path.clone()));
     assert_eq!(handle.field_value(age_path.clone()), 42);
     assert!(age.parse_error().is_some());
     assert_eq!(validation_runs.get(), 0);
     assert!(seen_values.borrow().is_empty());
     assert!(handle.field_validation_errors(age_path.clone()).is_empty());
 
+    age.on_focus_exit();
+
+    assert!(handle.is_field_blurred(age_path.clone()));
+    assert_eq!(validation_runs.get(), 0);
+
     age.on_input("17");
-    age.on_blur();
+    age.on_commit();
 
     assert!(age.parse_error().is_none());
     assert_eq!(handle.field_value(age_path.clone()), 17);
@@ -20757,7 +20952,7 @@ fn dioxus_accessibility_helpers_mark_visible_validation_errors_invalid() {
         Some("signup-email-help")
     );
 
-    handle.mark_field_blurred(email_path.clone());
+    handle.commit_field(email_path.clone());
 
     let visible_error_accessibility = handle.field_accessibility(email_path);
 
@@ -20820,7 +21015,7 @@ fn dioxus_accessibility_helpers_combine_validation_and_parse_error_state() {
             }
         });
     handle.validate_field(age_path.clone(), ValidationTrigger::Manual);
-    handle.mark_field_blurred(age_path);
+    handle.commit_field(age_path);
 
     let validation_only = age.accessibility();
 
@@ -21080,7 +21275,8 @@ fn mutating_form_state_does_not_change_form_handle_identity() {
     let email = handle.text(SignupForm::fields().email());
 
     email.on_input("ada@example.com");
-    email.on_blur();
+    email.on_commit();
+    email.on_focus_exit();
 
     assert!(handle == passed_to_child);
     assert!(handle.is_dirty());

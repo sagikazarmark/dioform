@@ -16,12 +16,12 @@ pub fn ValidationModes() -> Element {
         PageHeader {
             eyebrow: "Validation",
             title: "Modes & triggers",
-            intro: "ValidationMode controls when validators run automatically: on blur (default), on change, on submit only, or submit-then-revalidate. ErrorVisibilityPolicy controls when stored errors show.",
+            intro: "ValidationMode controls when validators run automatically: on Commit (default), on change, on submit only, or submit-then-revalidate. ErrorVisibilityPolicy controls when stored errors show.",
         }
         ExampleSection {
-            title: "ValidationMode::on_change() vs on_blur()",
+            title: "ValidationMode::on_change() vs on_commit()",
             intro: rsx! {
-                "The same rule under two modes. On-change flags the error as you type; on-blur waits until the field loses focus. "
+                "The same rule under two modes. On-change flags the error as you type; on-Commit waits until the widget commits an interaction. "
                 InlineCode { "on_submit()" }
                 " and "
                 InlineCode { "submit_then_revalidate()" }

@@ -10,13 +10,13 @@ uses the same directional reach while keeping committed metadata exact.
 ## The defect is a contradiction between two rules about one event
 
 [ADR-0020](0020-derive-field-ancestry-from-identity-paths.md) widened validator *selection* to span
-**Field Ancestry**: `sync_field_keys_for_chain` filters on `FieldAncestry::relates`, so blurring
+**Field Ancestry**: `sync_field_keys_for_chain` filters on `FieldAncestry::relates`, so committing
 `invoice.customer.name` runs a validator registered on `invoice.customer` and stores its verdict.
 That verdict is load-bearing — `has_validation_errors` reads stored errors directly, so
 `submit_availability` reports `SubmitBlocker::ValidationErrors`.
 
-`should_show_validation_errors` still reads the exact blurred flag of the **Field** the error is
-attached to, and the container was never blurred. One event is therefore simultaneously sufficient to
+`should_show_validation_errors` still reads exact interaction metadata for the **Field** the error is
+attached to, and the container was never committed. One event is therefore simultaneously sufficient to
 produce a verdict that blocks submit and insufficient to display it. That is not a gap in coverage;
 it is two rules about the same event giving contradictory answers, and the library ships both.
 
@@ -24,10 +24,10 @@ Three repairs exist. Two are closed.
 
 **Narrowing selection back to exact identity** is closed. ADR-0020 commits to the widened filter, and
 ADR-0028 narrows only the listener half — "the predicate itself is untouched". The consequence is also
-unacceptable: blur enters through leaf bindings, and a leaf-input UI never writes the containing
+unacceptable: Commit enters through leaf bindings, and a leaf-input UI never writes the containing
 object's path, so under exact-identity selection a validator registered on a container would never run
 from leaf-driven user interaction at all. (Programmatic container writes and
-`MultiSelectBinding::on_blur` still would, but neither goes through the ancestry relation.)
+`MultiSelectBinding::on_commit` still would, but neither goes through the ancestry relation.)
 
 **Aggregating the blurred flag upward** is closed by
 [ADR-0028](0028-match-listener-reach-to-what-each-event-asserts.md), which measured it and recorded
@@ -64,8 +64,8 @@ false:
   `customer.name` reveals an error about `customer.tax_id`. The premise is false, and it is the
   premise `CONTEXT.md` currently gives for the behaviour this decision changes.
 - **"`BlurOrSubmit` is a predicate about a rendered control, which a container does not have."**
-  `mark_field_blurred` is unbounded over `Value`, and `use_select`, `use_radio_group`,
-  `use_parsed_text_with` and the multi-select bindings all blur composite paths, so the premise holds
+`commit_field` is unbounded over `Value`, and `use_select`, `use_radio_group`,
+  `use_parsed_text_with` and the multi-select bindings all commit composite paths, so the premise holds
   for exactly two container shapes and fails for seven hook families. It also imports vocabulary
   `CONTEXT.md` bans for **Field** — "*Avoid*: Input, control, widget" — into a `dioform-core` rule
   that [ADR-0001](0001-renderer-agnostic-core-dioxus-adapter-and-derive-macro.md) keeps
@@ -79,15 +79,15 @@ premises as domain law, and it is superseded by this decision. Amending it is ou
 ## The collection component takes ancestor-or-equal
 
 The strict static-to-collection clause is load-bearing for writes and stays so. Inherited unchanged by
-this predicate it produces an inversion: blurring `invoice.lines[2].product` makes an error attached to
+this predicate it produces an inversion: committing `invoice.lines[2].product` makes an error attached to
 `invoice` visible and one attached to `invoice.lines` invisible — the nearer registration receiving
 strictly less than the further one, which ADR-0028 called unshippable.
 
-It is not vacuous. `validate_collection_item_field_blur` also runs the form chain, and
+It is not vacuous. `validate_collection_item_field_commit` also runs the form chain, and
 `sync_form_ids_for_chain` applies no field filter, so a form validator or an adapter **Path Map** can
-attach an error to `invoice.lines` from a row-leaf blur. Measured, that error is stored, invisible,
-and submit-blocking. `CollectionBinding` has `is_blurred` but no `on_blur`, so a repeater's collection
-field can never be blurred and the error is invisible until a submit attempt — permanently, for the
+attach an error to `invoice.lines` from a row-leaf Commit. Measured, that error is stored, invisible,
+and submit-blocking. `CollectionBinding` has no `on_commit`, so a repeater's collection field may
+never be committed and the error is invisible until a submit attempt — permanently, for the
 container shape where collection-level verdicts ("at least one line", "no duplicates") are most
 idiomatic. Keeping it strict would also reward attaching such errors to `invoice` instead.
 
@@ -102,7 +102,7 @@ per-caller would make three spellings of one relation. `FieldAncestry::relates` 
 
 ## The touched-scoped policy widens too
 
-Both arms are widened. `TouchedOrSubmit` reaches the same dead end on its own merits — a leaf blur
+Both arms are widened. `TouchedOrSubmit` reaches the same dead end on its own merits — a leaf Commit
 stores the container's verdict and the container is never touched — so the change is not justified by
 comparison with `BlurOrSubmit`.
 
@@ -112,11 +112,11 @@ onto the widened blur arm and `TouchedOrSubmit` stops existing for exactly the e
 about. It also leaves an unbounded dead end under `ValidationMode::on_change`, where the container
 error is guaranteed fresh and the user may never blur anything.
 
-The cost is that a touched reveal is not validation-coincident. `mark_field_blurred` runs the chain
-inline, so a blur reveal cannot show a stale container error; a keystroke can. This is not new — the
-shipped exact-field touched arm already does it — and `CONTEXT.md` already states the invariant:
-**Error Visibility** is separate from whether validation has run. The window is bounded by the next
-blur, never indefinite.
+The cost is that a touched or Focus Exit reveal is not validation-coincident. Commit runs the chain;
+Focus Exit only marks touched and blurred metadata. The native `onblur()` convenience composes Commit
+before Focus Exit, but custom widgets can report them independently. `CONTEXT.md` already states the
+invariant: **Error Visibility** is separate from whether validation has run. The window is bounded by
+the next Commit, never indefinite.
 
 ## The predicate must not scan the whole metadata map
 
@@ -147,14 +147,13 @@ pre-first-submit only.
 
 ## What this does not fix
 
-**The mirror direction stays broken.** Selection is symmetric, so blurring a container runs every
-descendant validator and stores errors on leaves the user never focused — invisible under the default
-policy and still submit-blocking. This decision correctly declines to make those visible, which means
-one relation for selection and one for visibility do not become the same relation, and this class of
-defect is not closed by construction. It is a selection defect and has its own issue.
+**The mirror direction was a separate selection defect.** This decision correctly declined to make
+descendant errors visible after a container event. [ADR-0035](0035-select-commit-validators-outward-from-the-field-that-committed.md)
+subsequently made Commit validator selection outward-only, so committing a container no longer runs
+validators on the **Fields** it contains.
 
 **Form scope is unchanged.** `ValidationTarget::Form` stays invisible until a submit attempt. The
-reason is not that no principled test exists — form validators are selected by any **Field**'s blur, so
+reason is not that no principled test exists — form validators are selected by any **Field**'s Commit, so
 mirroring selection would be one — but that a form-scoped rule has no point at which the user has
 demonstrably finished, and the designed reveal is the submit attempt.
 

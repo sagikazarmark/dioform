@@ -29,7 +29,7 @@ carries no blocker *for SaveDraft*, so `form.intent(SaveDraft).availability()` i
 and the managed submit proceeds: no bypass, invariant intact.
 
 This works because the design separates universal invariants from purpose-specific requirements.
-Non-submit **Validation Errors** (change/blur/field rules) are conservative known blockers across all
+Non-submit **Validation Errors** (change/Commit/field rules) are conservative known blockers across all
 intents (`CONTEXT.md`); submit-triggered rules are intent-scoped. So a requirement you want a draft save
 to skip belongs at submit scope keyed on intent, not as a universal field rule. Modeling it at the right
 scope is what keeps "non-submit errors block every intent" meaningful: those are the things that are

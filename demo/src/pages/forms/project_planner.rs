@@ -105,7 +105,7 @@ fn MilestoneRow(form: FormHandle<ProjectForm>, item: CollectionItemIdentity) -> 
                     name: title.name(),
                     value: title.value(),
                     oninput: move |e| title_oninput.on_input(e.value()),
-                    onblur: move |_| title.on_blur(),
+                    onblur: title.onblur(),
                 }
             }
             label { class: "block",
@@ -117,7 +117,7 @@ fn MilestoneRow(form: FormHandle<ProjectForm>, item: CollectionItemIdentity) -> 
                     name: days.name(),
                     value: days.value(),
                     oninput: move |e| days_oninput.on_input(e.value()),
-                    onblur: move |_| days.on_blur(),
+                    onblur: days.onblur(),
                 }
             }
             button {
@@ -191,7 +191,7 @@ pub fn ProjectPlanner() -> Element {
                                 name: cap.name(),
                                 value: cap.value(),
                                 oninput: move |e| cap_oninput.on_input(e.value()),
-                                onblur: move |_| cap.on_blur(),
+                                onblur: cap.onblur(),
                             }
                         }
                     }

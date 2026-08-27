@@ -27,7 +27,7 @@ Status legend:
 
 | TanStack capability | Dioform | Status |
 | --- | --- | --- |
-| `onChange` / `onBlur` / `onSubmit` triggers | `ValidationTrigger` + higher-level `ValidationMode` (on-blur default, on-change, on-submit, submit-then-revalidate) | Implemented |
+| `onChange` / `onBlur` / `onSubmit` triggers | `ValidationTrigger` + higher-level `ValidationMode` (on-Commit default, on-change, on-submit, submit-then-revalidate) | Implemented |
 | `onMount` eager validation | Explicit `validate_initialization()` today; an opt-in eager `ValidationMode` is under evaluation | Tracked [#149] |
 | `dynamic` / programmatic validation trigger | `ValidationTrigger::Manual` plus `validate_field` / `validate_form` / `validate_all` / `validate_*_validator` | Implemented |
 

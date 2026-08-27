@@ -1362,10 +1362,10 @@ fn public_api_supports_standard_rust_affordances() {
     let path = name_path();
     assert!(format!("{path:?}").contains("FieldPath"));
 
-    let triggers: ValidationTriggers = [ValidationTrigger::Blur, ValidationTrigger::Blur]
+    let triggers: ValidationTriggers = [ValidationTrigger::Commit, ValidationTrigger::Commit]
         .into_iter()
         .collect();
-    assert!(triggers.contains(ValidationTrigger::Blur));
+    assert!(triggers.contains(ValidationTrigger::Commit));
     assert!(!triggers.contains(ValidationTrigger::Change));
 
     let submit_errors: SubmitErrors<ContactForm, &'static str> =
@@ -1390,37 +1390,37 @@ fn public_api_supports_standard_rust_affordances() {
 }
 
 #[test]
-fn validation_mode_names_match_blur_and_change_semantics() {
-    assert_eq!(ValidationMode::default(), ValidationMode::on_blur());
+fn validation_mode_names_match_commit_and_change_semantics() {
+    assert_eq!(ValidationMode::default(), ValidationMode::on_commit());
 
-    assert!(!ValidationMode::on_submit().validates_on_blur());
+    assert!(!ValidationMode::on_submit().validates_on_commit());
     assert!(!ValidationMode::on_submit().validates_on_change());
 
-    assert!(ValidationMode::on_blur().validates_on_blur());
-    assert!(!ValidationMode::on_blur().validates_on_change());
+    assert!(ValidationMode::on_commit().validates_on_commit());
+    assert!(!ValidationMode::on_commit().validates_on_change());
     assert_eq!(
-        ValidationMode::on_blur_or_submit(),
-        ValidationMode::on_blur()
+        ValidationMode::on_commit_or_submit(),
+        ValidationMode::on_commit()
     );
 
-    assert!(ValidationMode::on_change().validates_on_blur());
+    assert!(ValidationMode::on_change().validates_on_commit());
     assert!(ValidationMode::on_change().validates_on_change());
-    assert!(!ValidationMode::submit_then_revalidate().validates_on_blur());
+    assert!(!ValidationMode::submit_then_revalidate().validates_on_commit());
     assert!(!ValidationMode::submit_then_revalidate().validates_on_change());
-    assert!(!ValidationMode::submit_then_revalidate().should_validate_on_blur(0));
+    assert!(!ValidationMode::submit_then_revalidate().should_validate_on_commit(0));
     assert!(!ValidationMode::submit_then_revalidate().should_validate_on_change(0));
-    assert!(ValidationMode::submit_then_revalidate().should_validate_on_blur(1));
+    assert!(ValidationMode::submit_then_revalidate().should_validate_on_commit(1));
     assert!(ValidationMode::submit_then_revalidate().should_validate_on_change(1));
 
     assert!(
         ValidationMode::on_submit()
-            .validate_on_blur()
-            .validates_on_blur()
+            .validate_on_commit()
+            .validates_on_commit()
     );
     assert!(
-        !ValidationMode::on_blur()
-            .with_blur_validation(false)
-            .validates_on_blur()
+        !ValidationMode::on_commit()
+            .with_commit_validation(false)
+            .validates_on_commit()
     );
 }
 
@@ -1926,7 +1926,7 @@ fn form_state_snapshot_restores_validator_results_without_overwriting_registered
     restored.register_sync_field_validator_for_triggers(
         name_path(),
         "target_source",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_value, _context| vec!["target_error"],
     );
 
@@ -1941,7 +1941,7 @@ fn form_state_snapshot_restores_validator_results_without_overwriting_registered
         .collect();
     assert_eq!(restored_errors, vec![("target_source", "snapshot_error")]);
 
-    restored.validate_field(name_path(), ValidationTrigger::Blur);
+    restored.validate_field(name_path(), ValidationTrigger::Commit);
 
     let rerun_errors: Vec<_> = restored
         .field_validation_errors(name_path())
@@ -3138,7 +3138,7 @@ fn explicit_initialization_validation_records_source_status_and_visibility() {
     );
     assert!(form.visible_validation_errors().is_empty());
 
-    form.mark_field_blurred_without_validation(name_path());
+    form.mark_field_committed(name_path());
 
     let visible_field_errors: Vec<_> = form
         .visible_field_validation_errors(name_path())
@@ -3764,7 +3764,7 @@ fn visible_field_error_boolean_matches_visibility_and_submit_intent() {
 
     assert!(!form.has_visible_field_validation_errors(name_path()));
 
-    form.mark_field_blurred_without_validation(name_path());
+    form.mark_field_committed(name_path());
 
     assert!(form.has_visible_field_validation_errors(name_path()));
     assert!(form.has_visible_field_validation_errors_by_identity(&name_path().identity()));
@@ -3953,10 +3953,10 @@ fn async_field_validation_moves_from_pending_to_valid_without_clearing_unrelated
     form.register_sync_field_validator_for_triggers(
         name_path(),
         "reserved",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_value, _context| vec!["reserved"],
     );
-    form.validate_field_source(name_path(), "reserved", ValidationTrigger::Blur);
+    form.validate_field_source(name_path(), "reserved", ValidationTrigger::Commit);
 
     let run = form
         .begin_async_field_validation(name_path(), availability, ValidationTrigger::Manual)
@@ -4229,7 +4229,7 @@ fn async_field_validation_moves_from_pending_to_invalid_with_deterministic_error
         &[SubmitBlocker::ValidationErrors]
     );
 
-    form.mark_field_blurred(name_path());
+    form.mark_field_committed(name_path());
 
     let visible_errors: Vec<_> = form
         .visible_field_validation_errors(name_path())
@@ -4661,7 +4661,7 @@ fn field_write_clears_only_completed_sync_verdicts_and_leaves_async_invalidation
     let never_run_sync = form.register_sync_field_validator_for_triggers(
         name_path(),
         "never_run_sync",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_value, _context| vec!["never_run_sync"],
     );
     form.validate_field_source(name_path(), "completed_sync", ValidationTrigger::Manual);
@@ -6529,9 +6529,9 @@ fn sync_field_validators_run_only_for_registered_triggers() {
 #[test]
 fn sync_form_validators_run_only_for_registered_triggers() {
     let account_runs = Rc::new(Cell::new(0));
-    let blur_runs = Rc::new(Cell::new(0));
+    let commit_runs = Rc::new(Cell::new(0));
     let account_validator_runs = Rc::clone(&account_runs);
-    let blur_validator_runs = Rc::clone(&blur_runs);
+    let commit_validator_runs = Rc::clone(&commit_runs);
     let mut form: FormCore<RegistrationForm, &'static str> =
         FormCore::new_with_error_type(RegistrationForm {
             email: "taken@example.com".to_owned(),
@@ -6553,21 +6553,21 @@ fn sync_form_validators_run_only_for_registered_triggers() {
         },
     );
     form.register_sync_form_validator_for_triggers(
-        "blur_passwords_match",
-        ValidationTrigger::Blur,
+        "commit_passwords_match",
+        ValidationTrigger::Commit,
         move |_context| {
-            blur_validator_runs.set(blur_validator_runs.get() + 1);
+            commit_validator_runs.set(commit_validator_runs.get() + 1);
             vec![FormValidationError::field(
                 confirm_password_path(),
-                "blur_password_mismatch",
+                "commit_password_mismatch",
             )]
         },
     );
 
-    form.validate_form(ValidationTrigger::Blur);
+    form.validate_form(ValidationTrigger::Commit);
 
     assert_eq!(account_runs.get(), 0);
-    assert_eq!(blur_runs.get(), 1);
+    assert_eq!(commit_runs.get(), 1);
     assert_eq!(
         form.form_validation_status("account"),
         Some(ValidationStatus::Unknown)
@@ -6576,7 +6576,7 @@ fn sync_form_validators_run_only_for_registered_triggers() {
     form.validate_form(ValidationTrigger::Manual);
 
     assert_eq!(account_runs.get(), 1);
-    assert_eq!(blur_runs.get(), 1);
+    assert_eq!(commit_runs.get(), 1);
 
     let errors: Vec<_> = form
         .validation_errors()
@@ -6589,8 +6589,8 @@ fn sync_form_validators_run_only_for_registered_triggers() {
             (ValidationTarget::Form, "account", "manual_account"),
             (
                 ValidationTarget::Field(confirm_password_path().identity()),
-                "blur_passwords_match",
-                "blur_password_mismatch",
+                "commit_passwords_match",
+                "commit_password_mismatch",
             ),
         ]
     );
@@ -6598,7 +6598,7 @@ fn sync_form_validators_run_only_for_registered_triggers() {
     form.validate_form(ValidationTrigger::Submit);
 
     assert_eq!(account_runs.get(), 2);
-    assert_eq!(blur_runs.get(), 1);
+    assert_eq!(commit_runs.get(), 1);
 
     let errors: Vec<_> = form
         .validation_errors()
@@ -6611,8 +6611,8 @@ fn sync_form_validators_run_only_for_registered_triggers() {
             (ValidationTarget::Form, "account", "submit_account"),
             (
                 ValidationTarget::Field(confirm_password_path().identity()),
-                "blur_passwords_match",
-                "blur_password_mismatch",
+                "commit_passwords_match",
+                "commit_password_mismatch",
             ),
         ]
     );
@@ -6952,7 +6952,7 @@ fn submit_then_revalidate_mode_runs_change_validation_after_submit_attempt() {
 }
 
 #[test]
-fn submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt() {
+fn submit_then_revalidate_mode_runs_commit_validation_after_submit_attempt() {
     let runs = Rc::new(Cell::new(0));
     let validator_runs = Rc::clone(&runs);
     let mut form: FormCore<ContactForm, &'static str> =
@@ -6964,10 +6964,10 @@ fn submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt() {
     form.register_sync_field_validator_for_triggers(
         name_path(),
         "required",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         move |value, context| {
             validator_runs.set(validator_runs.get() + 1);
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
 
             if value.is_empty() {
                 vec!["required"]
@@ -6977,7 +6977,7 @@ fn submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt() {
         },
     );
 
-    form.mark_field_blurred(name_path());
+    form.commit_field(name_path());
 
     assert_eq!(runs.get(), 0);
     assert_eq!(
@@ -6986,7 +6986,7 @@ fn submit_then_revalidate_mode_runs_blur_validation_after_submit_attempt() {
     );
 
     assert!(form.validate_for_submit());
-    form.mark_field_blurred(name_path());
+    form.commit_field(name_path());
 
     assert_eq!(runs.get(), 1);
     assert_eq!(
@@ -7171,7 +7171,7 @@ fn configured_value_change_runs_changed_field_and_form_validators() {
             .is_empty()
     );
 
-    form.mark_field_blurred(email_path());
+    form.mark_field_committed(email_path());
 
     assert_eq!(
         form.visible_field_validation_errors(email_path())[0].error(),
@@ -7200,7 +7200,7 @@ fn default_visible_errors_wait_for_commit_or_submit_attempt() {
         });
     assert_eq!(
         commit_form.error_visibility_policy(),
-        ErrorVisibilityPolicy::CommitOrBlurOrSubmit
+        ErrorVisibilityPolicy::CommitOrSubmit
     );
     commit_form.register_sync_field_validator(name_path(), "required", |_value, _context| {
         vec!["required"]
@@ -7240,12 +7240,14 @@ fn default_visible_errors_wait_for_commit_or_submit_attempt() {
 #[test]
 fn blurring_a_contained_field_reveals_its_container_error_without_blurring_the_container() {
     let mut form: FormCore<NestedPage, &'static str> =
-        FormCore::new_with_error_type(NestedPage::default());
+        FormCore::new_with_error_type(NestedPage::default())
+            .with_error_visibility_policy(ErrorVisibilityPolicy::BlurOrSubmit);
     form.register_sync_field_validator(
         nested_customer_path(),
         "customer_invalid",
         |_customer, _context| vec!["customer_invalid"],
     );
+    form.validate_field(nested_customer_path(), ValidationTrigger::Manual);
 
     form.mark_field_blurred(nested_customer_name_path());
 
@@ -7277,7 +7279,7 @@ fn committing_a_contained_field_reveals_its_container_error_without_committing_t
 }
 
 #[test]
-fn blurring_a_field_runs_its_own_validator() {
+fn committing_a_field_runs_its_own_validator_without_blurring_it() {
     let mut form: FormCore<ContactForm, &'static str> =
         FormCore::new_with_error_type(ContactForm {
             name: String::new(),
@@ -7285,20 +7287,22 @@ fn blurring_a_field_runs_its_own_validator() {
     form.register_sync_field_validator_for_triggers(
         name_path(),
         "required",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_name, _context| vec!["required"],
     );
 
-    form.mark_field_blurred(name_path());
+    form.commit_field(name_path());
 
     assert_eq!(
         form.field_validation_errors(name_path())[0].error(),
         &"required"
     );
+    assert!(form.is_field_committed(name_path()));
+    assert!(!form.is_field_blurred(name_path()));
 }
 
 #[test]
-fn blurring_a_container_does_not_run_validators_on_fields_it_contains() {
+fn committing_a_container_does_not_run_validators_on_fields_it_contains() {
     let mut form: FormCore<NestedPage, &'static str> =
         FormCore::new_with_error_type(NestedPage::default());
     form.register_sync_field_validator(
@@ -7307,7 +7311,7 @@ fn blurring_a_container_does_not_run_validators_on_fields_it_contains() {
         |_name, _context| vec!["name_invalid"],
     );
 
-    form.mark_field_blurred(nested_customer_path());
+    form.commit_field(nested_customer_path());
 
     assert!(
         form.field_validation_errors(nested_customer_name_path())
@@ -7336,7 +7340,7 @@ fn manual_validation_on_a_container_runs_validators_on_fields_it_contains() {
 }
 
 #[test]
-fn blurring_a_collection_item_container_does_not_run_its_descendant_validators() {
+fn committing_a_collection_item_container_does_not_run_its_descendant_validators() {
     let mut form: FormCore<NestedPage, &'static str> =
         FormCore::new_with_error_type(nested_page_with_one_line());
     let item = form.collection_items(nested_invoice_lines_path())[0].identity();
@@ -7344,11 +7348,11 @@ fn blurring_a_collection_item_container_does_not_run_its_descendant_validators()
         nested_invoice_lines_path(),
         line_customer_name_path(),
         "name_invalid",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_name, _context| vec!["name_invalid"],
     );
 
-    assert!(form.mark_collection_item_field_blurred(
+    assert!(form.commit_collection_item_field(
         nested_invoice_lines_path(),
         item,
         line_customer_path(),
@@ -7361,7 +7365,7 @@ fn blurring_a_collection_item_container_does_not_run_its_descendant_validators()
 }
 
 #[test]
-fn blurring_a_collection_field_does_not_run_its_item_validators() {
+fn committing_a_collection_field_does_not_run_its_item_validators() {
     let runs = Rc::new(Cell::new(0));
     let validator_runs = Rc::clone(&runs);
     let mut form: FormCore<InvoiceForm, &'static str> =
@@ -7370,31 +7374,31 @@ fn blurring_a_collection_field_does_not_run_its_item_validators() {
         lines_path(),
         line_description_path(),
         "description_invalid",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         move |_description, _context| {
             validator_runs.set(validator_runs.get() + 1);
             vec!["description_invalid"]
         },
     );
 
-    form.mark_field_blurred(lines_path());
+    form.commit_field(lines_path());
 
     assert_eq!(runs.get(), 0);
 }
 
 #[test]
-fn blurring_a_collection_item_field_runs_its_collection_validator() {
+fn committing_a_collection_item_field_runs_its_collection_validator() {
     let mut form: FormCore<InvoiceForm, &'static str> =
         FormCore::new_with_error_type(invoice_form());
     let item = form.collection_items(lines_path())[0].identity();
     form.register_sync_field_validator_for_triggers(
         lines_path(),
         "lines_invalid",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_lines, _context| vec!["lines_invalid"],
     );
 
-    assert!(form.mark_collection_item_field_blurred(lines_path(), item, line_description_path(),));
+    assert!(form.commit_collection_item_field(lines_path(), item, line_description_path(),));
 
     assert_eq!(
         form.field_validation_errors(lines_path())[0].error(),
@@ -7434,7 +7438,7 @@ fn touched_visibility_reaches_containers_but_not_contained_fields() {
 }
 
 #[test]
-fn blurring_a_collection_item_field_reveals_the_collection_error_but_not_sibling_item_errors() {
+fn committing_a_collection_item_field_reveals_the_collection_error_but_not_sibling_item_errors() {
     let mut form: FormCore<InvoiceForm, &'static str> =
         FormCore::new_with_error_type(invoice_form());
     let items = form.collection_items(lines_path());
@@ -7448,12 +7452,12 @@ fn blurring_a_collection_item_field_reveals_the_collection_error_but_not_sibling
     );
     form.register_sync_form_validator_for_triggers(
         "lines_invalid",
-        ValidationTrigger::Blur,
+        ValidationTrigger::Commit,
         |_context| vec![FormValidationError::field(lines_path(), "lines_invalid")],
     );
     form.validate_all(ValidationTrigger::Manual);
 
-    assert!(form.mark_collection_item_field_blurred(lines_path(), first, line_description_path(),));
+    assert!(form.commit_collection_item_field(lines_path(), first, line_description_path(),));
 
     assert_eq!(
         form.visible_field_validation_errors(lines_path())[0].error(),
@@ -7479,7 +7483,7 @@ fn blurring_a_collection_item_field_reveals_the_collection_error_but_not_sibling
 #[test]
 fn field_interaction_does_not_reveal_form_errors_before_submit() {
     for policy in [
-        ErrorVisibilityPolicy::CommitOrBlurOrSubmit,
+        ErrorVisibilityPolicy::CommitOrSubmit,
         ErrorVisibilityPolicy::BlurOrSubmit,
         ErrorVisibilityPolicy::TouchedOrSubmit,
     ] {
@@ -7496,11 +7500,11 @@ fn field_interaction_does_not_reveal_form_errors_before_submit() {
         form.validate_all(ValidationTrigger::Manual);
 
         match policy {
-            ErrorVisibilityPolicy::CommitOrBlurOrSubmit => {
+            ErrorVisibilityPolicy::CommitOrSubmit => {
                 form.mark_field_committed(name_path());
             }
             ErrorVisibilityPolicy::BlurOrSubmit => {
-                form.mark_field_blurred_without_validation(name_path());
+                form.mark_field_blurred(name_path());
             }
             ErrorVisibilityPolicy::TouchedOrSubmit => form.mark_field_touched(name_path()),
             _ => unreachable!(),
@@ -7529,7 +7533,7 @@ fn error_visibility_policy_controls_visible_error_selectors() {
             .is_empty()
     );
 
-    blur_only_form.mark_field_blurred_without_validation(name_path());
+    blur_only_form.mark_field_blurred(name_path());
 
     assert_eq!(
         blur_only_form.visible_field_validation_errors(name_path())[0].error(),
@@ -7602,11 +7606,11 @@ fn trigger_scoped_value_change_errors_follow_default_visibility_policy() {
     );
     form.register_sync_field_validator_for_triggers(
         name_path(),
-        "blur_hint",
-        ValidationTrigger::Blur,
+        "commit_hint",
+        ValidationTrigger::Commit,
         |_value, context| {
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
-            vec!["blur_hint"]
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
+            vec!["commit_hint"]
         },
     );
 
@@ -7615,16 +7619,7 @@ fn trigger_scoped_value_change_errors_follow_default_visibility_policy() {
     assert_eq!(form.field_validation_errors(name_path()).len(), 1);
     assert!(form.visible_field_validation_errors(name_path()).is_empty());
 
-    form.mark_field_blurred_without_validation(name_path());
-
-    let visible_errors: Vec<_> = form
-        .visible_field_validation_errors(name_path())
-        .into_iter()
-        .map(|error| (error.source().as_str(), *error.error()))
-        .collect();
-    assert_eq!(visible_errors, vec![("change_required", "required")]);
-
-    form.validate_field(name_path(), ValidationTrigger::Blur);
+    form.commit_field(name_path());
 
     let visible_errors: Vec<_> = form
         .visible_field_validation_errors(name_path())
@@ -7633,7 +7628,10 @@ fn trigger_scoped_value_change_errors_follow_default_visibility_policy() {
         .collect();
     assert_eq!(
         visible_errors,
-        vec![("change_required", "required"), ("blur_hint", "blur_hint")]
+        vec![
+            ("change_required", "required"),
+            ("commit_hint", "commit_hint")
+        ]
     );
 }
 
@@ -8070,8 +8068,8 @@ fn submit_intent_availability_includes_non_submit_errors_for_all_intents() {
 
     form.register_sync_field_validator_for_triggers(
         name_path(),
-        "name_required_on_blur",
-        ValidationTrigger::Blur,
+        "name_required_on_commit",
+        ValidationTrigger::Commit,
         |value, _context| {
             if value.is_empty() {
                 vec!["name_required"]
@@ -8081,7 +8079,7 @@ fn submit_intent_availability_includes_non_submit_errors_for_all_intents() {
         },
     );
 
-    form.validate_field(name_path(), ValidationTrigger::Blur);
+    form.validate_field(name_path(), ValidationTrigger::Commit);
 
     assert!(!form.intent(ContactSubmitIntent::Publish).can_submit());
     assert!(!form.intent(ContactSubmitIntent::SaveDraft).can_submit());
@@ -8329,7 +8327,7 @@ fn non_submit_triggered_validator_errors_do_not_block_submit_validation_authorit
     );
 
     form.validate_field(name_path(), ValidationTrigger::Manual);
-    form.mark_field_blurred_without_validation(name_path());
+    form.mark_field_committed(name_path());
 
     assert!(!form.can_submit());
     assert_eq!(form.visible_field_validation_errors(name_path()).len(), 1);
@@ -10259,19 +10257,19 @@ fn field_validators_run_before_form_validators_for_the_same_trigger() {
         password_path(),
         "password_strength",
         move |_value, context| {
-            assert_eq!(context.trigger(), ValidationTrigger::Blur);
+            assert_eq!(context.trigger(), ValidationTrigger::Commit);
             field_order.borrow_mut().push("field");
             Vec::new()
         },
     );
     form.register_sync_form_validator("passwords_match", move |context| {
-        assert_eq!(context.trigger(), ValidationTrigger::Blur);
+        assert_eq!(context.trigger(), ValidationTrigger::Commit);
         assert_eq!(form_order.borrow().as_slice(), &["field"]);
         form_order.borrow_mut().push("form");
         Vec::new()
     });
 
-    form.validate_field(password_path(), ValidationTrigger::Blur);
+    form.validate_field(password_path(), ValidationTrigger::Commit);
 
     assert_eq!(order.borrow().as_slice(), &["field", "form"]);
 }

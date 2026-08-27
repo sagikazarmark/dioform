@@ -2439,9 +2439,9 @@ mod field_binding {
 
         fn mark_touched(&self);
 
-        fn blur(&self);
+        fn commit(&self);
 
-        fn blur_without_validation(&self);
+        fn commit_without_validation(&self);
     }
 
     /// The item is retained as a **Collection Item Identity** rather than as a `CollectionItem`
@@ -2614,21 +2614,29 @@ mod field_binding {
             );
         }
 
-        pub(super) fn blur(&self) {
-            self.handle.mark_collection_item_field_blurred(
+        pub(super) fn commit(&self) {
+            self.handle.commit_collection_item_field(
                 self.collection_path.clone(),
                 self.item,
                 self.path.clone(),
             );
         }
 
-        pub(super) fn blur_without_validation(&self) {
+        pub(super) fn commit_without_validation(&self) {
             self.handle
-                .mark_collection_item_field_blurred_without_validation(
+                .mark_collection_item_field_committed_without_validation(
                     self.collection_path.clone(),
                     self.item,
                     self.path.clone(),
                 );
+        }
+
+        pub(super) fn focus_exit(&self) {
+            self.handle.mark_collection_item_field_blurred(
+                self.collection_path.clone(),
+                self.item,
+                self.path.clone(),
+            );
         }
     }
 
@@ -2662,12 +2670,12 @@ mod field_binding {
             CollectionFieldBindingCore::mark_touched(self);
         }
 
-        fn blur(&self) {
-            CollectionFieldBindingCore::blur(self);
+        fn commit(&self) {
+            CollectionFieldBindingCore::commit(self);
         }
 
-        fn blur_without_validation(&self) {
-            CollectionFieldBindingCore::blur_without_validation(self);
+        fn commit_without_validation(&self) {
+            CollectionFieldBindingCore::commit_without_validation(self);
         }
     }
 
@@ -2778,18 +2786,17 @@ mod field_binding {
             self.handle.mark_field_touched(self.path.clone());
         }
 
-        pub(super) fn blur(&self) {
-            self.handle.mark_field_blurred(self.path.clone());
-        }
-
-        #[cfg(feature = "dioxus-field")]
         pub(super) fn commit(&self) {
             self.handle.commit_field(self.path.clone());
         }
 
-        pub(super) fn blur_without_validation(&self) {
+        pub(super) fn commit_without_validation(&self) {
             self.handle
-                .mark_field_blurred_without_validation(self.path.clone());
+                .mark_field_committed_without_validation(self.path.clone());
+        }
+
+        pub(super) fn focus_exit(&self) {
+            self.handle.mark_field_blurred(self.path.clone());
         }
     }
 
@@ -2822,12 +2829,12 @@ mod field_binding {
             FieldBindingCore::mark_touched(self);
         }
 
-        fn blur(&self) {
-            FieldBindingCore::blur(self);
+        fn commit(&self) {
+            FieldBindingCore::commit(self);
         }
 
-        fn blur_without_validation(&self) {
-            FieldBindingCore::blur_without_validation(self);
+        fn commit_without_validation(&self) {
+            FieldBindingCore::commit_without_validation(self);
         }
     }
 }
@@ -2895,16 +2902,16 @@ mod parsed_input {
         }
     }
 
-    pub(super) fn on_blur<Binding, Value>(
+    pub(super) fn on_commit<Binding, Value>(
         binding: &Binding,
         registration: &ParseBindingRegistration,
     ) where
         Binding: TypedFieldBinding<Value>,
     {
         if parse_error(binding, registration).is_some() {
-            binding.blur_without_validation();
+            binding.commit_without_validation();
         } else {
-            binding.blur();
+            binding.commit();
         }
     }
 
@@ -4306,7 +4313,7 @@ struct FieldMutation {
     field: FieldIdentity,
     field_name: String,
     selectors: Vec<SelectorTransition>,
-    trigger: ValidationTrigger,
+    validation_trigger: Option<ValidationTrigger>,
     dispatch: FieldMutationDispatch,
 }
 
@@ -5325,8 +5332,13 @@ impl<Model: 'static, Value: 'static, Error> MultiSelectBinding<Model, Value, Err
         }
     }
 
-    /// Marks the multi-select field as blurred.
-    pub fn on_blur(&self) {
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.handle.commit_field(self.path.clone());
+    }
+
+    /// Reports that focus left the multi-select field's logical focus scope.
+    pub fn on_focus_exit(&self) {
         self.handle.mark_field_blurred(self.path.clone());
     }
 
@@ -5511,8 +5523,17 @@ impl<Model, Value: 'static, Error> MultiSelectItem<Model, Value, Error> {
         )
     }
 
-    /// Marks this selected value as blurred and touched.
-    pub fn on_blur(&self) {
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.handle.commit_collection_item_field(
+            self.path.clone(),
+            self.identity(),
+            collection_item_self_path(),
+        );
+    }
+
+    /// Reports that focus left this selected value's logical focus scope.
+    pub fn on_focus_exit(&self) {
         self.handle.mark_collection_item_field_blurred(
             self.path.clone(),
             self.identity(),
@@ -5619,16 +5640,29 @@ impl<Model: 'static, Value: 'static, Error> MultiSelectOptionBinding<Model, Valu
         self.multi_select.toggle(self.value.clone())
     }
 
-    /// Marks the multi-select field and this option's selected value as blurred.
-    pub fn on_blur(&self)
+    /// Records a Commit for the multi-select and this option's selected value, when selected.
+    pub fn on_commit(&self)
     where
         Value: PartialEq,
     {
         let selected_item = self.selected_item();
-        self.multi_select.on_blur();
+        self.multi_select.on_commit();
 
         if let Some(item) = selected_item {
-            item.on_blur();
+            item.on_commit();
+        }
+    }
+
+    /// Reports Focus Exit for the multi-select and this option's selected value, when selected.
+    pub fn on_focus_exit(&self)
+    where
+        Value: PartialEq,
+    {
+        let selected_item = self.selected_item();
+        self.multi_select.on_focus_exit();
+
+        if let Some(item) = selected_item {
+            item.on_focus_exit();
         }
     }
 
@@ -5654,7 +5688,10 @@ impl<Model: 'static, Value: 'static, Error> MultiSelectOptionBinding<Model, Valu
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -7794,8 +7831,8 @@ impl<Model, Error> FormHandle<Model, Error> {
 
     /// Starts async validators selected by one field's **Validation Trigger**.
     ///
-    /// Value replacement reaches both directions of **Field Ancestry**, while blur reaches only the
-    /// validators on the blurred field and the fields containing it. A write invalidates async
+    /// Value replacement reaches both directions of **Field Ancestry**, while Commit reaches only the
+    /// validators on the committed field and the fields containing it. A write invalidates async
     /// field validators model-wide and clears their errors, so restarting only the written identity
     /// would leave a relative's async result permanently blank.
     fn start_runtime_async_field_validators(
@@ -8820,6 +8857,50 @@ impl<Model, Error> FormHandle<Model, Error> {
         touched
     }
 
+    fn commit_collection_item_field<Item, Value>(
+        &self,
+        collection: FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+        field: FieldPath<Item, Value>,
+    ) -> bool {
+        let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
+        let (committed, validates_on_commit) = self.write_core(|core| {
+            (
+                core.commit_collection_item_field(collection, item, field),
+                core.validation_mode()
+                    .should_validate_on_commit(core.submit_attempt_count()),
+            )
+        });
+        if committed {
+            self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
+            if validates_on_commit {
+                self.start_runtime_async_validation_for_field_event(
+                    identity.clone(),
+                    ValidationTrigger::Commit,
+                );
+                self.notify_validation_changed();
+            }
+            self.adapter.wake_validation_waiters();
+        }
+        committed
+    }
+
+    fn mark_collection_item_field_committed_without_validation<Item, Value>(
+        &self,
+        collection: FieldPath<Model, Vec<Item>>,
+        item: CollectionItemIdentity,
+        field: FieldPath<Item, Value>,
+    ) -> bool {
+        let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
+        let committed = self
+            .write_core(|core| core.mark_collection_item_field_committed(collection, item, field));
+        if committed {
+            self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity));
+            self.adapter.wake_validation_waiters();
+        }
+        committed
+    }
+
     fn mark_collection_item_field_blurred<Item, Value>(
         &self,
         collection: FieldPath<Model, Vec<Item>>,
@@ -8828,44 +8909,8 @@ impl<Model, Error> FormHandle<Model, Error> {
     ) -> bool {
         let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
         let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
-        let (blurred, validates_on_blur) = self.write_core(|core| {
-            (
-                core.mark_collection_item_field_blurred(collection, item, field),
-                core.validation_mode()
-                    .should_validate_on_blur(core.submit_attempt_count()),
-            )
-        });
-        if blurred {
-            self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
-            if validates_on_blur {
-                self.start_runtime_async_validation_for_field_event(
-                    identity.clone(),
-                    ValidationTrigger::Blur,
-                );
-                self.notify_validation_changed();
-            }
-            self.adapter.wake_validation_waiters();
-            self.dispatch_form_blur_listeners(
-                identity.clone(),
-                field_name
-                    .expect("blurred collection item field should have a rendered field name"),
-            );
-            self.dispatch_field_blur_listeners(identity);
-        }
-        blurred
-    }
-
-    fn mark_collection_item_field_blurred_without_validation<Item, Value>(
-        &self,
-        collection: FieldPath<Model, Vec<Item>>,
-        item: CollectionItemIdentity,
-        field: FieldPath<Item, Value>,
-    ) -> bool {
-        let identity = CollectionItemFieldAddress::identity_for(&collection, item, &field);
-        let field_name = self.collection_item_field_name(collection.clone(), item, field.clone());
-        let blurred = self.write_core(|core| {
-            core.mark_collection_item_field_blurred_without_validation(collection, item, field)
-        });
+        let blurred = self
+            .write_core(|core| core.mark_collection_item_field_blurred(collection, item, field));
         if blurred {
             self.notify_selectors(SelectorTransition::FieldMetadataChanged(identity.clone()));
             self.adapter.wake_validation_waiters();
@@ -10244,15 +10289,15 @@ impl<Model, Error> FormHandle<Model, Error> {
     /// Replaces one typed field value through the form core.
     /// Runs the fixed reactivity, validation, and listener sequence that follows a field write.
     ///
-    /// `validates` is the write's own decision (from the validation mode) about whether this
-    /// mutation triggers validation. The ordering here is the invariant every mutating field
+    /// The optional validation trigger is the mutation's own decision (from the validation mode)
+    /// about whether validation runs. The ordering here is the invariant every mutating field
     /// method shares; callers supply only the per-mutation `FieldMutation` deltas.
-    fn apply_field_mutation(&self, mutation: FieldMutation, validates: bool) {
+    fn apply_field_mutation(&self, mutation: FieldMutation) {
         let FieldMutation {
             field,
             field_name,
             selectors,
-            trigger,
+            validation_trigger,
             dispatch,
         } = mutation;
 
@@ -10267,7 +10312,7 @@ impl<Model, Error> FormHandle<Model, Error> {
                 .borrow_mut()
                 .begin_eligible_submit_continuation_follow_up();
         }
-        if validates {
+        if let Some(trigger) = validation_trigger {
             self.start_runtime_async_validation_for_field_event(field.clone(), trigger);
         }
         if extends_eligible_replacement {
@@ -10276,7 +10321,7 @@ impl<Model, Error> FormHandle<Model, Error> {
                 .end_eligible_submit_continuation_follow_up();
         }
         // Every field mutation notifies validation subscribers, whether or not it ran validation:
-        // value writes clear submit errors and invalidate async validators, and blur flips the
+        // value writes clear submit errors and invalidate async validators, and Focus Exit flips
         // blurred/touched metadata that gates blur- and touch-scoped error visibility, so any
         // mutation can change what a validation subscriber should see. See issue #129.
         self.notify_validation_changed();
@@ -10304,16 +10349,13 @@ impl<Model, Error> FormHandle<Model, Error> {
         });
         self.apply_collection_replacement_effects(effects, FieldUpdateOrigin::Programmatic);
 
-        self.apply_field_mutation(
-            FieldMutation {
-                field: field.clone(),
-                field_name,
-                selectors: vec![SelectorTransition::FieldValueChanged(field)],
-                trigger: ValidationTrigger::Change,
-                dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::Programmatic),
-            },
-            validates_on_change,
-        );
+        self.apply_field_mutation(FieldMutation {
+            field: field.clone(),
+            field_name,
+            selectors: vec![SelectorTransition::FieldValueChanged(field)],
+            validation_trigger: validates_on_change.then_some(ValidationTrigger::Change),
+            dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::Programmatic),
+        });
     }
 
     /// Replaces one typed field value because of user input.
@@ -10329,19 +10371,16 @@ impl<Model, Error> FormHandle<Model, Error> {
         });
         self.apply_collection_replacement_effects(effects, FieldUpdateOrigin::User);
 
-        self.apply_field_mutation(
-            FieldMutation {
-                field: field.clone(),
-                field_name,
-                selectors: vec![
-                    SelectorTransition::FieldValueChanged(field.clone()),
-                    SelectorTransition::FieldMetadataChanged(field),
-                ],
-                trigger: ValidationTrigger::Change,
-                dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::User),
-            },
-            validates_on_change,
-        );
+        self.apply_field_mutation(FieldMutation {
+            field: field.clone(),
+            field_name,
+            selectors: vec![
+                SelectorTransition::FieldValueChanged(field.clone()),
+                SelectorTransition::FieldMetadataChanged(field),
+            ],
+            validation_trigger: validates_on_change.then_some(ValidationTrigger::Change),
+            dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::User),
+        });
     }
 
     /// Marks a field as touched by user interaction.
@@ -10352,59 +10391,40 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.adapter.wake_validation_waiters();
     }
 
-    fn mark_field_blurred_without_validation<Value>(&self, path: FieldPath<Model, Value>) {
-        let field = path.identity();
-        let field_name = path.field_name().to_owned();
-        self.write_core(|core| core.mark_field_blurred_without_validation(path));
-
-        self.apply_field_mutation(
-            FieldMutation {
-                field: field.clone(),
-                field_name,
-                selectors: vec![SelectorTransition::FieldMetadataChanged(field)],
-                trigger: ValidationTrigger::Blur,
-                dispatch: FieldMutationDispatch::Blur,
-            },
-            false,
-        );
-    }
-
-    /// Marks a field as blurred and touched by user interaction.
+    /// Marks a field as blurred and touched and dispatches blur listeners without validating.
     pub fn mark_field_blurred<Value>(&self, path: FieldPath<Model, Value>) {
         let field = path.identity();
         let field_name = path.field_name().to_owned();
-        let validates_on_blur = self.write_core(|core| {
-            let validates_on_blur = core
-                .validation_mode()
-                .should_validate_on_blur(core.submit_attempt_count());
-            core.mark_field_blurred(path.clone());
-            validates_on_blur
-        });
+        self.write_core(|core| core.mark_field_blurred(path));
 
-        self.apply_field_mutation(
-            FieldMutation {
-                field: field.clone(),
-                field_name,
-                selectors: vec![SelectorTransition::FieldMetadataChanged(field)],
-                trigger: ValidationTrigger::Blur,
-                dispatch: FieldMutationDispatch::Blur,
-            },
-            validates_on_blur,
-        );
+        self.apply_field_mutation(FieldMutation {
+            field: field.clone(),
+            field_name,
+            selectors: vec![SelectorTransition::FieldMetadataChanged(field)],
+            validation_trigger: None,
+            dispatch: FieldMutationDispatch::Blur,
+        });
     }
 
-    #[cfg(feature = "dioxus-field")]
-    fn commit_field<Value>(&self, path: FieldPath<Model, Value>) {
+    fn mark_field_committed_without_validation<Value>(&self, path: FieldPath<Model, Value>) {
         let field = path.identity();
-        let validates_on_blur = self.write_core(|core| {
+        self.write_core(|core| core.mark_field_committed(path));
+        self.notify_selectors(SelectorTransition::FieldMetadataChanged(field));
+        self.adapter.wake_validation_waiters();
+    }
+
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn commit_field<Value>(&self, path: FieldPath<Model, Value>) {
+        let field = path.identity();
+        let validates_on_commit = self.write_core(|core| {
             core.mark_field_committed(path.clone());
             core.validation_mode()
-                .should_validate_on_blur(core.submit_attempt_count())
+                .should_validate_on_commit(core.submit_attempt_count())
         });
         self.notify_selectors(SelectorTransition::FieldMetadataChanged(field));
         self.adapter.wake_validation_waiters();
-        if validates_on_blur {
-            self.validate_field(path, ValidationTrigger::Blur);
+        if validates_on_commit {
+            self.validate_field(path, ValidationTrigger::Commit);
         }
     }
 
@@ -10827,19 +10847,16 @@ impl<Model, Error> FileSelectionBinding<Model, Error> {
                 .should_validate_on_change(core.submit_attempt_count())
         });
 
-        self.handle.apply_field_mutation(
-            FieldMutation {
-                field: field.clone(),
-                field_name,
-                selectors: vec![
-                    SelectorTransition::FieldValueChanged(field.clone()),
-                    SelectorTransition::FieldMetadataChanged(field),
-                ],
-                trigger: ValidationTrigger::Change,
-                dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::User),
-            },
-            validates_on_change,
-        );
+        self.handle.apply_field_mutation(FieldMutation {
+            field: field.clone(),
+            field_name,
+            selectors: vec![
+                SelectorTransition::FieldValueChanged(field.clone()),
+                SelectorTransition::FieldMetadataChanged(field),
+            ],
+            validation_trigger: validates_on_change.then_some(ValidationTrigger::Change),
+            dispatch: FieldMutationDispatch::ValueReplacement(FieldUpdateOrigin::User),
+        });
     }
 
     /// Replaces the selected files from a Dioxus file-input event.
@@ -10852,33 +10869,57 @@ impl<Model, Error> FileSelectionBinding<Model, Error> {
         self.select_files(Vec::<SelectedFile>::new());
     }
 
-    /// Marks this file selection as blurred by user interaction.
-    pub fn on_blur(&self) {
+    /// Records the end of one file-selection interaction and runs configured Commit validation.
+    pub fn on_commit(&self) {
         let field = self.key.identity();
-        let field_name = self.key.field_name().to_owned();
 
-        let validates_on_blur = self.handle.write_core(|core| {
-            let validates_on_blur = core
+        let validates_on_commit = self.handle.write_core(|core| {
+            let validates_on_commit = core
                 .validation_mode()
-                .should_validate_on_blur(core.submit_attempt_count());
-            core.mark_field_identity_blurred(&field);
-            validates_on_blur
+                .should_validate_on_commit(core.submit_attempt_count());
+            core.commit_field_identity(&field);
+            validates_on_commit
         });
         self.handle
             .notify_selectors(SelectorTransition::FieldMetadataChanged(field.clone()));
         self.handle.adapter.wake_validation_waiters();
 
-        if validates_on_blur {
+        if validates_on_commit {
             self.handle
-                .start_runtime_async_field_validators(field.clone(), ValidationTrigger::Blur);
+                .start_runtime_async_field_validators(field.clone(), ValidationTrigger::Commit);
             self.handle
-                .start_runtime_async_form_validators(ValidationTrigger::Blur);
+                .start_runtime_async_form_validators(ValidationTrigger::Commit);
             self.handle.notify_validation_changed();
         }
+    }
+
+    /// Reports that focus left this file selection's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        let field = self.key.identity();
+        let field_name = self.key.field_name().to_owned();
+
+        self.handle
+            .write_core(|core| core.mark_field_identity_blurred(&field));
+        self.handle
+            .notify_selectors(SelectorTransition::FieldMetadataChanged(field.clone()));
+        self.handle.adapter.wake_validation_waiters();
 
         self.handle
             .dispatch_form_blur_listeners(field.clone(), field_name);
         self.handle.dispatch_field_blur_listeners(field);
+    }
+
+    /// Returns a ready-made `onblur` handler that reports Commit and then Focus Exit.
+    pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns the selected-file metadata for this file selection.
@@ -10994,9 +11035,14 @@ impl<Model: 'static, Item: 'static, Error> CollectionTextBinding<Model, Item, Er
         self.base.set_user(value.into());
     }
 
-    /// Applies a Dioxus text-like `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this item child field.
@@ -11035,7 +11081,10 @@ impl<Model: 'static, Item: 'static, Error> CollectionTextBinding<Model, Item, Er
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11107,9 +11156,14 @@ impl<Model: 'static, Item: 'static, Error> CollectionCheckboxBinding<Model, Item
         self.base.set_user(checked);
     }
 
-    /// Applies a Dioxus checkbox `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this item child field.
@@ -11150,7 +11204,10 @@ impl<Model: 'static, Item: 'static, Error> CollectionCheckboxBinding<Model, Item
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11239,9 +11296,14 @@ impl<Model: 'static, Item: 'static, Value, Error>
         self.on_change(value);
     }
 
-    /// Applies a Dioxus select `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this item child field.
@@ -11284,7 +11346,10 @@ impl<Model, Item, Error> CollectionSelectBinding<Model, Item, String, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11412,9 +11477,14 @@ impl<Model: 'static, Item: 'static, Value, Error>
         }
     }
 
-    /// Applies a Dioxus select `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this item child field.
@@ -11457,7 +11527,10 @@ impl<Model: 'static, Item: 'static, Value, Error>
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11546,9 +11619,14 @@ impl<Model: 'static, Item: 'static, Value, Error>
         self.select(value);
     }
 
-    /// Applies a Dioxus radio group `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this item child field.
@@ -11592,7 +11670,10 @@ impl<Model: 'static, Item: 'static, Value, Error>
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11672,9 +11753,14 @@ impl<Model: 'static, Item: 'static, Value, Error>
         parsed_input::on_input(&self.base, &self.registration, &self.parser, value);
     }
 
-    /// Applies a Dioxus text-like `onblur` interaction update.
-    pub fn on_blur(&self) {
-        parsed_input::on_blur(&self.base, &self.registration);
+    /// Records the end of one interaction unit without validating an unresolved Parse Error.
+    pub fn on_commit(&self) {
+        parsed_input::on_commit(&self.base, &self.registration);
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns this mounted binding's parse error, if rendered input is currently unparsable.
@@ -11721,7 +11807,10 @@ impl<Model: 'static, Item: 'static, Value, Error>
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11835,9 +11924,14 @@ impl<Model, Value, Error> RenderedSelectBinding<Model, Value, Error> {
         }
     }
 
-    /// Applies a Dioxus select `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this field.
@@ -11878,7 +11972,10 @@ impl<Model, Value, Error> RenderedSelectBinding<Model, Value, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -11942,9 +12039,14 @@ impl<Model, Error> TextBinding<Model, Error> {
         self.base.set_user(value.into());
     }
 
-    /// Applies a Dioxus text-like `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns a ready-made `oninput` event handler for this field.
@@ -11971,7 +12073,10 @@ impl<Model, Error> TextBinding<Model, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns validation errors for this field.
@@ -12061,9 +12166,14 @@ impl<Model, Error> OptionalTextBinding<Model, Error> {
         self.base.set_user((!value.is_empty()).then_some(value));
     }
 
-    /// Applies a Dioxus text-like `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns a ready-made `oninput` event handler for this field.
@@ -12083,7 +12193,10 @@ impl<Model, Error> OptionalTextBinding<Model, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns validation errors for this field.
@@ -12163,9 +12276,14 @@ impl<Model, Error> TextareaBinding<Model, Error> {
         self.base.set_user(value.into());
     }
 
-    /// Applies a Dioxus textarea `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns a ready-made `oninput` event handler for this textarea. See
@@ -12186,7 +12304,10 @@ impl<Model, Error> TextareaBinding<Model, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns validation errors for this field.
@@ -12266,9 +12387,14 @@ impl<Model, Error> CheckboxBinding<Model, Error> {
         self.base.set_user(checked);
     }
 
-    /// Applies a Dioxus checkbox `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns a ready-made checkbox change handler that reads `checked` from the event.
@@ -12291,7 +12417,10 @@ impl<Model, Error> CheckboxBinding<Model, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns validation errors for this field.
@@ -12371,9 +12500,14 @@ impl<Model, Error> TriStateCheckboxBinding<Model, Error> {
         self.base.set_user(state);
     }
 
-    /// Applies a Dioxus checkbox `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns a ready-made `onblur` event handler for this checkbox.
@@ -12383,7 +12517,10 @@ impl<Model, Error> TriStateCheckboxBinding<Model, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 
     /// Returns validation errors for this field.
@@ -12479,9 +12616,14 @@ impl<Model, Value, Error> SelectBinding<Model, Value, Error> {
         self.on_change(value);
     }
 
-    /// Applies a Dioxus select `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this field.
@@ -12524,7 +12666,10 @@ impl<Model, Error> SelectBinding<Model, String, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -12604,9 +12749,14 @@ impl<Model, Value, Error> RadioGroupBinding<Model, Value, Error> {
         self.select(value);
     }
 
-    /// Applies a Dioxus radio group `onblur` interaction update.
-    pub fn on_blur(&self) {
-        self.base.blur();
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns validation errors for this field.
@@ -12650,7 +12800,10 @@ impl<Model, Value, Error> RadioGroupBinding<Model, Value, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 
@@ -12689,7 +12842,7 @@ mod field_convention {
                 ChangeOrigin::Programmatic => writer.set_programmatic(value),
             });
             let commit = Callback::new(move |()| committer.commit());
-            let focus_exit = Callback::new(move |()| focus_exiter.blur_without_validation());
+            let focus_exit = Callback::new(move |()| focus_exiter.focus_exit());
 
             Binding::new_with_identity(read, write, commit, identity).with_focus_exit(focus_exit)
         }
@@ -12848,9 +13001,14 @@ impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
         parsed_input::on_input(&self.base, &self.registration, &self.parser, value);
     }
 
-    /// Applies a Dioxus text-like `onblur` interaction update.
-    pub fn on_blur(&self) {
-        parsed_input::on_blur(&self.base, &self.registration);
+    /// Records the end of one interaction unit without validating an unresolved Parse Error.
+    pub fn on_commit(&self) {
+        parsed_input::on_commit(&self.base, &self.registration);
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
     }
 
     /// Returns this mounted binding's parse error, if rendered input is currently unparsable.
@@ -12896,7 +13054,10 @@ impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
         Error: 'static,
     {
         let binding = self.clone();
-        move |_event: Event<FocusData>| binding.on_blur()
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
     }
 }
 

@@ -1049,7 +1049,7 @@ fn garde_initialization_validation_runs_only_when_explicitly_validated_and_trigg
 }
 
 #[test]
-fn garde_errors_follow_default_blur_and_submit_visibility() {
+fn garde_errors_follow_default_commit_and_submit_visibility() {
     let field_runs = Rc::new(Cell::new(0));
     let mut field_form: FormCore<SignupForm, AppError> =
         FormCore::new_with_error_type(SignupForm::new("", "long-enough", Rc::clone(&field_runs)));
@@ -1070,7 +1070,7 @@ fn garde_errors_follow_default_blur_and_submit_visibility() {
             .is_empty()
     );
 
-    field_form.mark_field_blurred(email_path());
+    field_form.mark_field_committed(email_path());
 
     let visible_field_errors: Vec<_> = field_form
         .visible_field_validation_errors(email_path())

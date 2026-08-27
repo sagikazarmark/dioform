@@ -36,7 +36,7 @@ Initialization validation is always explicit. Creating a form and registering va
 
 ## Field Validation
 
-Register an async field validator through the Dioxus adapter builder. Explicit validation calls, validation enabled by the form's **Validation Mode**, blur validation, and managed submit can then start the validator through the Dioxus runtime. The start call records `ValidationStatus::Pending` immediately and spawns the future through Dioxus.
+Register an async field validator through the Dioxus adapter builder. Explicit validation calls, validation enabled by the form's **Validation Mode**, Commit validation, and managed submit can then start the validator through the Dioxus runtime. The start call records `ValidationStatus::Pending` immediately and spawns the future through Dioxus.
 
 For immediate manual validation, register the validator for `ValidationTrigger::Manual` and call `validate_field`. No debounce delay is involved unless `.debounce(...)` is configured and the trigger is `ValidationTrigger::Change`.
 
@@ -65,7 +65,7 @@ assert_eq!(form.field_validation_status(email, availability), Some(ValidationSta
 
 When the future resolves with no errors, the source becomes `Valid`. When it resolves with one or more errors, the source becomes `Invalid`, errors are stored under that validator source, and selectors such as `field_validation_errors`, `visible_field_validation_errors`, `field_validation_status`, `can_submit`, and `field_accessibility` update reactively.
 
-The tracer-bullet test `dioxus_adapter_async_field_validation_updates_reactive_selectors` is the executable example for immediate async field validation. It demonstrates `Pending`, a later `Invalid` result, visible errors after blur, `can_submit` changing to `false`, and ARIA invalid state. The same API path returns `Valid` when the validator future resolves with an empty error list.
+The tracer-bullet test `dioxus_adapter_async_field_validation_updates_reactive_selectors` is the executable example for immediate async field validation. It demonstrates `Pending`, a later `Invalid` result, visible errors after Commit, `can_submit` changing to `false`, and ARIA invalid state. The same API path returns `Valid` when the validator future resolves with an empty error list.
 
 ## Async Collection Diagnostic Routing
 
@@ -130,7 +130,7 @@ form.async_validator("account")
 
 Only value-change validation is debounced. Submit-triggered validation starts immediate async validation instead.
 
-The form's **Validation Mode** decides when value-change validation runs automatically. `ValidationMode::on_change()` runs change validation from the first value change. `ValidationMode::submit_then_revalidate()` waits until a submit attempt has happened, then runs change validation and blur validation automatically. Explicit calls such as `validate_field` and submit-triggered validation do not depend on the mode.
+The form's **Validation Mode** decides when value-change validation runs automatically. `ValidationMode::on_change()` runs change validation from the first value change. `ValidationMode::submit_then_revalidate()` waits until a submit attempt has happened, then runs change and Commit validation automatically. Explicit calls such as `validate_field` and submit-triggered validation do not depend on the mode.
 
 If a second value change schedules a newer debounced run before the first delay completes, the first delayed run is stale and never starts validation. Scheduling captures neither model values nor collection identities. After the latest delay finishes, one **Form Core** operation atomically captures its fresh **Form Snapshot** and any registered collection identity sequences. Submit flush uses the same run-start capture rule rather than the earlier scheduling state. The core tests `debounced_async_field_validation_marks_pending_until_latest_value_starts`, `debounced_async_form_validation_marks_pending_until_latest_snapshot_starts`, and `async_collection_target_rules_capture_at_debounce_wake_and_submit_flush` cover these state-machine behaviors. The Dioxus tests `dioxus_adapter_debounced_value_change_async_validation_updates_reactive_selectors` and `dioxus_adapter_debounced_value_change_async_form_validation_updates_reactive_selectors` cover adapter/runtime behavior.
 

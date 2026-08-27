@@ -18,7 +18,7 @@ The first release should preserve these differences:
 - **Raw Input State** and **Parse Errors** belong to the **Dioxus Adapter**, while the **Form Core** stores typed values only. Mounted **Parse Blockers** prevent Dioxus-managed submission from submitting stale typed values while visible input is unparsable.
 - **Validation Sources** stay source-aware rather than flattening all errors for one field into one replaceable slot.
 - **Form Handles** are explicit in the MVP. Typed context providers are an optional post-MVP ergonomic layer over existing handles; renderless field components and app-specific field group composition remain separate concerns.
-- Validation logic is configured through explicit **Validation Triggers** and a higher-level **Validation Mode**. The mode can choose submit-only, blur, change, or submit-first-then-revalidate behavior without changing the core trigger model.
+- Validation logic is configured through explicit **Validation Triggers** and a higher-level **Validation Mode**. The mode can choose submit-only, Commit, change, or submit-first-then-revalidate behavior without changing the core trigger model.
 
 ## MVP Scope
 

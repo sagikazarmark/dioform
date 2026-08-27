@@ -50,7 +50,7 @@ pub fn AdapterValidationExample() -> Element {
                     name: email.name(),
                     value: email.value(),
                     oninput: move |e| email_oninput.on_input(e.value()),
-                    onblur: move |_| email.on_blur(),
+                    onblur: email.onblur(),
                 }
                 for error in email_errors {
                     p { class: "mt-1 text-sm text-error", "{error.error()}" }
@@ -66,7 +66,7 @@ pub fn AdapterValidationExample() -> Element {
                     name: password.name(),
                     value: password.value(),
                     oninput: move |e| password_oninput.on_input(e.value()),
-                    onblur: move |_| password.on_blur(),
+                    onblur: password.onblur(),
                 }
                 for error in password_errors {
                     p { class: "mt-1 text-sm text-error", "{error.error()}" }

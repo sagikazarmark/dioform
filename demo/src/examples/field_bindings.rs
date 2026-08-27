@@ -8,7 +8,7 @@ use crate::components::{DemoPane, DemoSurface};
 /// textarea (`form.text` / `form.textarea`), a boolean checkbox
 /// (`form.checkbox`), a string `<select>` (`form.select`), and a typed radio
 /// group (`form.radio_group`). Each binding gives you `name`/`value` (or
-/// `checked`) for the element and `on_input`/`on_change`/`on_blur` handlers.
+/// `checked`) for the element and `on_input`/`on_change`/`on_commit`/`on_focus_exit` handlers.
 #[derive(Clone, Debug, Default, PartialEq, Form)]
 struct ProfileForm {
     full_name: String,

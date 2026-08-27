@@ -38,7 +38,7 @@ errors rather than immediately manufacturing new ones.
 
 Clearing is unconditional on trigger set. Restricting it to submit-triggered validators was declined:
 
-- Blur-only and change-only results are exactly the stored verdicts that **Submit Availability** may
+- Commit-only and change-only results are exactly the stored verdicts that **Submit Availability** may
   consult even though submit authority does not.
 - **Native Browser Submission** may run without client preflight, so submit-time regeneration is not
   universal.
