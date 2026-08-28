@@ -1223,6 +1223,23 @@ impl<Model, Error> FormConfig<Model, Error> {
         }
     }
 
+    /// Retains low-level Form Core registration for each form instance created from this config.
+    ///
+    /// Use this to configure durable behavior exposed by Form Core extension traits, such as a
+    /// validation adapter. The registration runs once during Form Initialization for every
+    /// [`FormHandle::from_config`] call and does not itself run validation. Cloning the
+    /// configuration retains the registration; cloning a constructed handle does not run it again.
+    /// Use [`FormHandle::write_advanced`] instead for explicit live Form Core mutation.
+    pub fn register_core<Registration>(mut self, registration: Registration) -> Self
+    where
+        Registration: Fn(&mut FormCore<Model, Error>) + 'static,
+    {
+        self.push_registration(move |handle| {
+            handle.write_core(|core| registration(core));
+        });
+        self
+    }
+
     fn push_registration(&mut self, registration: impl Fn(&FormHandle<Model, Error>) + 'static) {
         self.registrations.push(Rc::new(registration));
     }

@@ -7,8 +7,8 @@ mod tests {
     };
 
     use dioform::{
-        ErrorVisibilityPolicy, FieldIdentity, FieldPath, Form, FormHandle, ValidationTarget,
-        ValidationTrigger, advanced::FormCore,
+        ErrorVisibilityPolicy, FieldIdentity, FieldPath, Form, FormConfig, FormHandle,
+        ValidationTarget, ValidationTrigger, advanced::FormCore,
     };
     use dioform_garde::{
         DiagnosticRouteProvenance, GardeCollectionRowMatcher, GardeDiagnostic, GardeValidationExt,
@@ -53,18 +53,20 @@ mod tests {
 
     #[test]
     fn bare_row_diagnostic_is_readable_from_the_collection_item_binding() {
-        let form = FormHandle::new(TagsForm {
-            tags: vec!["rust".to_owned()],
-        });
-        form.write_advanced(|core| {
-            core.garde_validation()
-                .collection_row_item(
-                    GardeCollectionRowMatcher::new(["tags"], std::iter::empty::<&str>()),
-                    tags_path(),
-                )
-                .expect("a static collection path should be supported")
-                .register_string_errors();
-        });
+        let form = FormHandle::from_config(
+            FormConfig::new(TagsForm {
+                tags: vec!["rust".to_owned()],
+            })
+            .register_core(|core| {
+                core.garde_validation()
+                    .collection_row_item(
+                        GardeCollectionRowMatcher::new(["tags"], std::iter::empty::<&str>()),
+                        tags_path(),
+                    )
+                    .expect("a static collection path should be supported")
+                    .register_string_errors();
+            }),
+        );
         let item = form.collection(tags_path()).items()[0].clone();
 
         form.validate_all(ValidationTrigger::Manual);

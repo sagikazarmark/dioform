@@ -67,20 +67,17 @@ fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
 }
 
 fn build_form() -> FormHandle<WorkshopRegistration> {
-    let handle = FormHandle::<WorkshopRegistration>::from_config(
+    FormHandle::<WorkshopRegistration>::from_config(
         FormConfig::new(WorkshopRegistration::default())
-            .validation_mode(ValidationMode::on_commit()),
+            .id_namespace("workshop-registration")
+            .validation_mode(ValidationMode::on_commit())
+            .register_core(|core| {
+                core.garde_validation()
+                    .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
+                    .derived_path_map()
+                    .register_string_errors();
+            }),
     )
-    .with_id_namespace("workshop-registration");
-
-    handle.write_advanced(|core| {
-        core.garde_validation()
-            .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
-            .derived_path_map()
-            .register_string_errors();
-    });
-
-    handle
 }
 
 fn status_label(status: Option<SubmitStatus>) -> String {

@@ -24,6 +24,35 @@ garde = { version = "0.23", default-features = false, features = ["derive", "ema
 
 Use `garde/full` only when your application wants that larger dependency set. The adapter does not require it.
 
+## Dioxus Form Configuration
+
+The Dioxus facade can retain renderer-agnostic adapter registration in `FormConfig`. This keeps
+initial values, validation policy, and durable validators together without making the adapter depend
+on Dioxus or requiring a post-construction `FormHandle::write_advanced` call:
+
+```rust
+use dioform::{FormConfig, FormHandle, ValidationMode, ValidationTrigger};
+use dioform_garde::GardeValidationExt;
+
+let form = FormHandle::from_config(
+    FormConfig::new(SignupForm::default())
+        .validation_mode(ValidationMode::on_change())
+        .register_core(|core| {
+            core.garde_validation()
+                .triggers([ValidationTrigger::Change, ValidationTrigger::Submit])
+                .derived_path_map()
+                .register_string_errors();
+        }),
+);
+```
+
+`register_core` is a low-level construction seam that retains an `Fn` registration and runs it once
+during each Form Initialization. Cloning the configuration retains the registration while each form
+instance receives its own Form Core and validation lifecycle state; cloning a constructed Form Handle
+does not run registration again. Registration does not itself run validation; validators are available
+to subsequent initialization, interaction, and submit validation. Use `write_advanced` instead when an
+application needs explicit live Form Core mutation.
+
 ## String Convenience
 
 Simple forms whose shared validation error type is `String` can register the adapter without writing a mapper closure:

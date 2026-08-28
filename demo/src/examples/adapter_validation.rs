@@ -18,18 +18,16 @@ struct SignupForm {
 
 #[component]
 pub fn AdapterValidationExample() -> Element {
-    let form = use_form_handle(|| {
-        let handle = FormHandle::<SignupForm>::from_config(
-            FormConfig::new(SignupForm::default()).validation_mode(ValidationMode::on_change()),
-        );
-        handle.write_advanced(|core| {
-            core.garde_validation()
-                .triggers([ValidationTrigger::Change, ValidationTrigger::Submit])
-                .derived_path_map()
-                .register_string_errors();
-        });
-        handle
-    });
+    let form = use_form_config(
+        FormConfig::new(SignupForm::default())
+            .validation_mode(ValidationMode::on_change())
+            .register_core(|core| {
+                core.garde_validation()
+                    .triggers([ValidationTrigger::Change, ValidationTrigger::Submit])
+                    .derived_path_map()
+                    .register_string_errors();
+            }),
+    );
 
     let fields = SignupForm::fields();
     let email = form.text(fields.email());

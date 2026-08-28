@@ -7519,6 +7519,109 @@ fn form_config_registers_sync_field_validator_without_initial_validation() {
 }
 
 #[test]
+fn form_config_retains_core_registration_and_runs_it_once_per_form_instance() {
+    let registrations = Rc::new(Cell::new(0));
+    let validator_runs = Rc::new(Cell::new(0));
+    let email = SignupForm::fields().email();
+    let config: FormConfig<SignupForm, &'static str> = {
+        let registrations = Rc::clone(&registrations);
+        let validator_runs = Rc::clone(&validator_runs);
+        let email = email.clone();
+
+        FormConfig::new(SignupForm {
+            email: String::new(),
+        })
+        .register_core(move |core| {
+            registrations.set(registrations.get() + 1);
+            let validator_runs = Rc::clone(&validator_runs);
+
+            core.register_sync_field_validator_for_triggers(
+                email.clone(),
+                "configured_initial",
+                ValidationTrigger::Initial,
+                move |value, context| {
+                    validator_runs.set(validator_runs.get() + 1);
+                    assert_eq!(context.trigger(), ValidationTrigger::Initial);
+
+                    value.is_empty().then_some("required").into_iter().collect()
+                },
+            );
+        })
+    };
+
+    assert_eq!(registrations.get(), 0);
+
+    let handle = FormHandle::from_config(config);
+    let cloned_handle = handle.clone();
+
+    assert_eq!(registrations.get(), 1);
+    assert_eq!(
+        handle.validation_status(email.clone(), "configured_initial"),
+        Some(ValidationStatus::Unknown)
+    );
+
+    handle.reset();
+    cloned_handle.reinitialize(SignupForm {
+        email: String::new(),
+    });
+
+    assert_eq!(registrations.get(), 1);
+    assert!(!cloned_handle.validate_initialization());
+    assert_eq!(validator_runs.get(), 1);
+    assert_eq!(
+        handle.validation_status(email, "configured_initial"),
+        Some(ValidationStatus::Invalid)
+    );
+}
+
+#[test]
+fn cloned_form_configs_apply_core_registration_to_independent_handles() {
+    let registrations = Rc::new(Cell::new(0));
+    let registration_runs = Rc::clone(&registrations);
+    let email = SignupForm::fields().email();
+    let configured_email = email.clone();
+    let config: FormConfig<SignupForm, &'static str> = FormConfig::new(SignupForm {
+        email: String::new(),
+    })
+    .register_core(move |core| {
+        registration_runs.set(registration_runs.get() + 1);
+        core.register_sync_field_validator_for_triggers(
+            configured_email.clone(),
+            "configured_initial",
+            ValidationTrigger::Initial,
+            |value, _context| value.is_empty().then_some("required").into_iter().collect(),
+        );
+    });
+
+    let first = FormHandle::from_config(config.clone());
+    let second = FormHandle::from_config(config);
+
+    assert_eq!(registrations.get(), 2);
+    assert!(!first.validate_initialization());
+    assert_eq!(
+        first.validation_status(email.clone(), "configured_initial"),
+        Some(ValidationStatus::Invalid)
+    );
+    assert_eq!(
+        second.validation_status(email.clone(), "configured_initial"),
+        Some(ValidationStatus::Unknown)
+    );
+    assert!(second.validation_errors().is_empty());
+
+    second.set_user_field(email.clone(), "ada@example.com".to_owned());
+
+    assert!(second.validate_initialization());
+    assert_eq!(
+        second.validation_status(email.clone(), "configured_initial"),
+        Some(ValidationStatus::Valid)
+    );
+    assert_eq!(
+        first.validation_status(email, "configured_initial"),
+        Some(ValidationStatus::Invalid)
+    );
+}
+
+#[test]
 fn form_config_registers_form_validators_before_later_direct_registration() {
     let fields = ProfileForm::fields();
     let email_path = fields.email();
