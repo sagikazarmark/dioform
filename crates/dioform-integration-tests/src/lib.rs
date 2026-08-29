@@ -409,9 +409,9 @@ mod tests {
     }
 
     fn formatted_checkbox_field(probe: Rc<FormatterProbe>) -> Element {
-        let checkbox = probe.form.checkbox(CheckboxForm::fields().accepted());
-        let meta = checkbox.meta_with_error_formatter(|error| format!("Error {}", error.code));
-        let binding: Binding<bool> = checkbox.into();
+        let field = probe.form.field(CheckboxForm::fields().accepted());
+        let meta = field.meta_with_error_formatter(|error| format!("Error {}", error.code));
+        let binding: Binding<bool> = field.into();
         probe.binding.borrow_mut().replace(binding.clone());
 
         rsx! {
@@ -453,6 +453,222 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Debug, PartialEq)]
+    struct Rating(u8);
+
+    #[derive(Clone, dioform::Form)]
+    struct GenericFieldForm {
+        rating: Rating,
+    }
+
+    struct GenericBindingProbe {
+        form: FormHandle<GenericFieldForm>,
+        bindings: RefCell<Vec<Binding<Rating>>>,
+        values: RefCell<Vec<Rating>>,
+        blur_listener_runs: Cell<usize>,
+    }
+
+    fn generic_bindings(probe: Rc<GenericBindingProbe>) -> Element {
+        let blur_probe = Rc::clone(&probe);
+        dioform::use_field_blur_listener(
+            probe.form.clone(),
+            GenericFieldForm::fields().rating(),
+            move |_| {
+                blur_probe
+                    .blur_listener_runs
+                    .set(blur_probe.blur_listener_runs.get() + 1);
+            },
+        );
+        let first: Binding<Rating> = probe.form.field(GenericFieldForm::fields().rating()).into();
+        let second: Binding<Rating> = probe.form.field(GenericFieldForm::fields().rating()).into();
+        let different_namespace: Binding<Rating> = probe
+            .form
+            .clone()
+            .with_id_namespace("other")
+            .field(GenericFieldForm::fields().rating())
+            .into();
+        probe.values.borrow_mut().push((first.read)());
+        probe
+            .bindings
+            .borrow_mut()
+            .extend([first, second, different_namespace]);
+
+        VNode::empty()
+    }
+
+    #[test]
+    fn field_handle_produces_an_identity_aware_generic_binding() {
+        let probe = Rc::new(GenericBindingProbe {
+            form: FormHandle::new(GenericFieldForm { rating: Rating(3) }),
+            bindings: RefCell::new(Vec::new()),
+            values: RefCell::new(Vec::new()),
+            blur_listener_runs: Cell::new(0),
+        });
+        let mut dom = VirtualDom::new_with_props(generic_bindings, Rc::clone(&probe));
+
+        dom.rebuild_in_place();
+
+        let bindings = probe.bindings.borrow();
+        assert_eq!(probe.values.borrow().as_slice(), [Rating(3)]);
+        assert!(bindings[0] == bindings[1]);
+        assert!(bindings[0] != bindings[2]);
+    }
+
+    #[test]
+    fn generic_binding_preserves_user_and_programmatic_write_origins() {
+        let form = FormHandle::new(GenericFieldForm { rating: Rating(3) });
+        let probe = Rc::new(GenericBindingProbe {
+            form: form.clone(),
+            bindings: RefCell::new(Vec::new()),
+            values: RefCell::new(Vec::new()),
+            blur_listener_runs: Cell::new(0),
+        });
+        let mut dom = VirtualDom::new_with_props(generic_bindings, Rc::clone(&probe));
+        dom.rebuild_in_place();
+        let binding = probe.bindings.borrow()[0].clone();
+
+        binding.write(Rating(4), ChangeOrigin::Programmatic);
+        assert_eq!(
+            form.field_value(GenericFieldForm::fields().rating()),
+            Rating(4)
+        );
+        assert!(!form.is_field_touched(GenericFieldForm::fields().rating()));
+        assert!(form.is_field_dirty(GenericFieldForm::fields().rating()));
+
+        binding.write(Rating(5), ChangeOrigin::User);
+        assert_eq!(
+            form.field_value(GenericFieldForm::fields().rating()),
+            Rating(5)
+        );
+        assert!(form.is_field_touched(GenericFieldForm::fields().rating()));
+    }
+
+    #[test]
+    fn generic_binding_keeps_commit_and_focus_exit_independent() {
+        let form = FormHandle::new(GenericFieldForm { rating: Rating(3) });
+        let validation_runs = Rc::new(Cell::new(0));
+        let validator_runs = Rc::clone(&validation_runs);
+        form.field(GenericFieldForm::fields().rating())
+            .validator("rating")
+            .on(ValidationTrigger::Commit)
+            .check(move |_rating, _context| {
+                validator_runs.set(validator_runs.get() + 1);
+                Vec::new()
+            });
+        let probe = Rc::new(GenericBindingProbe {
+            form: form.clone(),
+            bindings: RefCell::new(Vec::new()),
+            values: RefCell::new(Vec::new()),
+            blur_listener_runs: Cell::new(0),
+        });
+        let mut dom = VirtualDom::new_with_props(generic_bindings, Rc::clone(&probe));
+        dom.rebuild_in_place();
+        let binding = probe.bindings.borrow()[0].clone();
+
+        binding.commit();
+        assert!(form.is_field_committed(GenericFieldForm::fields().rating()));
+        assert!(!form.is_field_touched(GenericFieldForm::fields().rating()));
+        assert!(!form.is_field_blurred(GenericFieldForm::fields().rating()));
+        assert_eq!(validation_runs.get(), 1);
+        assert_eq!(probe.blur_listener_runs.get(), 0);
+
+        binding.focus_exit();
+        assert!(form.is_field_touched(GenericFieldForm::fields().rating()));
+        assert!(form.is_field_blurred(GenericFieldForm::fields().rating()));
+        assert_eq!(validation_runs.get(), 1);
+        assert_eq!(probe.blur_listener_runs.get(), 1);
+    }
+
+    #[derive(Clone)]
+    struct RatingError(&'static str);
+
+    impl fmt::Display for RatingError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(self.0)
+        }
+    }
+
+    struct GenericContextProbe {
+        form: FormHandle<GenericFieldForm, RatingError>,
+        binding: RefCell<Option<Binding<Rating>>>,
+        meta: RefCell<Option<FieldMeta>>,
+    }
+
+    #[derive(Clone, Props)]
+    struct GenericRatingProps {
+        probe: Rc<GenericContextProbe>,
+    }
+
+    impl PartialEq for GenericRatingProps {
+        fn eq(&self, other: &Self) -> bool {
+            Rc::ptr_eq(&self.probe, &other.probe)
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn GenericRating(props: GenericRatingProps) -> Element {
+        let binding = use_binding(None, Rating(0));
+        let meta = use_field_meta(None);
+        props.probe.binding.borrow_mut().replace(binding);
+        props.probe.meta.borrow_mut().replace(meta);
+
+        rsx! { div { ..meta.attributes() } }
+    }
+
+    fn generic_context_field(probe: Rc<GenericContextProbe>) -> Element {
+        rsx! {
+            Field {
+                context: probe.form.field(GenericFieldForm::fields().rating()),
+                GenericRating { probe }
+                FieldError { id: "rating-error" }
+            }
+        }
+    }
+
+    #[test]
+    fn field_handle_directly_provides_context_metadata_and_visible_errors() {
+        let form = FormHandle::new_with_error_type(GenericFieldForm { rating: Rating(3) })
+            .with_id_namespace("survey");
+        form.field(GenericFieldForm::fields().rating())
+            .validator("minimum")
+            .on(ValidationTrigger::Commit)
+            .check_optional(|rating, _context| {
+                (rating.0 < 5).then_some(RatingError("Choose at least 5"))
+            });
+        let probe = Rc::new(GenericContextProbe {
+            form,
+            binding: RefCell::new(None),
+            meta: RefCell::new(None),
+        });
+        let mut dom = VirtualDom::new_with_props(generic_context_field, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        let binding = probe
+            .binding
+            .borrow()
+            .clone()
+            .expect("component should expose the generic binding");
+        let meta = probe
+            .meta
+            .borrow()
+            .expect("component should expose generic field metadata");
+        assert_eq!(meta.id().as_ref(), "survey-rating-input");
+        assert_eq!(meta.name().as_deref(), Some("rating"));
+        assert!(!meta.invalid());
+        assert!(!meta.touched());
+        assert!(!meta.dirty());
+
+        binding.write(Rating(4), ChangeOrigin::User);
+        binding.commit();
+        render_reactive_updates(&mut dom);
+
+        assert!(meta.invalid());
+        assert!(meta.touched());
+        assert!(meta.dirty());
+        assert_eq!(meta.errors(), vec![Rc::from("Choose at least 5")]);
+        assert!(dioxus_ssr::render(&dom).contains("<div>Choose at least 5</div>"));
+    }
+
     #[derive(Clone, dioform::Form)]
     struct ScalarForm {
         text: String,
@@ -462,7 +678,14 @@ mod tests {
         choice: i32,
     }
 
-    fn scalar_bindings_convert(form: FormHandle<ScalarForm>) -> Element {
+    struct ScalarBindingsProbe {
+        form: FormHandle<ScalarForm>,
+        values_match: Cell<bool>,
+        equal_bindings_match: Cell<bool>,
+    }
+
+    fn scalar_bindings_convert(probe: Rc<ScalarBindingsProbe>) -> Element {
+        let form = &probe.form;
         let fields = ScalarForm::fields();
         let text: Binding<String> = form.text(fields.text()).into();
         let textarea: Binding<String> = form.textarea(fields.text()).into();
@@ -477,30 +700,39 @@ mod tests {
             .into();
         let radio: Binding<i32> = form.radio_group(fields.choice()).into();
 
-        assert_eq!((text.read)().as_str(), "text");
-        assert_eq!((textarea.read)().as_str(), "text");
-        assert_eq!((optional_text.read)(), Some("optional".to_owned()));
-        assert!((checked.read)());
-        assert!(checked == same_checked);
-        assert_eq!((tri_state.read)(), None);
-        assert_eq!((select.read)(), 7);
-        assert_eq!((rendered_select.read)(), 7);
-        assert_eq!((radio.read)(), 7);
+        probe.values_match.set(
+            (text.read)().as_str() == "text"
+                && (textarea.read)().as_str() == "text"
+                && (optional_text.read)() == Some("optional".to_owned())
+                && (checked.read)()
+                && (tri_state.read)().is_none()
+                && (select.read)() == 7
+                && (rendered_select.read)() == 7
+                && (radio.read)() == 7,
+        );
+        probe.equal_bindings_match.set(checked == same_checked);
 
         VNode::empty()
     }
 
     #[test]
     fn every_scalar_binding_produces_a_field_convention_binding() {
-        let form = FormHandle::new(ScalarForm {
-            text: "text".to_owned(),
-            optional_text: Some("optional".to_owned()),
-            checked: true,
-            tri_state: None,
-            choice: 7,
+        let probe = Rc::new(ScalarBindingsProbe {
+            form: FormHandle::new(ScalarForm {
+                text: "text".to_owned(),
+                optional_text: Some("optional".to_owned()),
+                checked: true,
+                tri_state: None,
+                choice: 7,
+            }),
+            values_match: Cell::new(false),
+            equal_bindings_match: Cell::new(false),
         });
-        let mut dom = VirtualDom::new_with_props(scalar_bindings_convert, form);
+        let mut dom = VirtualDom::new_with_props(scalar_bindings_convert, Rc::clone(&probe));
 
         dom.rebuild_in_place();
+
+        assert!(probe.values_match.get());
+        assert!(probe.equal_bindings_match.get());
     }
 }

@@ -2761,14 +2761,6 @@ mod field_binding {
             self.handle.field(self.path.clone())
         }
 
-        #[cfg(feature = "dioxus-field")]
-        pub(super) fn is_dirty(&self) -> bool
-        where
-            Value: PartialEq,
-        {
-            self.handle.is_field_dirty(self.path.clone())
-        }
-
         pub(super) fn read_value<Result>(&self, read: impl FnOnce(&Value) -> Result) -> Result {
             self.handle
                 .reactivity
@@ -4386,6 +4378,10 @@ where
 /// Values that implement `Clone + PartialEq` can be read through Dioxus's [`Readable`] trait and
 /// passed directly to a [`ReadSignal`] prop. Independently derived direct paths share one cached
 /// view; composed paths share only when the path itself is cloned.
+///
+/// With the `dioxus-field` feature enabled, compatible values can also convert directly into a
+/// `dioxus_field::Binding` or `dioxus_field::FieldContext`. Binding identity combines the
+/// [`FormHandle`]'s observable identity with [`FieldPath`] interchangeability.
 pub struct FieldHandle<Model, Value, Error = String> {
     handle: FormHandle<Model, Error>,
     path: FieldPath<Model, Value>,
@@ -4397,6 +4393,12 @@ impl<Model, Value, Error> Clone for FieldHandle<Model, Value, Error> {
             handle: self.handle.clone(),
             path: self.path.clone(),
         }
+    }
+}
+
+impl<Model, Value, Error> PartialEq for FieldHandle<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.handle == other.handle && self.path == other.path
     }
 }
 
@@ -12842,26 +12844,32 @@ mod field_convention {
         meta
     }
 
-    impl<Model, Value, Error> FieldBindingCore<Model, Value, Error> {
+    impl<Model, Value, Error> FieldHandle<Model, Value, Error> {
         fn convention_binding(&self) -> Binding<Value>
         where
             Model: 'static,
             Value: Clone + PartialEq + 'static,
             Error: 'static,
         {
-            let read = ReadSignal::new(self.field_handle());
+            let read = ReadSignal::new(self.clone());
             let identity = self.clone();
             let writer = self.clone();
             let committer = self.clone();
             let focus_exiter = self.clone();
             let write = Callback::new(move |(value, origin)| match origin {
-                ChangeOrigin::User => writer.set_user(value),
-                ChangeOrigin::Programmatic => writer.set_programmatic(value),
+                ChangeOrigin::User => writer.handle.set_user_field(writer.path.clone(), value),
+                ChangeOrigin::Programmatic => writer.handle.set_field(writer.path.clone(), value),
             });
-            let commit = Callback::new(move |()| committer.commit());
-            let focus_exit = Callback::new(move |()| focus_exiter.focus_exit());
+            let commit =
+                Callback::new(move |()| committer.handle.commit_field(committer.path.clone()));
+            let focus_exit = Callback::new(move |()| {
+                focus_exiter
+                    .handle
+                    .mark_field_blurred(focus_exiter.path.clone());
+            });
 
-            Binding::new_with_identity(read, write, commit, identity).with_focus_exit(focus_exit)
+            Binding::new_with_identity(read, write, commit, identity)
+                .with_focus_exit_using_identity(focus_exit)
         }
 
         fn convention_meta_values(&self, formatter: impl Fn(&Error) -> String) -> FieldMetaValues
@@ -12869,22 +12877,71 @@ mod field_convention {
             Value: PartialEq,
             Error: Clone,
         {
-            let accessibility = self.accessibility();
-            let metadata = self.metadata();
+            let accessibility = self.handle.field_accessibility(self.path.clone());
+            let metadata = self.handle.field_metadata(self.path.clone());
             FieldMetaValues {
                 id: Some(Rc::from(accessibility.input_id())),
-                name: Some(Rc::from(self.name())),
+                name: Some(Rc::from(self.path.field_name())),
                 required: false,
                 disabled: false,
                 invalid: Some(accessibility.aria_invalid()),
                 errors: self
-                    .visible_validation_errors()
+                    .handle
+                    .visible_field_validation_errors(self.path.clone())
                     .iter()
                     .map(|error| Rc::from(formatter(error.error())))
                     .collect(),
                 touched: metadata.is_touched(),
-                dirty: self.is_dirty(),
+                dirty: self.handle.is_field_dirty(self.path.clone()),
             }
+        }
+
+        /// Produces signal-backed presentation metadata for the Field Convention.
+        ///
+        /// Visible validation errors are formatted with [`fmt::Display`]. This method is a Dioxus
+        /// hook and must be called unconditionally from a component render.
+        pub fn meta(&self) -> FieldMeta
+        where
+            Value: PartialEq,
+            Error: Clone + fmt::Display,
+        {
+            self.meta_with_error_formatter(ToString::to_string)
+        }
+
+        /// Produces Field Convention metadata using an application-defined error formatter.
+        ///
+        /// This method is a Dioxus hook and must be called unconditionally from a component render.
+        pub fn meta_with_error_formatter(&self, formatter: impl Fn(&Error) -> String) -> FieldMeta
+        where
+            Value: PartialEq,
+            Error: Clone,
+        {
+            use_convention_meta(self.convention_meta_values(formatter))
+        }
+    }
+
+    impl<Model, Value, Error> From<FieldHandle<Model, Value, Error>> for Binding<Value>
+    where
+        Model: 'static,
+        Value: Clone + PartialEq + 'static,
+        Error: 'static,
+    {
+        fn from(field: FieldHandle<Model, Value, Error>) -> Self {
+            field.convention_binding()
+        }
+    }
+
+    impl<Model, Value, Error> From<FieldHandle<Model, Value, Error>> for FieldContext
+    where
+        Model: 'static,
+        Value: Clone + PartialEq + 'static,
+        Error: Clone + fmt::Display + 'static,
+    {
+        fn from(field: FieldHandle<Model, Value, Error>) -> Self {
+            let meta = field.convention_meta_values(ToString::to_string);
+            let binding = field.convention_binding();
+
+            FieldContext::new(binding).with_meta_values(meta)
         }
     }
 
@@ -12915,7 +12972,9 @@ mod field_convention {
                     $value: PartialEq,
                     Error: Clone,
                 {
-                    use_convention_meta(self.base.convention_meta_values(formatter))
+                    use_convention_meta(
+                        self.base.field_handle().convention_meta_values(formatter)
+                    )
                 }
             }
 
@@ -12926,7 +12985,7 @@ mod field_convention {
                 Error: 'static,
             {
                 fn from(binding: $binding) -> Self {
-                    binding.base.convention_binding()
+                    binding.base.field_handle().convention_binding()
                 }
             }
 
@@ -12939,8 +12998,9 @@ mod field_convention {
                 fn from(binding: $binding) -> Self {
                     let meta = binding
                         .base
+                        .field_handle()
                         .convention_meta_values(ToString::to_string);
-                    let binding = binding.base.convention_binding();
+                    let binding = binding.base.field_handle().convention_binding();
 
                     FieldContext::new(binding).with_meta_values(meta)
                 }
