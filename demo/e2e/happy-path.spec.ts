@@ -7,8 +7,20 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   const terms = demo.getByRole("switch", {
     name: "I agree to the code of conduct",
   });
+  const productUpdates = demo.getByRole("switch", {
+    name: "Product updates",
+  });
+  const eventReminders = demo.getByRole("switch", {
+    name: "Event reminders",
+  });
 
   await expect(stateValue(demo, "name.blurred")).toHaveText("false");
+  await expect(productUpdates).toHaveAccessibleDescription(
+    "Monthly release notes",
+  );
+  await expect(eventReminders).toHaveAccessibleDescription(
+    "One reminder before the event",
+  );
 
   await demo.getByRole("button", { name: "Register" }).click();
 
@@ -27,7 +39,7 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   await expect(stateValue(demo, "name.blurred")).toHaveText("true");
   await expect(stateValue(demo, "name.visible_errors")).toHaveText("0");
   await demo.getByRole("radio", { name: "Remote" }).click();
-  await demo.getByRole("switch", { name: "Product updates" }).click();
+  await productUpdates.click();
   await terms.click();
   await demo.getByRole("button", { name: "Register" }).click();
 

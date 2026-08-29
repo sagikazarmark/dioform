@@ -7,7 +7,7 @@ use dioxus_daisyui::components::{
     input::TextField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
-    switch::{Switch, SwitchColor},
+    switch::{Switch, SwitchColor, SwitchField},
     textarea::TextareaField,
 };
 
@@ -204,37 +204,17 @@ pub fn HappyPathExample() -> Element {
                         fieldset { class: "rounded-xl border border-base-300 p-4",
                             legend { class: "px-1 text-sm font-semibold", "Communication preferences" }
                             div { class: "grid gap-4 sm:grid-cols-2",
-                                DaisyField {
-                                    context: form.checkbox(preferences.product_updates()),
-                                    class: "min-w-0 grid-cols-1",
-                                    FieldLabel {
-                                        id: "happy-product-updates-label",
-                                        class: "font-medium",
-                                        "Product updates"
-                                    }
-                                    div { class: "flex items-center gap-3",
-                                        Switch {
-                                            color: SwitchColor::Primary,
-                                            aria_labelledby: "happy-product-updates-label",
-                                        }
-                                        span { class: "text-sm text-base-content/65", "Monthly release notes" }
-                                    }
+                                SwitchField {
+                                    context: form.field(preferences.product_updates()),
+                                    label: "Product updates",
+                                    description: "Monthly release notes",
+                                    color: SwitchColor::Primary,
                                 }
-                                DaisyField {
-                                    context: form.checkbox(preferences.event_reminders()),
-                                    class: "min-w-0 grid-cols-1",
-                                    FieldLabel {
-                                        id: "happy-event-reminders-label",
-                                        class: "font-medium",
-                                        "Event reminders"
-                                    }
-                                    div { class: "flex items-center gap-3",
-                                        Switch {
-                                            color: SwitchColor::Primary,
-                                            aria_labelledby: "happy-event-reminders-label",
-                                        }
-                                        span { class: "text-sm text-base-content/65", "One reminder before the event" }
-                                    }
+                                SwitchField {
+                                    context: form.field(preferences.event_reminders()),
+                                    label: "Event reminders",
+                                    description: "One reminder before the event",
+                                    color: SwitchColor::Primary,
                                 }
                             }
                         }
