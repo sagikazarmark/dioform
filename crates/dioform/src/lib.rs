@@ -2892,15 +2892,49 @@ mod parsed_input {
     ) where
         Binding: TypedFieldBinding<Value>,
     {
+        write(binding, registration, parser, value, WriteOrigin::User);
+    }
+
+    /// Where one rendered-text write came from.
+    ///
+    /// Rendered text is parsed before it reaches the field, so the origin has to travel with the
+    /// text rather than being carried by the typed write it turns into.
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    pub(super) enum WriteOrigin {
+        /// The user typed the rendered text.
+        User,
+        /// Application code supplied the rendered text.
+        #[cfg_attr(not(feature = "dioxus-field"), allow(dead_code))]
+        Programmatic,
+    }
+
+    /// Applies one rendered-text write, parsing it into the typed field or raising a Parse Blocker.
+    ///
+    /// Only a user write reports interaction: a programmatic write neither marks the field touched
+    /// nor writes as the user, exactly as [`set_value`] does for an already-typed value.
+    pub(super) fn write<Binding, Value>(
+        binding: &Binding,
+        registration: &ParseBindingRegistration,
+        parser: &Rc<TextParserFn<Value>>,
+        value: impl Into<String>,
+        origin: WriteOrigin,
+    ) where
+        Binding: TypedFieldBinding<Value>,
+    {
         let raw_value = value.into();
 
         match parser.as_ref()(&raw_value) {
             Ok(value) => {
                 registration.clear_error(&binding.field_identity());
-                binding.set_user(value);
+                match origin {
+                    WriteOrigin::User => binding.set_user(value),
+                    WriteOrigin::Programmatic => binding.set_programmatic(value),
+                }
             }
             Err(error) => {
-                binding.mark_touched();
+                if origin == WriteOrigin::User {
+                    binding.mark_touched();
+                }
 
                 // Raising a blocker is a write, so it stays silent when the addressed target no
                 // longer resolves, exactly as the value write beside it does (ADR-0022).
@@ -2939,6 +2973,15 @@ struct ParseBindingRegistrationInner {
     adapter: AdapterRuntime,
     reactivity: Rc<FormReactivity>,
     id: ParseBindingId,
+    /// Storage the Field Convention's rendered-text reads return a reference into.
+    ///
+    /// A [`Binding<String>`](dioxus_field::Binding) read hands out a `'static` reference, and the
+    /// rendered text is derived rather than stored, so it needs somewhere to live. It is created on
+    /// the first such read: a mount that never produces the convention never allocates one, and the
+    /// allocation then happens inside the render that reads it rather than wherever the form was
+    /// built.
+    #[cfg(feature = "dioxus-field")]
+    rendered: Cell<Option<CopyValue<String>>>,
 }
 
 impl Drop for ParseBindingRegistrationInner {
@@ -2975,8 +3018,28 @@ impl ParseBindingRegistration {
                 adapter,
                 reactivity,
                 id,
+                #[cfg(feature = "dioxus-field")]
+                rendered: Cell::new(None),
             }),
         }
+    }
+
+    /// Returns this mount's rendered-text storage, creating it when it does not exist yet.
+    ///
+    /// Storage created for a scope that has since unmounted no longer reads back, so a dead one is
+    /// replaced rather than handed out.
+    #[cfg(feature = "dioxus-field")]
+    fn rendered_storage(&self) -> CopyValue<String> {
+        if let Some(storage) = self.inner.rendered.get()
+            && storage.try_peek_unchecked().is_ok()
+        {
+            return storage;
+        }
+
+        let storage = CopyValue::new(String::new());
+        self.inner.rendered.set(Some(storage));
+
+        storage
     }
 
     /// Points this mount at the field its scope renders now, ending the blocker it held for the
@@ -2995,6 +3058,12 @@ impl ParseBindingRegistration {
                 .reactivity
                 .notify_selector_transition(SelectorTransition::ParseChanged(previous));
         }
+    }
+
+    /// Returns this mount's opaque identity.
+    #[cfg(feature = "dioxus-field")]
+    fn id(&self) -> ParseBindingId {
+        self.inner.id
     }
 
     /// Returns whether a caller's address is still the one this mount renders.
@@ -13008,6 +13077,166 @@ mod field_convention {
         };
     }
 
+    /// The rendered text one mounted parse binding shows.
+    ///
+    /// This is the same text [`ParsedTextBinding::value`] returns — Raw Input State while a Parse
+    /// Blocker stands, and the formatted field value otherwise — behind the [`Readable`] contract a
+    /// [`Binding<String>`] read needs. The rendered text is derived from two reactive sources
+    /// rather than stored anywhere, so each read recomputes it into the mount's storage and hands
+    /// out a reference to that.
+    struct RenderedText<Model, Value, Error> {
+        binding: ParsedTextBinding<Model, Value, Error>,
+    }
+
+    impl<Model, Value, Error> Readable for RenderedText<Model, Value, Error>
+    where
+        Model: 'static,
+        Value: 'static,
+        Error: 'static,
+    {
+        type Target = String;
+        type Storage = UnsyncStorage;
+
+        fn try_read_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            let rendered = self.binding.value();
+            let storage = self.binding.registration.rendered_storage();
+            let stored = storage.try_peek_unchecked()?;
+
+            if *stored != rendered {
+                drop(stored);
+                let mut storage = storage;
+                storage.set(rendered);
+            }
+
+            storage.try_peek_unchecked()
+        }
+
+        /// Reads without the [`Readable::peek`] promise of not subscribing.
+        ///
+        /// Both sources are read through the form's own selector tracking, which subscribes the
+        /// current reactive scope or nothing at all when there is none (ADR-0029). A peek taken
+        /// outside a reactive scope — every peek a widget takes from an event handler — therefore
+        /// subscribes nothing, and one taken inside a scope conservatively subscribes it rather
+        /// than leaving it blind to a change it read.
+        fn try_peek_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            self.try_read_unchecked()
+        }
+
+        /// Returns no subscriber list, because reads subscribe through the form's selectors.
+        ///
+        /// Nothing subscribes to this view without reading it: it is never a
+        /// [`ReadSignal::point_to`] target, and the storage it reads back from is a
+        /// [`CopyValue`], which reports the same empty list.
+        fn subscribers(&self) -> Subscribers {
+            Subscribers::new_noop()
+        }
+    }
+
+    impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
+        fn convention_binding(&self) -> Binding<String>
+        where
+            Model: 'static,
+            Value: 'static,
+            Error: 'static,
+        {
+            let read = ReadSignal::new(RenderedText {
+                binding: self.clone(),
+            });
+            let identity = (self.base.field_handle(), self.registration.id());
+            let writer = self.clone();
+            let committer = self.clone();
+            let focus_exiter = self.clone();
+            let write = Callback::new(move |(value, origin): (String, ChangeOrigin)| {
+                writer.write_rendered(
+                    value,
+                    match origin {
+                        ChangeOrigin::User => parsed_input::WriteOrigin::User,
+                        ChangeOrigin::Programmatic => parsed_input::WriteOrigin::Programmatic,
+                    },
+                );
+            });
+            let commit = Callback::new(move |()| committer.on_commit());
+            let focus_exit = Callback::new(move |()| focus_exiter.on_focus_exit());
+
+            Binding::new_with_identity(read, write, commit, identity)
+                .with_focus_exit_using_identity(focus_exit)
+        }
+
+        fn convention_meta_values(&self, formatter: impl Fn(&Error) -> String) -> FieldMetaValues
+        where
+            Value: PartialEq,
+            Error: Clone,
+        {
+            let mut values = self.base.field_handle().convention_meta_values(formatter);
+
+            // A Parse Blocker is not a Validation Error and never becomes one (ADR-0052), but it is
+            // a reason this field's rendered text is not acceptable, and the convention's errors
+            // are pre-rendered presentation text rather than the form's error type. It leads,
+            // because it describes the text the user is looking at.
+            if let Some(parse_error) = self.parse_error() {
+                values.invalid = Some(true);
+                values.errors.insert(0, Rc::from(parse_error.message()));
+            }
+
+            values
+        }
+
+        /// Produces signal-backed presentation metadata for the Field Convention.
+        ///
+        /// An unresolved Parse Error leads the reported errors and marks the field invalid. Visible
+        /// validation errors are formatted with [`fmt::Display`]. This method is a Dioxus hook and
+        /// must be called unconditionally from a component render.
+        pub fn meta(&self) -> FieldMeta
+        where
+            Value: PartialEq,
+            Error: Clone + fmt::Display,
+        {
+            self.meta_with_error_formatter(ToString::to_string)
+        }
+
+        /// Produces Field Convention metadata using an application-defined error formatter.
+        ///
+        /// The formatter applies to validation errors. A Parse Error is already rendered text and
+        /// is reported as-is. This method is a Dioxus hook and must be called unconditionally from
+        /// a component render.
+        pub fn meta_with_error_formatter(&self, formatter: impl Fn(&Error) -> String) -> FieldMeta
+        where
+            Value: PartialEq,
+            Error: Clone,
+        {
+            use_convention_meta(self.convention_meta_values(formatter))
+        }
+    }
+
+    impl<Model, Value, Error> From<ParsedTextBinding<Model, Value, Error>> for Binding<String>
+    where
+        Model: 'static,
+        Value: 'static,
+        Error: 'static,
+    {
+        fn from(binding: ParsedTextBinding<Model, Value, Error>) -> Self {
+            binding.convention_binding()
+        }
+    }
+
+    impl<Model, Value, Error> From<ParsedTextBinding<Model, Value, Error>> for FieldContext
+    where
+        Model: 'static,
+        Value: PartialEq + 'static,
+        Error: Clone + fmt::Display + 'static,
+    {
+        fn from(binding: ParsedTextBinding<Model, Value, Error>) -> Self {
+            let meta = binding.convention_meta_values(ToString::to_string);
+            let binding = binding.convention_binding();
+
+            FieldContext::new(binding).with_meta_values(meta)
+        }
+    }
+
     impl_scalar_field_convention!([] TextBinding<Model, Error> => String);
     impl_scalar_field_convention!([] OptionalTextBinding<Model, Error> => Option<String>);
     impl_scalar_field_convention!([] TextareaBinding<Model, Error> => String);
@@ -13076,6 +13305,12 @@ impl<Model, Value, Error> ParsedTextBinding<Model, Value, Error> {
     /// Applies a Dioxus text-like `oninput` value update by parsing rendered input.
     pub fn on_input(&self, value: impl Into<String>) {
         parsed_input::on_input(&self.base, &self.registration, &self.parser, value);
+    }
+
+    /// Applies one rendered-text write from a known origin.
+    #[cfg(feature = "dioxus-field")]
+    fn write_rendered(&self, value: impl Into<String>, origin: parsed_input::WriteOrigin) {
+        parsed_input::write(&self.base, &self.registration, &self.parser, value, origin);
     }
 
     /// Records the end of one interaction unit without validating an unresolved Parse Error.

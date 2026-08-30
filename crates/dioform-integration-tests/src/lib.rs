@@ -670,6 +670,132 @@ mod tests {
     }
 
     #[derive(Clone, dioform::Form)]
+    struct QuantityForm {
+        quantity: u32,
+    }
+
+    struct ParsedTextProbe {
+        form: FormHandle<QuantityForm>,
+        binding: RefCell<Option<Binding<String>>>,
+        rendered: RefCell<Vec<String>>,
+        equal_bindings_match: Cell<bool>,
+    }
+
+    fn parsed_text_field(probe: Rc<ParsedTextProbe>) -> Element {
+        let quantity = dioform::use_number(&probe.form, QuantityForm::fields().quantity());
+        let binding: Binding<String> = quantity.clone().into();
+        let same_binding: Binding<String> = quantity.clone().into();
+
+        probe.rendered.borrow_mut().push((binding.read)());
+        probe.equal_bindings_match.set(binding == same_binding);
+        probe.binding.borrow_mut().replace(binding);
+
+        rsx! {
+            Field { context: quantity,
+                FieldError { id: "quantity-error" }
+            }
+        }
+    }
+
+    fn parsed_text_probe() -> (Rc<ParsedTextProbe>, VirtualDom) {
+        let probe = Rc::new(ParsedTextProbe {
+            form: FormHandle::new(QuantityForm { quantity: 3 }),
+            binding: RefCell::new(None),
+            rendered: RefCell::new(Vec::new()),
+            equal_bindings_match: Cell::new(false),
+        });
+        let mut dom = VirtualDom::new_with_props(parsed_text_field, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        (probe, dom)
+    }
+
+    fn convention_binding<Value: 'static>(
+        binding: &RefCell<Option<Binding<Value>>>,
+    ) -> Binding<Value> {
+        binding
+            .borrow()
+            .as_ref()
+            .expect("component should expose the convention binding")
+            .clone()
+    }
+
+    #[test]
+    fn parsed_binding_renders_the_formatted_field_value() {
+        let (probe, mut dom) = parsed_text_probe();
+
+        convention_binding(&probe.binding).write("5".to_owned(), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(probe.form.field_value(QuantityForm::fields().quantity()), 5);
+        assert!(
+            probe
+                .form
+                .is_field_touched(QuantityForm::fields().quantity())
+        );
+        assert_eq!(
+            probe.rendered.borrow().first().map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().map(String::as_str),
+            Some("5")
+        );
+    }
+
+    #[test]
+    fn parsed_binding_keeps_a_programmatic_rendered_write_out_of_interaction_state() {
+        let (probe, mut dom) = parsed_text_probe();
+
+        convention_binding(&probe.binding).write("7".to_owned(), ChangeOrigin::Programmatic);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(probe.form.field_value(QuantityForm::fields().quantity()), 7);
+        assert!(
+            !probe
+                .form
+                .is_field_touched(QuantityForm::fields().quantity())
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().map(String::as_str),
+            Some("7")
+        );
+    }
+
+    #[test]
+    fn parsed_binding_reports_an_unresolved_parse_error_as_a_convention_error() {
+        let (probe, mut dom) = parsed_text_probe();
+        let binding = convention_binding(&probe.binding);
+
+        binding.write("twelve".to_owned(), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        // The typed field keeps its last parsable value while the rendered text holds what the user
+        // typed, and the Parse Blocker is what the Field reports.
+        assert_eq!(probe.form.field_value(QuantityForm::fields().quantity()), 3);
+        assert_eq!(
+            probe.rendered.borrow().last().map(String::as_str),
+            Some("twelve")
+        );
+        assert_eq!(
+            dioxus_ssr::render(&dom),
+            "<div><div id=\"quantity-error\" aria-live=\"polite\" data-invalid=\"true\" data-touched=\"true\"><div>invalid digit found in string</div></div></div>"
+        );
+
+        binding.write("12".to_owned(), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(QuantityForm::fields().quantity()),
+            12
+        );
+        assert_eq!(
+            dioxus_ssr::render(&dom),
+            "<div><div id=\"quantity-error\" aria-live=\"polite\" data-dirty=\"true\" data-touched=\"true\"></div></div>"
+        );
+    }
+
+    #[derive(Clone, dioform::Form)]
     struct ScalarForm {
         text: String,
         optional_text: Option<String>,

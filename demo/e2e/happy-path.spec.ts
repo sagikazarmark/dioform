@@ -4,6 +4,7 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   const demo = await openExample(page, "/happy-path");
   const name = demo.getByLabel("Name");
   const email = demo.getByLabel("Email");
+  const seats = demo.getByLabel("Seats");
   const terms = demo.getByRole("switch", {
     name: "I agree to the code of conduct",
   });
@@ -38,6 +39,20 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
 
   await name.fill("Ada Lovelace");
   await email.fill("ada@example.com");
+
+  // The parsed binding is over the rendered text: unparsable input keeps the last parsed value in
+  // the draft, blocks submission, and reports the parse message where validation errors appear.
+  await seats.fill("two");
+  await expect(stateValue(demo, "seats.parse_blocked")).toHaveText("true");
+  await expect(seats).toHaveAttribute("aria-invalid", "true");
+  await expect(
+    demo.getByText("invalid digit found in string"),
+  ).toBeVisible();
+
+  await seats.fill("2");
+  await expect(stateValue(demo, "seats.parse_blocked")).toHaveText("false");
+  await expect(seats).toHaveAttribute("aria-invalid", "false");
+
   await expect(stateValue(demo, "name.blurred")).toHaveText("true");
   await expect(stateValue(demo, "name.visible_errors")).toHaveText("0");
   await demo.getByRole("radio", { name: "Remote" }).click();

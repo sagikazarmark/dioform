@@ -48,6 +48,8 @@ struct WorkshopRegistration {
     email: String,
     #[garde(custom(require_choice))]
     attendance: String,
+    #[garde(range(min = 1, max = 5))]
+    seats: u32,
     #[garde(skip)]
     track: Option<Track>,
     #[garde(length(max = 160))]
@@ -76,15 +78,18 @@ fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
 
 fn build_form() -> FormHandle<WorkshopRegistration> {
     FormHandle::<WorkshopRegistration>::from_config(
-        FormConfig::new(WorkshopRegistration::default())
-            .id_namespace("workshop-registration")
-            .validation_mode(ValidationMode::on_commit())
-            .register_core(|core| {
-                core.garde_validation()
-                    .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
-                    .derived_path_map()
-                    .register_string_errors();
-            }),
+        FormConfig::new(WorkshopRegistration {
+            seats: 1,
+            ..WorkshopRegistration::default()
+        })
+        .id_namespace("workshop-registration")
+        .validation_mode(ValidationMode::on_commit())
+        .register_core(|core| {
+            core.garde_validation()
+                .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
+                .derived_path_map()
+                .register_string_errors();
+        }),
     )
 }
 
@@ -102,6 +107,8 @@ pub fn HappyPathExample() -> Element {
     let form = use_form_handle(build_form);
     let fields = WorkshopRegistration::fields();
     let preferences = Preferences::mount(fields.preferences());
+    let seats = use_number(&form, fields.seats());
+    let seats_state = seats.clone();
     let submit = form.managed_submit();
     let mut success_message = use_signal(String::new);
 
@@ -145,6 +152,15 @@ pub fn HappyPathExample() -> Element {
                                 r#type: "email",
                                 autocomplete: "email",
                                 placeholder: "ada@example.com",
+                            }
+                            TextField {
+                                context: seats,
+                                label: "Seats",
+                                description: "Parsed into a u32; text that is not a number is a Parse Error, not a validation error.",
+                                class: "min-w-0 w-full",
+                                required: true,
+                                inputmode: "numeric",
+                                placeholder: "1",
                             }
                         }
 
@@ -247,6 +263,7 @@ pub fn HappyPathExample() -> Element {
                                     .to_string(),
                             ),
                             ("terms.touched", form.is_field_touched(fields.accepted_terms()).to_string()),
+                            ("seats.parse_blocked", seats_state.parse_error().is_some().to_string()),
                             ("submit.attempts", form.submit_attempt_count().to_string()),
                             ("submit.status", status_label(form.last_submit_status())),
                             ("can_submit", form.can_submit().to_string()),
@@ -273,6 +290,9 @@ pub fn HappyPathExample() -> Element {
                     }
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
                         "The Field Convention reports Commit and Focus Exit separately. Dioform uses Commit for validation and committed Error Visibility, then Focus Exit for exact touched and Blurred Field state without validating twice."
+                    }
+                    p { class: "mt-2 text-sm leading-6 text-base-content/60",
+                        "Seats binds through the same registry control as the text fields. Its binding is over the rendered text, so unparsable input keeps the last parsed value in the Form Draft, holds a Parse Blocker, and reports the parse message where validation errors appear."
                     }
                 }
             },

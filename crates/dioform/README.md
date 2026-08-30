@@ -46,9 +46,11 @@ assert_eq!(fields.last_name().field_name(), "family-name");
 ## Feature Flags
 
 - `dioxus-field`: converts any compatible `FieldHandle` and the existing scalar Dioform bindings
-  into `dioxus_field::Binding` values or `dioxus_field::FieldContext`, maps Commit to committed
-  metadata and validation, maps Focus Exit to blurred/touched state and blur listeners, and adds
-  signal-backed `meta()` production for the Field Convention.
+  into `dioxus_field::Binding` values or `dioxus_field::FieldContext`, converts parsed bindings
+  (`use_number`, `use_date`, `use_parsed_text`, and their variants) into a text-shaped
+  `Binding<String>` that reports an unresolved Parse Error as a Field error, maps Commit to
+  committed metadata and validation, maps Focus Exit to blurred/touched state and blur listeners,
+  and adds signal-backed `meta()` production for the Field Convention.
 - `serde`: enables form-state snapshot serialization by forwarding to `dioform-core/serde`.
 
 ## Related Crates

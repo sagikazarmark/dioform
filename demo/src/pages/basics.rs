@@ -119,7 +119,7 @@ pub fn HappyPath() -> Element {
                 InlineCode { "TextareaField" }
                 ", and "
                 InlineCode { "SwitchField" }
-                " cover common controls; compound registry parts handle the choice controls. "
+                " cover common controls, including the parsed seats field; compound registry parts handle the choice controls. "
                 InlineCode { "derived_path_map" }
                 " routes garde diagnostics to typed direct Field Paths, while "
                 InlineCode { "FieldGroup" }
