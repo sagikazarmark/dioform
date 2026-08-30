@@ -115,9 +115,11 @@ pub fn HappyPath() -> Element {
             title: "One form, end to end",
             intro: rsx! {
                 InlineCode { "TextField" }
-                " and "
+                ", "
                 InlineCode { "TextareaField" }
-                " cover common controls; compound registry parts handle choices and switches. "
+                ", and "
+                InlineCode { "SwitchField" }
+                " cover common controls; compound registry parts handle the choice controls. "
                 InlineCode { "derived_path_map" }
                 " routes garde diagnostics to typed direct Field Paths, while "
                 InlineCode { "FieldGroup" }

@@ -7,7 +7,7 @@ use dioxus_daisyui::components::{
     input::TextField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
-    switch::{Switch, SwitchColor, SwitchField},
+    switch::{SwitchColor, SwitchField},
     textarea::TextareaField,
 };
 
@@ -46,7 +46,7 @@ struct WorkshopRegistration {
     name: String,
     #[garde(email)]
     email: String,
-    #[garde(length(min = 1))]
+    #[garde(custom(require_choice))]
     attendance: String,
     #[garde(skip)]
     track: Option<Track>,
@@ -56,6 +56,14 @@ struct WorkshopRegistration {
     preferences: Preferences,
     #[garde(custom(require_acceptance))]
     accepted_terms: bool,
+}
+
+fn require_choice(value: &str, _context: &()) -> Result<(), garde::Error> {
+    if value.is_empty() {
+        Err(garde::Error::new("Choose how you will attend."))
+    } else {
+        Ok(())
+    }
 }
 
 fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
@@ -143,16 +151,8 @@ pub fn HappyPathExample() -> Element {
                         DaisyField {
                             context: form.radio_group(fields.attendance()),
                             class: "min-w-0 grid-cols-1",
-                            FieldLabel {
-                                id: "happy-attendance-label",
-                                class: "font-medium",
-                                required: true,
-                                "Attendance"
-                            }
-                            RadioGroup {
-                                required: true,
-                                horizontal: true,
-                                aria_labelledby: "happy-attendance-label",
+                            FieldLabel { class: "font-medium", required: true, "Attendance" }
+                            RadioGroup { required: true, horizontal: true,
                                 for (index, (value, label)) in attendance_options.into_iter().enumerate() {
                                     label { class: "flex cursor-pointer items-center gap-2 text-sm",
                                         RadioItem {
@@ -219,24 +219,14 @@ pub fn HappyPathExample() -> Element {
                             }
                         }
 
-                        DaisyField {
-                            context: form.checkbox(fields.accepted_terms()),
-                            class: "min-w-0 grid-cols-1 rounded-xl bg-base-200/60 p-4",
-                            FieldLabel {
-                                id: "happy-terms-label",
-                                class: "font-medium",
+                        div { class: "rounded-xl bg-base-200/60 p-4",
+                            SwitchField {
+                                context: form.field(fields.accepted_terms()),
+                                label: "I agree to the code of conduct",
+                                description: "Required to register",
+                                color: SwitchColor::Primary,
                                 required: true,
-                                "I agree to the code of conduct"
                             }
-                            div { class: "flex items-center gap-3",
-                                Switch {
-                                    color: SwitchColor::Primary,
-                                    required: true,
-                                    aria_labelledby: "happy-terms-label",
-                                }
-                                span { class: "text-sm text-base-content/65", "Required to register" }
-                            }
-                            FieldError {}
                         }
 
                         Button { color: ButtonColor::Primary, r#type: "submit", "Register" }
@@ -293,6 +283,35 @@ pub fn HappyPathExample() -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Returns the generated id of the `<label>` whose text is `text`.
+    fn label_id(html: &str, text: &str) -> String {
+        let end = html
+            .find(&format!(">{text}</label>"))
+            .expect("labelled field");
+        let tag = &html[html[..end].rfind("<label ").expect("label tag")..end];
+        let id = tag.find("id=\"").expect("label id") + 4;
+
+        tag[id..]
+            .split('"')
+            .next()
+            .expect("label id value")
+            .to_owned()
+    }
+
+    #[test]
+    fn composite_controls_are_named_by_their_field_label() {
+        let html = dioxus::ssr::render_element(rsx! { HappyPathExample {} });
+
+        for label in ["Attendance", "I agree to the code of conduct"] {
+            let id = label_id(&html, label);
+
+            assert!(
+                html.contains(&format!("aria-labelledby=\"{id}\"")),
+                "the control for {label:?} does not reference its Field Label id {id:?}",
+            );
+        }
+    }
 
     #[test]
     fn diagnostics_explain_commit_and_focus_exit_as_separate_facts() {

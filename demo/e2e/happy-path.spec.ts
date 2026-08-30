@@ -21,6 +21,7 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   await expect(eventReminders).toHaveAccessibleDescription(
     "One reminder before the event",
   );
+  await expect(terms).toHaveAccessibleDescription("Required to register");
 
   await demo.getByRole("button", { name: "Register" }).click();
 
@@ -30,6 +31,7 @@ test("happy path validates, submits, and exposes focused state", async ({ page }
   await expect(
     demo.getByText("Accept the code of conduct to continue."),
   ).toBeVisible();
+  await expect(demo.getByText("Choose how you will attend.")).toBeVisible();
   await expect(stateValue(demo, "submit.status")).toHaveText("blocked");
   await expect(stateValue(demo, "submit.attempts")).toHaveText("1");
   await expect(stateValue(demo, "name.visible_errors")).toHaveText("1");
