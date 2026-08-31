@@ -114,7 +114,7 @@ pub fn HappyPath() -> Element {
         ExampleSection {
             title: "One form, end to end",
             intro: rsx! {
-                InlineCode { "TextField" }
+                InlineCode { "InputField" }
                 ", "
                 InlineCode { "TextareaField" }
                 ", and "
@@ -166,12 +166,12 @@ pub fn DioxusFieldRegistry() -> Element {
         PageHeader {
             eyebrow: "Basics",
             title: "dioxus-field registry integration",
-            intro: "Dioform bindings plug directly into dioxus-field compatible controls. This example uses dioxus-daisyui from Git and shows both concise field composition and the customizable parts beneath it.",
+            intro: "Dioform bindings plug directly into dioxus-field compatible controls. This example uses the daisyUI components vendored into the demo source tree by dx components add, and shows both concise field composition and the customizable parts beneath it.",
         }
         ExampleSection {
-            title: "Dioform Field Context + dioxus-daisyui",
+            title: "Dioform Field Context + dioxus-daisyui-components",
             intro: rsx! {
-                InlineCode { "TextField" }
+                InlineCode { "InputField" }
                 " and "
                 InlineCode { "TextareaField" }
                 " compose the common label, control, description, and error path. The radio group and switch use "
@@ -186,10 +186,10 @@ pub fn DioxusFieldRegistry() -> Element {
         DocsCallout {
             title: "External widget registry",
             action: Some(ExternalAction::new(
-                "dioxus-daisyui registry",
-                "https://github.com/sagikazarmark/dioxus-daisyui-registry.orig",
+                "dioxus-daisyui-components registry",
+                "https://github.com/sagikazarmark/dioxus-daisyui-components",
             )),
-            "The demo depends on the registry's library crate directly from Git because it is not published yet. Normal registry users can also install individual components into their own source tree."
+            "The registry ships component source rather than a crate: dx components add copies the requested components into the consuming project, where they can be edited. The demo vendors them under src/components/daisyui, and a Dagger generate job reinstalls them from the registry and keeps the copies honest under CI."
         }
     }
 }

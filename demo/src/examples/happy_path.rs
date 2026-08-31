@@ -1,17 +1,17 @@
 use dioform::prelude::*;
 use dioform_garde::GardeValidationExt;
 use dioxus::prelude::*;
-use dioxus_daisyui::components::{
+
+use super::StateGrid;
+use crate::components::daisyui::{
     button::{Button, ButtonColor},
     field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel},
-    input::TextField,
+    input::InputField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
     switch::{SwitchColor, SwitchField},
     textarea::TextareaField,
 };
-
-use super::StateGrid;
 use crate::components::{DemoPane, DemoSurface};
 
 /// A complete form built from Dioform's standard integration seams: typed Field
@@ -134,7 +134,7 @@ pub fn HappyPathExample() -> Element {
                         },
 
                         div { class: "grid gap-5 sm:grid-cols-2",
-                            TextField {
+                            InputField {
                                 context: form.text(fields.name()),
                                 label: "Name",
                                 description: "Required; validated by garde on commit and submit.",
@@ -143,7 +143,7 @@ pub fn HappyPathExample() -> Element {
                                 autocomplete: "name",
                                 placeholder: "Ada Lovelace",
                             }
-                            TextField {
+                            InputField {
                                 context: form.text(fields.email()),
                                 label: "Email",
                                 description: "We will only use this for workshop logistics.",
@@ -153,7 +153,7 @@ pub fn HappyPathExample() -> Element {
                                 autocomplete: "email",
                                 placeholder: "ada@example.com",
                             }
-                            TextField {
+                            InputField {
                                 context: seats,
                                 label: "Seats",
                                 description: "Parsed into a u32; text that is not a number is a Parse Error, not a validation error.",

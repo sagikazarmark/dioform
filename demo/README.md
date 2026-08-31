@@ -20,8 +20,9 @@ plain Axum route. `src/signup.rs` keeps the actual rule in one place.
 ## What it covers
 
 **Basics**: minimal form, a complete happy-path form, all field bindings
-(text/textarea/checkbox/select/radio), direct `dioxus-field` integration with the Git-hosted
-`dioxus-daisyui` registry, and parsed inputs (number/money).
+(text/textarea/checkbox/select/radio), direct `dioxus-field` integration with the daisyUI
+components vendored from the `dioxus-daisyui-components` registry, and parsed inputs
+(number/money).
 
 **Validation**: validation modes & triggers, field & form (cross-field) validators, the
 whole-form error summary, async & debounced validation, and the `garde` validation adapter.
@@ -54,3 +55,38 @@ dx serve --fullstack \
 `build/style.css` is generated from `src/style.css` (Tailwind + daisyUI) and is git-ignored, so run
 `npm run build` before the first `dx serve` and after editing RSX classes (`npm run watch`
 rebuilds on change).
+
+## daisyUI components
+
+The controls under `src/components/daisyui` are vendored from the
+[`dioxus-daisyui-components`](https://github.com/sagikazarmark/dioxus-daisyui-components)
+registry. `dx components add` copies component source into the project rather than adding a
+crate, so the files are checked in and compiled as part of the demo. They are generated: change
+them upstream, not here.
+
+Because the copies drift silently as the registry moves, reinstalling them is a Dagger generate
+job. It reinstalls every component already under `src/components/daisyui` from the registry's
+current `HEAD`:
+
+```sh
+dagger generate --no-apply demo:components   # show what the registry would change
+dagger generate -y demo:components           # pull the vendored copies forward
+```
+
+The same job runs under `dagger check` and fails when what is committed is not what the registry
+produces.
+
+To add a component the demo does not vendor yet, run `dx` directly once; the generate job picks it
+up from then on:
+
+```sh
+dx components add \
+  --git https://github.com/sagikazarmark/dioxus-daisyui-components \
+  --module-path src/components/daisyui \
+  dialog
+cargo fmt
+```
+
+`dx components add` also writes the `dioxus-field` and `dioxus-primitives` entries the components
+need into `Cargo.toml`. The generate job does not carry those back, so a new component that needs a
+new crate has to be added this way.

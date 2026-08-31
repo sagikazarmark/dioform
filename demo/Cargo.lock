@@ -699,7 +699,8 @@ dependencies = [
  "dioform-garde",
  "dioxus",
  "dioxus-code",
- "dioxus-daisyui",
+ "dioxus-field",
+ "dioxus-primitives",
  "garde",
  "gloo-net",
  "serde",
@@ -959,17 +960,6 @@ name = "dioxus-core-types"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96007ed6cbad951dfed82d83c581aabd95bc591f351f5666d454ddbe7845b324"
-
-[[package]]
-name = "dioxus-daisyui"
-version = "0.0.0"
-source = "git+https://github.com/sagikazarmark/dioxus-daisyui-registry.orig#b9eba1122b85f635d4ffb33e78a8326c9072922f"
-dependencies = [
- "dioxus",
- "dioxus-field",
- "dioxus-primitives",
- "time",
-]
 
 [[package]]
 name = "dioxus-devtools"

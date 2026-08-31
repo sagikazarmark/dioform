@@ -1,11 +1,6 @@
 @import "tailwindcss" source(none);
 
 @source "./**/*.rs";
-/* The Git dependency lives outside the local Rust source tree Tailwind scans. */
-@source inline("grid gap-2 label text-error");
-@source inline("input input-error textarea textarea-error");
-@source inline("flex gap-3 data-[orientation=vertical]:flex-col radio radio-primary");
-@source inline("toggle toggle-primary absolute pointer-events-none m-0 -translate-x-full opacity-0");
 
 @plugin "daisyui" {
   themes: light --default, dark --prefersdark;

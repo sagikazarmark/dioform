@@ -20,7 +20,7 @@ This rename does not change validator reach. [ADR-0051](0051-reveal-field-errors
 adds exact committed metadata and commit-aware default visibility without changing this event
 mapping. A **Blurred Field** still means the user left that Field's logical focus scope. See
 [dioxus-field#8](https://github.com/sagikazarmark/dioxus-field/issues/8) and
-[dioxus-daisyui-registry#105](https://github.com/sagikazarmark/dioxus-daisyui-registry.orig/issues/105).
+[dioxus-daisyui-components#105](https://github.com/sagikazarmark/dioxus-daisyui-components/issues/105).
 
 ## 0.4 migration
 
