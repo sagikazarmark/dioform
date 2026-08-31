@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use crate::components::{DemoFooter, DemoHeader, Sidebar, SidebarNavLink, SidebarNavSection};
 use crate::pages::*;
 
-const STYLE: Asset = asset!("/build/style.css");
+const STYLE: Asset = asset!("/assets/style.css");
 
 /// Every page hangs off the one `Layout`, so the header, sidebar, and footer
 /// render once and the active page swaps in through the `Outlet`.
