@@ -1,17 +1,17 @@
 use dioform::prelude::*;
 use dioform_garde::GardeValidationExt;
 use dioxus::prelude::*;
-use dioxus_daisyui::components::{
-    button::{Button, ButtonColor},
-    field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel},
-    input::TextField,
-    radio_group::{RadioGroup, RadioItem, RadioItemColor},
-    select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
-    switch::{Switch, SwitchColor, SwitchField},
-    textarea::TextareaField,
-};
 
 use super::StateGrid;
+use crate::components::daisyui::{
+    button::{Button, ButtonColor},
+    field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel},
+    input::InputField,
+    radio_group::{RadioGroup, RadioItem, RadioItemColor},
+    select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
+    switch::{SwitchColor, SwitchField},
+    textarea::TextareaField,
+};
 use crate::components::{DemoPane, DemoSurface};
 
 /// A complete form built from Dioform's standard integration seams: typed Field
@@ -46,8 +46,10 @@ struct WorkshopRegistration {
     name: String,
     #[garde(email)]
     email: String,
-    #[garde(length(min = 1))]
+    #[garde(custom(require_choice))]
     attendance: String,
+    #[garde(range(min = 1, max = 5))]
+    seats: u32,
     #[garde(skip)]
     track: Option<Track>,
     #[garde(length(max = 160))]
@@ -56,6 +58,14 @@ struct WorkshopRegistration {
     preferences: Preferences,
     #[garde(custom(require_acceptance))]
     accepted_terms: bool,
+}
+
+fn require_choice(value: &str, _context: &()) -> Result<(), garde::Error> {
+    if value.is_empty() {
+        Err(garde::Error::new("Choose how you will attend."))
+    } else {
+        Ok(())
+    }
 }
 
 fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
@@ -68,15 +78,18 @@ fn require_acceptance(value: &bool, _context: &()) -> Result<(), garde::Error> {
 
 fn build_form() -> FormHandle<WorkshopRegistration> {
     FormHandle::<WorkshopRegistration>::from_config(
-        FormConfig::new(WorkshopRegistration::default())
-            .id_namespace("workshop-registration")
-            .validation_mode(ValidationMode::on_commit())
-            .register_core(|core| {
-                core.garde_validation()
-                    .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
-                    .derived_path_map()
-                    .register_string_errors();
-            }),
+        FormConfig::new(WorkshopRegistration {
+            seats: 1,
+            ..WorkshopRegistration::default()
+        })
+        .id_namespace("workshop-registration")
+        .validation_mode(ValidationMode::on_commit())
+        .register_core(|core| {
+            core.garde_validation()
+                .triggers([ValidationTrigger::Commit, ValidationTrigger::Submit])
+                .derived_path_map()
+                .register_string_errors();
+        }),
     )
 }
 
@@ -94,6 +107,8 @@ pub fn HappyPathExample() -> Element {
     let form = use_form_handle(build_form);
     let fields = WorkshopRegistration::fields();
     let preferences = Preferences::mount(fields.preferences());
+    let seats = use_number(&form, fields.seats());
+    let seats_state = seats.clone();
     let submit = form.managed_submit();
     let mut success_message = use_signal(String::new);
 
@@ -119,7 +134,7 @@ pub fn HappyPathExample() -> Element {
                         },
 
                         div { class: "grid gap-5 sm:grid-cols-2",
-                            TextField {
+                            InputField {
                                 context: form.text(fields.name()),
                                 label: "Name",
                                 description: "Required; validated by garde on commit and submit.",
@@ -128,7 +143,7 @@ pub fn HappyPathExample() -> Element {
                                 autocomplete: "name",
                                 placeholder: "Ada Lovelace",
                             }
-                            TextField {
+                            InputField {
                                 context: form.text(fields.email()),
                                 label: "Email",
                                 description: "We will only use this for workshop logistics.",
@@ -138,21 +153,22 @@ pub fn HappyPathExample() -> Element {
                                 autocomplete: "email",
                                 placeholder: "ada@example.com",
                             }
+                            InputField {
+                                context: seats,
+                                label: "Seats",
+                                description: "Parsed into a u32; text that is not a number is a Parse Error, not a validation error.",
+                                class: "min-w-0 w-full",
+                                required: true,
+                                inputmode: "numeric",
+                                placeholder: "1",
+                            }
                         }
 
                         DaisyField {
                             context: form.radio_group(fields.attendance()),
                             class: "min-w-0 grid-cols-1",
-                            FieldLabel {
-                                id: "happy-attendance-label",
-                                class: "font-medium",
-                                required: true,
-                                "Attendance"
-                            }
-                            RadioGroup {
-                                required: true,
-                                horizontal: true,
-                                aria_labelledby: "happy-attendance-label",
+                            FieldLabel { class: "font-medium", required: true, "Attendance" }
+                            RadioGroup { required: true, horizontal: true,
                                 for (index, (value, label)) in attendance_options.into_iter().enumerate() {
                                     label { class: "flex cursor-pointer items-center gap-2 text-sm",
                                         RadioItem {
@@ -219,24 +235,14 @@ pub fn HappyPathExample() -> Element {
                             }
                         }
 
-                        DaisyField {
-                            context: form.checkbox(fields.accepted_terms()),
-                            class: "min-w-0 grid-cols-1 rounded-xl bg-base-200/60 p-4",
-                            FieldLabel {
-                                id: "happy-terms-label",
-                                class: "font-medium",
+                        div { class: "rounded-xl bg-base-200/60 p-4",
+                            SwitchField {
+                                context: form.field(fields.accepted_terms()),
+                                label: "I agree to the code of conduct",
+                                description: "Required to register",
+                                color: SwitchColor::Primary,
                                 required: true,
-                                "I agree to the code of conduct"
                             }
-                            div { class: "flex items-center gap-3",
-                                Switch {
-                                    color: SwitchColor::Primary,
-                                    required: true,
-                                    aria_labelledby: "happy-terms-label",
-                                }
-                                span { class: "text-sm text-base-content/65", "Required to register" }
-                            }
-                            FieldError {}
                         }
 
                         Button { color: ButtonColor::Primary, r#type: "submit", "Register" }
@@ -257,6 +263,7 @@ pub fn HappyPathExample() -> Element {
                                     .to_string(),
                             ),
                             ("terms.touched", form.is_field_touched(fields.accepted_terms()).to_string()),
+                            ("seats.parse_blocked", seats_state.parse_error().is_some().to_string()),
                             ("submit.attempts", form.submit_attempt_count().to_string()),
                             ("submit.status", status_label(form.last_submit_status())),
                             ("can_submit", form.can_submit().to_string()),
@@ -284,6 +291,9 @@ pub fn HappyPathExample() -> Element {
                     p { class: "mt-2 text-sm leading-6 text-base-content/60",
                         "The Field Convention reports Commit and Focus Exit separately. Dioform uses Commit for validation and committed Error Visibility, then Focus Exit for exact touched and Blurred Field state without validating twice."
                     }
+                    p { class: "mt-2 text-sm leading-6 text-base-content/60",
+                        "Seats binds through the same registry control as the text fields. Its binding is over the rendered text, so unparsable input keeps the last parsed value in the Form Draft, holds a Parse Blocker, and reports the parse message where validation errors appear."
+                    }
                 }
             },
         }
@@ -293,6 +303,35 @@ pub fn HappyPathExample() -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Returns the generated id of the `<label>` whose text is `text`.
+    fn label_id(html: &str, text: &str) -> String {
+        let end = html
+            .find(&format!(">{text}</label>"))
+            .expect("labelled field");
+        let tag = &html[html[..end].rfind("<label ").expect("label tag")..end];
+        let id = tag.find("id=\"").expect("label id") + 4;
+
+        tag[id..]
+            .split('"')
+            .next()
+            .expect("label id value")
+            .to_owned()
+    }
+
+    #[test]
+    fn composite_controls_are_named_by_their_field_label() {
+        let html = dioxus::ssr::render_element(rsx! { HappyPathExample {} });
+
+        for label in ["Attendance", "I agree to the code of conduct"] {
+            let id = label_id(&html, label);
+
+            assert!(
+                html.contains(&format!("aria-labelledby=\"{id}\"")),
+                "the control for {label:?} does not reference its Field Label id {id:?}",
+            );
+        }
+    }
 
     #[test]
     fn diagnostics_explain_commit_and_focus_exit_as_separate_facts() {

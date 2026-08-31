@@ -439,7 +439,7 @@ A binding-level failure to convert **Raw Input State** into a typed **Field** va
 _Avoid_: Validation error
 
 **Parse Blocker**:
-A mounted input binding's unresolved **Parse Error** that prevents adapter-mediated submission until the binding parses successfully or unmounts.
+A mounted input binding's unresolved **Parse Error** that prevents adapter-mediated submission until the binding parses successfully or unmounts. Through the **Field Convention** it also leads the **Field**'s presented errors and marks it invalid, as pre-rendered presentation text rather than as a **Validation Error** ([ADR-0052](docs/adr/0052-bind-parsed-fields-to-the-field-convention-as-rendered-text.md)).
 _Avoid_: Validation error, central validator
 
 **Accessibility Helper**:
@@ -855,6 +855,10 @@ Domain expert: No. **Raw Input State** belongs to input bindings, while the core
 Developer: Is a failed parse part of the validation error list?
 
 Domain expert: No. A **Parse Error** is separate from **Validation Error**, though unresolved parse errors can block submission.
+
+Developer: If a **Parse Error** is not a **Validation Error**, how does a **Widget Registry** control show it?
+
+Domain expert: A parsed binding's **Value Binding** is over the rendered text, and its **Field Meta** leads with the **Parse Error** and marks the **Field** invalid, so the registry's own error region renders it. That is presentation text; the core still keeps the two apart ([ADR-0052](docs/adr/0052-bind-parsed-fields-to-the-field-convention-as-rendered-text.md)).
 
 Developer: How does invalid raw input stop a typed value from being submitted?
 

@@ -148,6 +148,33 @@ than it did last render re-addresses its Parse Blocker to the item it renders no
 in-flight raw text and parse error held for the previous item, and the input renders the new item's
 formatted value; see [Collection Fields](collection-fields.md).
 
+## Parsed Helpers and the Field Convention
+
+With the `dioxus-field` feature, a parsed binding converts into a `dioxus_field::Binding<String>` or
+a `dioxus_field::FieldContext`, so a Widget Registry text input renders a number or date field with
+no per-field wiring:
+
+```rust
+let quantity = use_number(&form, fields.quantity());
+
+rsx! {
+    TextField { context: quantity, label: "Quantity", r#type: "number" }
+}
+```
+
+The convention binding is over the *rendered text*, not the typed value: it reads Raw Input State
+while a Parse Blocker stands and the formatted field value otherwise, and a write parses before it
+reaches the field. A user write parses, or marks the field touched and raises a Parse Blocker; a
+programmatic write parses and writes programmatically, reporting no interaction.
+
+An unresolved Parse Error leads the reported Field Meta errors and marks the field invalid, so the
+registry's own error region renders it. It does not become a Validation Error, and unlike a
+Validation Error it does not wait for a Commit to become visible: it clears on the keystroke that
+makes the text parse. See
+[ADR-0052](adr/0052-bind-parsed-fields-to-the-field-convention-as-rendered-text.md).
+
+Collection item bindings, including the parsed ones, stay outside the Field Convention.
+
 ## Parsing Versus Validation
 
 Input Parsing converts rendered input into a typed Field value. Field Validation and Form Validation

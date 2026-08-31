@@ -109,6 +109,48 @@ type Demo {
   }
 
   """
+  Reinstall the daisyUI components vendored under `src/components/daisyui`.
+
+  `dx components add` copies component source into the project instead of adding
+  a crate, so the copies go stale as the registry moves without anything here
+  failing to build. As a generator this pulls them forward; as a check it fails
+  when what is committed is not what the registry produces.
+  """
+  components(ws: Workspace!): Changeset! @generate {
+    let modulePath = "src/components/daisyui"
+    let registryPath = "/opt/dioxus-daisyui-components"
+    let source = ws.directory("", gitignore: true)
+
+    # The committed copies are the list to reinstall: `dx` records nothing about
+    # what it installed, and a second list would only drift from this one.
+    let components = source
+      .directory(modulePath)
+      .entries
+      .filter { _.hasSuffix("/") }
+      .map { _.trimSuffix("/") }
+
+    let regenerated = self
+      .dioxus
+      .container(ws)
+      .withMountedDirectory(
+        registryPath,
+        Dagger.git("https://github.com/sagikazarmark/dioxus-daisyui-components").head.tree,
+      )
+      # Cleared first so a file the registry no longer ships does not survive as
+      # a copy `dx` never overwrites.
+      .withExec(["rm", "-rf", modulePath])
+      .withExec(["dx", "components", "add", "--force", "--path", registryPath, "--module-path", modulePath] + components)
+      # `dx` writes the module file's component list in an arbitrary order, so
+      # the copies only settle once rustfmt, which sorts it, has been over them.
+      # It is not part of the build toolchain, hence the install.
+      .withExec(["rustup", "component", "add", "rustfmt"])
+      .withExec(["cargo", "fmt"])
+      .directory(modulePath)
+
+    source.withoutDirectory(modulePath).withDirectory(modulePath, regenerated).changes(source)
+  }
+
+  """
   Capture every demo page at mobile, tablet, and desktop resolutions.
   """
   screenshots(ws: Workspace!): Directory! {

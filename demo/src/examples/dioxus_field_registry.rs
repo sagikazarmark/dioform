@@ -1,14 +1,14 @@
 use dioform::prelude::*;
 use dioxus::prelude::*;
-use dioxus_daisyui::components::{
+
+use super::StateGrid;
+use crate::components::daisyui::{
     field::{Field as DaisyField, FieldLabel},
-    input::TextField,
+    input::InputField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     switch::{Switch, SwitchColor},
     textarea::TextareaField,
 };
-
-use super::StateGrid;
 use crate::components::{DemoPane, DemoSurface};
 
 /// Dioform produces the `dioxus-field` Binding and Field Meta consumed by the
@@ -73,9 +73,9 @@ pub fn DioxusFieldRegistryExample() -> Element {
     rsx! {
         DemoSurface {
             primary: rsx! {
-                DemoPane { label: "Git registry components",
+                DemoPane { label: "Vendored registry components",
                     div { class: "space-y-5",
-                        TextField {
+                        InputField {
                             context: form.text(fields.display_name()),
                             label: "Display name",
                             description: "The registry generates and registers the description and error ids.",
