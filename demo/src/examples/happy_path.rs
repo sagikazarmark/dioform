@@ -5,11 +5,11 @@ use dioxus::prelude::*;
 use super::StateGrid;
 use crate::components::daisyui::{
     button::{Button, ButtonColor},
-    field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel},
+    field::{Field as DaisyField, FieldDescription, FieldError, FieldLabel, FieldRow},
     input::InputField,
     radio_group::{RadioGroup, RadioItem, RadioItemColor},
     select::{Select, SelectList, SelectOption, SelectTrigger, SelectValue},
-    switch::{SwitchColor, SwitchField},
+    switch::{Switch, SwitchColor, SwitchField},
     textarea::TextareaField,
 };
 use crate::components::{DemoPane, DemoSurface};
@@ -236,12 +236,32 @@ pub fn HappyPathExample() -> Element {
                         }
 
                         div { class: "rounded-xl bg-base-200/60 p-4",
-                            SwitchField {
-                                context: form.field(fields.accepted_terms()),
-                                label: "I agree to the code of conduct",
-                                description: "Required to register",
-                                color: SwitchColor::Primary,
-                                required: true,
+                            // Composed from Field parts rather than `SwitchField`, which renders its
+                            // label with daisyUI's `label` class (`white-space: nowrap`) and offers no
+                            // way to class it. Beside the switch in a `FieldRow`, a consent sentence
+                            // this long can neither wrap nor shrink, so it overruns the pane on a
+                            // narrow viewport. `SwitchField` documents this drop to `Field` and its
+                            // parts as the way out when a layout needs more than the sugar affords.
+                            // The id is explicit because `FieldRow` renders the control before the
+                            // label: a generated label id is not registered yet when the switch
+                            // renders, so single-pass SSR would emit the switch with no
+                            // `aria-labelledby`. Hydration repairs it, but the server HTML should
+                            // name the control on its own.
+                            DaisyField { context: form.field(fields.accepted_terms()),
+                                FieldRow {
+                                    Switch {
+                                        color: SwitchColor::Primary,
+                                        required: true,
+                                        aria_labelledby: "workshop-terms-label",
+                                    }
+                                    FieldLabel {
+                                        id: "workshop-terms-label",
+                                        class: "min-w-0 whitespace-normal",
+                                        "I agree to the code of conduct"
+                                    }
+                                }
+                                FieldDescription { "Required to register" }
+                                FieldError {}
                             }
                         }
 

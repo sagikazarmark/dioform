@@ -174,7 +174,6 @@ pub fn Textarea(
     let appearance = appearance.class();
     let binding_value = binding.read;
     let resolved_value = value.unwrap_or(binding_value);
-    let mut committed_in_session = use_signal(|| false);
     let mut focus_exit_reported = use_signal(|| false);
     let mut control: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
     let focus_control = use_callback(move |()| {
@@ -197,18 +196,14 @@ pub fn Textarea(
     );
     let merged = merge_attributes(vec![meta_attributes, base, attributes]);
     let change_binding = binding.clone();
-    let change_commit_binding = binding.clone();
-    let exit_commit_binding = binding.clone();
+    let commit_binding = binding.clone();
     let focus_exit_binding = binding;
 
     rsx! {
         textarea {
             value: resolved_value,
             onmounted: move |event: MountedEvent| control.set(Some(event.data())),
-            onfocusin: move |_| {
-                committed_in_session.set(false);
-                focus_exit_reported.set(false);
-            },
+            onfocusin: move |_| focus_exit_reported.set(false),
             oninput: move |event| {
                 let next = event.value();
                 change_binding.write(next.clone(), ChangeOrigin::User);
@@ -217,8 +212,7 @@ pub fn Textarea(
                 }
             },
             onchange: move |_| {
-                committed_in_session.set(true);
-                change_commit_binding.commit();
+                commit_binding.commit();
                 if let Some(handler) = &on_commit {
                     handler.call(());
                 }
@@ -228,13 +222,6 @@ pub fn Textarea(
                     return;
                 }
                 focus_exit_reported.set(true);
-                if !committed_in_session() {
-                    committed_in_session.set(true);
-                    exit_commit_binding.commit();
-                    if let Some(handler) = &on_commit {
-                        handler.call(());
-                    }
-                }
                 focus_exit_binding.focus_exit();
                 if let Some(handler) = &on_focus_exit {
                     handler.call(());

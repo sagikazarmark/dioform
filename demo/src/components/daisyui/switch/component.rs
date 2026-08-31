@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use crate::components::field::{
     Field, FieldAppearance, FieldDescription, FieldDescriptionAppearance, FieldError,
-    FieldErrorAppearance, FieldLabel,
+    FieldErrorAppearance, FieldLabel, FieldRow, FieldRowAppearance,
 };
 
 /// daisyUI's colour axis for a switch, which is the colour it fills with once
@@ -268,6 +268,9 @@ pub fn SwitchField(
     /// Whether the surrounding Field emits its default layout utilities.
     #[props(default)]
     field_appearance: FieldAppearance,
+    /// Whether the control-and-label row emits its default layout utilities.
+    #[props(default)]
+    row_appearance: FieldRowAppearance,
     /// Whether supporting text emits its default wrapping utilities.
     #[props(default)]
     description_appearance: FieldDescriptionAppearance,
@@ -306,21 +309,23 @@ pub fn SwitchField(
 ) -> Element {
     rsx! {
         Field { context, appearance: field_appearance,
-            FieldLabel { {label} }
-            Switch {
-                color,
-                binding,
-                meta,
-                value,
-                default_value,
-                required,
-                disabled,
-                name,
-                form_value,
-                on_change,
-                on_commit,
-                on_focus_exit,
-                attributes,
+            FieldRow { appearance: row_appearance,
+                Switch {
+                    color,
+                    binding,
+                    meta,
+                    value,
+                    default_value,
+                    required,
+                    disabled,
+                    name,
+                    form_value,
+                    on_change,
+                    on_commit,
+                    on_focus_exit,
+                    attributes,
+                }
+                FieldLabel { {label} }
             }
             if let Some(description) = description {
                 FieldDescription { appearance: description_appearance, {description} }
