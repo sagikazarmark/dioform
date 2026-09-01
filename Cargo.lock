@@ -621,6 +621,7 @@ dependencies = [
  "futures-timer",
  "serde",
  "serde_json",
+ "tracing",
  "trybuild",
 ]
 

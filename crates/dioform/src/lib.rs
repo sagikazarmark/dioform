@@ -77,18 +77,18 @@ pub mod prelude {
         FormListenerEvent, FormSnapshot, FormValidationError, FormValidatorContext,
         IntentFormHandle, IntentProgressiveSubmitBinding, IntentSubmitBinding, LastSubmitStatus,
         ManagedSubmitContinuation, MultiSelectBinding, MultiSelectItem, MultiSelectOptionBinding,
-        NumericInputValue, OptionalTextBinding, ParseError, ParsedTextBinding,
-        ProgressiveSubmitBinding, ProgressiveSubmitResult, RadioGroupBinding,
-        RenderedSelectBinding, SelectBinding, SelectedFile, SelectedFileMetadata,
-        SerializedFileData, SubmissionSnapshot, SubmitAvailability, SubmitBlocker, SubmitError,
-        SubmitErrors, SubmitListenerContext, SubmitListenerEvent, SubmitResult, SubmitStatus,
-        SyncCollectionItemFieldValidatorBuilder, SyncFieldValidatorBuilder,
-        SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder, TextBinding, TextareaBinding,
-        TriStateCheckboxBinding, ValidationErrorSnapshot, ValidationErrorView, ValidationMode,
-        ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
-        ValidatorContext, debounce_duration, provide_form_context, try_use_form_context,
-        use_collection_item_checkbox, use_collection_item_date, use_collection_item_date_with,
-        use_collection_item_number, use_collection_item_number_with,
+        NumericInputValue, OptionalSelectBinding, OptionalTextBinding, ParseError,
+        ParsedTextBinding, ProgressiveSubmitBinding, ProgressiveSubmitResult, RadioGroupBinding,
+        RenderedOptionalSelectBinding, RenderedSelectBinding, SelectBinding, SelectedFile,
+        SelectedFileMetadata, SerializedFileData, SubmissionSnapshot, SubmitAvailability,
+        SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerContext, SubmitListenerEvent,
+        SubmitResult, SubmitStatus, SyncCollectionItemFieldValidatorBuilder,
+        SyncFieldValidatorBuilder, SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder,
+        TextBinding, TextareaBinding, TriStateCheckboxBinding, ValidationErrorSnapshot,
+        ValidationErrorView, ValidationMode, ValidationStatus, ValidationTarget, ValidationTrigger,
+        ValidationTriggers, ValidatorContext, debounce_duration, provide_form_context,
+        try_use_form_context, use_collection_item_checkbox, use_collection_item_date,
+        use_collection_item_date_with, use_collection_item_number, use_collection_item_number_with,
         use_collection_item_parsed_text, use_collection_item_parsed_text_with,
         use_collection_item_radio_group, use_collection_item_select,
         use_collection_item_select_with, use_date, use_date_with, use_debounced_field_listener,
@@ -97,9 +97,9 @@ pub mod prelude {
         use_field_blur_listener, use_field_listener, use_field_listener_for_origin, use_form,
         use_form_blur_listener, use_form_config, use_form_context, use_form_handle,
         use_form_listener, use_form_listener_for_origin, use_multi_select, use_number,
-        use_number_with, use_optional_date, use_optional_number, use_optional_text,
-        use_parsed_text, use_parsed_text_with, use_radio_group, use_select, use_select_with,
-        use_submit_listener,
+        use_number_with, use_optional_date, use_optional_number, use_optional_select,
+        use_optional_select_with, use_optional_text, use_parsed_text, use_parsed_text_with,
+        use_radio_group, use_select, use_select_with, use_submit_listener,
     };
 }
 
@@ -578,6 +578,47 @@ where
 {
     use_field_binding_hook(handle, path, |handle, path| {
         handle.select_with(path, parser, formatter)
+    })
+}
+
+/// Creates a stable controlled select binding for an `Option<Value>` field.
+///
+/// The widget's unselected state maps directly onto the field's `None`: selecting writes
+/// `Some(value)` and clearing writes `None`. Use this instead of [`use_select`] whenever the field
+/// value is itself an `Option`, so the Field Convention conversion carries one `Option`, not two.
+pub fn use_optional_select<Model, Value, Error>(
+    handle: &FormHandle<Model, Error>,
+    path: FieldPath<Model, Option<Value>>,
+) -> OptionalSelectBinding<Model, Value, Error>
+where
+    Model: 'static,
+    Value: 'static,
+    Error: 'static,
+{
+    use_field_binding_hook(handle, path, |handle, path| handle.optional_select(path))
+}
+
+/// Creates a stable controlled select binding for an `Option<Value>` field with rendered string
+/// conversion.
+///
+/// The parser and formatter cover the inner `Value`; the empty rendered value `""` is reserved as
+/// the unselected state and maps to `None` without consulting the parser.
+pub fn use_optional_select_with<Model, Value, Error, Parser, ParserError, Formatter>(
+    handle: &FormHandle<Model, Error>,
+    path: FieldPath<Model, Option<Value>>,
+    parser: Parser,
+    formatter: Formatter,
+) -> RenderedOptionalSelectBinding<Model, Value, Error>
+where
+    Model: 'static,
+    Value: 'static,
+    Error: 'static,
+    Parser: Fn(&str) -> Result<Value, ParserError> + 'static,
+    ParserError: fmt::Display + 'static,
+    Formatter: Fn(&Value) -> String + 'static,
+{
+    use_field_binding_hook(handle, path, |handle, path| {
+        handle.optional_select_with(path, parser, formatter)
     })
 }
 
@@ -2180,51 +2221,58 @@ where
     }
 }
 
-/// Form-owned storage for the rendered text an optional-text field shows.
+/// Form-owned storage for a value *derived* from one field's value.
 ///
-/// A Field Convention `Binding<String>` read hands out a `'static` reference over a value that is
-/// *derived* from the field — `Option<String>` rendered as text, `""` for `None` (ADR-0046) — so
-/// it needs somewhere to live. Unlike a parsed binding, an [`OptionalTextBinding`] has no mount to
-/// own that storage, and it is also produced per render by [`FormHandle::optional_text`], so the
-/// storage is form-owned and keyed like every other field signal slot. Rendered text is a pure
-/// function of the field value with no per-mount state, so every mount of the field sharing one
-/// slot is exact.
+/// A Field Convention read over a derived form of a field — `Option<String>` rendered as text
+/// (`""` for `None`, ADR-0046/ADR-0053), or a required select's value wrapped as the
+/// `Option<Value>` selection widgets resolve (ADR-0054) — hands out a `'static` reference over a
+/// value that is stored nowhere in the Form Draft, so it needs somewhere to live. The producing
+/// bindings have no mount to own that storage, and they are also produced per render by
+/// [`FormHandle`] accessors such as [`FormHandle::optional_text`] and [`FormHandle::select`], so
+/// the storage is form-owned and keyed like every other field signal slot. The derived value is a
+/// pure function of the field value with no per-mount state, so every mount of the field sharing
+/// one slot is exact — which is also why the derivation must be fully determined by the
+/// `(Source, Derived)` type pair: slot lookup downcasts by type and compares paths, so two
+/// conversions deriving differently under one type pair would wrongly share a slot.
 #[cfg(feature = "dioxus-field")]
-struct RenderedOptionalTextSlot<Model> {
-    path: FieldPath<Model, Option<String>>,
-    cache: CopyValue<String>,
+struct DerivedFieldSlot<Model, Source, Derived> {
+    path: FieldPath<Model, Source>,
+    derive: Box<dyn Fn(Source) -> Derived>,
+    cache: CopyValue<Derived>,
     dirty: Cell<bool>,
     subscribers: ReactiveSubscribers,
 }
 
 #[cfg(feature = "dioxus-field")]
-impl<Model> RenderedOptionalTextSlot<Model> {
+impl<Model, Source, Derived> DerivedFieldSlot<Model, Source, Derived>
+where
+    Source: Clone,
+    Derived: PartialEq + 'static,
+{
     fn refresh<Error>(
         &self,
         form: &FormHandle<Model, Error>,
-    ) -> Result<ReadableRef<'static, CopyValue<String>>, dioxus_signals::BorrowError> {
+    ) -> Result<ReadableRef<'static, CopyValue<Derived>>, dioxus_signals::BorrowError> {
         let read = self.cache.try_peek_unchecked()?;
         if !self.dirty.replace(false) {
             return Ok(read);
         }
         drop(read);
 
-        let rendered = form
-            .core
-            .borrow()
-            .field_value(self.path.clone())
-            .clone()
-            .unwrap_or_default();
+        let derived = (self.derive)(form.core.borrow().field_value(self.path.clone()).clone());
         let cached = self.cache.try_peek_unchecked()?;
-        if *cached != rendered {
+        if *cached != derived {
             drop(cached);
             let mut cache = self.cache;
-            cache.set(rendered);
+            cache.set(derived);
         }
 
         self.cache.try_peek_unchecked()
     }
+}
 
+#[cfg(feature = "dioxus-field")]
+impl<Model, Source, Derived> DerivedFieldSlot<Model, Source, Derived> {
     fn mark_dirty(&self) {
         self.dirty.set(true);
         self.subscribers.notify_changed();
@@ -2315,26 +2363,34 @@ impl<Model: 'static> FieldSignalRegistry<Model> {
         slot
     }
 
-    /// Resolves the form's rendered-text slot for one optional-text field, creating it on the
-    /// first Field Convention read.
+    /// Resolves the form's derived-value slot for one field, creating it on the first Field
+    /// Convention read.
     ///
     /// Lookup follows [`FieldSignalRegistry::slot`] exactly: interchangeable paths (ADR-0047)
-    /// share one slot, so every conversion from [`FormHandle::optional_text`] and
-    /// [`use_optional_text`] over one field reads the same storage instead of accumulating one
-    /// allocation per render. The dirty callback registers under the field's identity, so the
-    /// type-blind notification fanout refreshes it like any typed slot.
+    /// share one slot, so every conversion over one field — hook-constructed or per-render — reads
+    /// the same storage instead of accumulating one allocation per render. The dirty callback
+    /// registers under the field's identity, so the type-blind notification fanout refreshes it
+    /// like any typed slot. Because a hit compares only the `(Source, Derived)` types and the
+    /// path, `derive` must be a pure function fully determined by that type pair; `initial` is
+    /// the current field value used to seed a newly created slot.
     #[cfg(feature = "dioxus-field")]
-    fn rendered_optional_text_slot(
+    fn derived_slot<Source, Derived>(
         &self,
-        path: &FieldPath<Model, Option<String>>,
-        initial: impl FnOnce() -> String,
-    ) -> Rc<RenderedOptionalTextSlot<Model>> {
+        path: &FieldPath<Model, Source>,
+        derive: impl Fn(Source) -> Derived + 'static,
+        initial: impl FnOnce() -> Source,
+    ) -> Rc<DerivedFieldSlot<Model, Source, Derived>>
+    where
+        Source: 'static,
+        Derived: 'static,
+    {
         let identity = path.identity();
         let mut fields = self.fields.borrow_mut();
         let slots = fields.entry(identity).or_default();
 
         for entry in slots.iter() {
-            let Ok(slot) = Rc::clone(&entry.slot).downcast::<RenderedOptionalTextSlot<Model>>()
+            let Ok(slot) =
+                Rc::clone(&entry.slot).downcast::<DerivedFieldSlot<Model, Source, Derived>>()
             else {
                 continue;
             };
@@ -2343,9 +2399,10 @@ impl<Model: 'static> FieldSignalRegistry<Model> {
             }
         }
 
-        let cache = with_owner(self.owner.clone(), || CopyValue::new(initial()));
-        let slot = Rc::new(RenderedOptionalTextSlot {
+        let cache = with_owner(self.owner.clone(), || CopyValue::new(derive(initial())));
+        let slot = Rc::new(DerivedFieldSlot {
             path: path.clone(),
+            derive: Box::new(derive),
             cache,
             dirty: Cell::new(false),
             subscribers: ReactiveSubscribers::default(),
@@ -8195,16 +8252,30 @@ impl<Model, Error> FormHandle<Model, Error> {
     fn rendered_optional_text_slot(
         &self,
         path: &FieldPath<Model, Option<String>>,
-    ) -> Rc<RenderedOptionalTextSlot<Model>>
+    ) -> Rc<DerivedFieldSlot<Model, Option<String>, String>>
     where
         Model: 'static,
     {
-        self.field_signals.rendered_optional_text_slot(path, || {
-            self.core
-                .borrow()
-                .field_value(path.clone())
-                .clone()
-                .unwrap_or_default()
+        self.field_signals.derived_slot(
+            path,
+            |value: Option<String>| value.unwrap_or_default(),
+            || self.core.borrow().field_value(path.clone()).clone(),
+        )
+    }
+
+    /// Resolves the form-owned slot holding one required select field's value wrapped as the
+    /// `Option<Value>` selection widgets resolve (ADR-0054).
+    #[cfg(feature = "dioxus-field")]
+    fn selected_value_slot<Value>(
+        &self,
+        path: &FieldPath<Model, Value>,
+    ) -> Rc<DerivedFieldSlot<Model, Value, Option<Value>>>
+    where
+        Model: 'static,
+        Value: Clone + PartialEq + 'static,
+    {
+        self.field_signals.derived_slot(path, Some, || {
+            self.core.borrow().field_value(path.clone()).clone()
         })
     }
 
@@ -10836,6 +10907,48 @@ impl<Model, Error> FormHandle<Model, Error> {
         }
     }
 
+    /// Creates a headless controlled select binding for an `Option<Value>` field.
+    ///
+    /// The widget's unselected state maps directly onto the field's `None`: selecting writes
+    /// `Some(value)` and clearing writes `None`. Use this instead of [`FormHandle::select`]
+    /// whenever the field value is itself an `Option`, so the Field Convention conversion carries
+    /// one `Option`, not two.
+    pub fn optional_select<Value>(
+        &self,
+        path: FieldPath<Model, Option<Value>>,
+    ) -> OptionalSelectBinding<Model, Value, Error> {
+        OptionalSelectBinding {
+            base: FieldBindingCore::new(self.clone(), path),
+        }
+    }
+
+    /// Creates a headless controlled select binding for an `Option<Value>` field with rendered
+    /// string conversion.
+    ///
+    /// The parser and formatter cover the inner `Value`; the empty rendered value `""` is reserved
+    /// as the unselected state and maps to `None` without consulting the parser. Render the
+    /// unselected choice as an option whose value is the empty string.
+    pub fn optional_select_with<Value, Parser, ParserError, Formatter>(
+        &self,
+        path: FieldPath<Model, Option<Value>>,
+        parser: Parser,
+        formatter: Formatter,
+    ) -> RenderedOptionalSelectBinding<Model, Value, Error>
+    where
+        Value: 'static,
+        Parser: Fn(&str) -> Result<Value, ParserError> + 'static,
+        ParserError: fmt::Display + 'static,
+        Formatter: Fn(&Value) -> String + 'static,
+    {
+        let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+
+        RenderedOptionalSelectBinding {
+            base: FieldBindingCore::new(self.clone(), path),
+            parser,
+            formatter: Rc::new(formatter),
+        }
+    }
+
     /// Creates a headless controlled radio group binding for a typed field.
     pub fn radio_group<Value>(
         &self,
@@ -12178,6 +12291,201 @@ impl<Model, Value, Error> RenderedSelectBinding<Model, Value, Error> {
     }
 }
 
+/// Headless controlled select behavior for an `Option<Value>` field rendered through string
+/// option values.
+///
+/// The widget's unselected state maps directly onto the field's `None`. The empty rendered value
+/// `""` is reserved for it: reading an unselected field renders `""`, and applying `""` writes
+/// `None` without consulting the parser, so the parser and formatter only ever see the inner
+/// `Value`.
+pub struct RenderedOptionalSelectBinding<Model, Value, Error = String> {
+    base: FieldBindingCore<Model, Option<Value>, Error>,
+    parser: Rc<TextParserFn<Value>>,
+    formatter: Rc<TextFormatterFn<Value>>,
+}
+
+impl<Model, Value, Error> Clone for RenderedOptionalSelectBinding<Model, Value, Error> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            parser: Rc::clone(&self.parser),
+            formatter: Rc::clone(&self.formatter),
+        }
+    }
+}
+
+impl<Model, Value, Error> PartialEq for RenderedOptionalSelectBinding<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
+impl<Model, Value, Error> RenderedOptionalSelectBinding<Model, Value, Error> {
+    /// Returns the rendered select name derived from the typed field path.
+    pub fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    /// Returns headless accessibility IDs and ARIA state for this select.
+    pub fn accessibility(&self) -> FieldAccessibility {
+        self.base.accessibility()
+    }
+
+    /// Returns tracked user interaction metadata for this field.
+    pub fn metadata(&self) -> FieldMetadata {
+        self.base.metadata()
+    }
+
+    /// Returns whether this field has received user interaction.
+    pub fn is_touched(&self) -> bool {
+        self.base.is_touched()
+    }
+
+    /// Returns whether this field has lost focus at least once.
+    pub fn is_blurred(&self) -> bool {
+        self.base.is_blurred()
+    }
+
+    /// Returns the current controlled select value as the rendered option value.
+    ///
+    /// An unselected field renders as the empty string.
+    pub fn value(&self) -> String {
+        self.base.read_value(|value| {
+            value
+                .as_ref()
+                .map(|value| (self.formatter)(value))
+                .unwrap_or_default()
+        })
+    }
+
+    /// Returns the current typed field value.
+    pub fn typed_value(&self) -> Option<Value>
+    where
+        Value: Clone,
+    {
+        self.base.value()
+    }
+
+    /// Returns whether an option value should be rendered as selected.
+    pub fn is_selected(&self, value: &Value) -> bool
+    where
+        Value: PartialEq,
+    {
+        self.base
+            .read_value(|current| current.as_ref() == Some(value))
+    }
+
+    /// Returns whether a rendered option value should be rendered as selected.
+    ///
+    /// The empty rendered value reports selected exactly while nothing is selected, so it fits a
+    /// placeholder option whose value is `""`.
+    pub fn is_rendered_selected(&self, rendered_value: &str) -> bool {
+        self.value() == rendered_value
+    }
+
+    /// Replaces the controlled select value programmatically.
+    pub fn set_value(&self, value: Option<Value>) {
+        controlled_choice::set_value(&self.base, value);
+    }
+
+    /// Applies a committed user select choice as a typed value.
+    pub fn select(&self, value: Value) {
+        controlled_choice::select(&self.base, Some(value));
+    }
+
+    /// Applies a committed user clear, writing `None`.
+    pub fn clear(&self) {
+        controlled_choice::select(&self.base, None);
+    }
+
+    /// Applies a committed user select choice from its rendered string value.
+    ///
+    /// The empty rendered value clears the field. Invalid rendered values do not mutate the typed
+    /// draft. Use [`Self::try_on_change`] when the application wants to observe conversion
+    /// failures.
+    pub fn on_change(&self, value: impl AsRef<str>) {
+        let _ = self.try_on_change(value);
+    }
+
+    /// Tries to apply a committed user select choice from its rendered string value.
+    ///
+    /// The empty rendered value clears the field without consulting the parser. Select options are
+    /// application-owned, so conversion failures are returned to the caller instead of registering
+    /// adapter parse blockers.
+    pub fn try_on_change(&self, value: impl AsRef<str>) -> Result<(), String> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            self.clear();
+            return Ok(());
+        }
+
+        match (self.parser)(value) {
+            Ok(value) => {
+                controlled_choice::select(&self.base, Some(value));
+                Ok(())
+            }
+            Err(error) => {
+                self.base.mark_touched();
+                Err(error)
+            }
+        }
+    }
+
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
+    }
+
+    /// Returns validation errors for this field.
+    pub fn validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.validation_errors()
+    }
+
+    /// Returns visible validation errors for this field.
+    pub fn visible_validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.visible_validation_errors()
+    }
+
+    /// Returns a ready-made `onchange` handler that parses the selected rendered option value.
+    ///
+    /// The handler owns its own clone, so `onchange: field.onchange()` needs no separate
+    /// `field.clone()` and the binding stays usable for `value()`/`is_rendered_selected(...)`.
+    pub fn onchange(&self) -> impl FnMut(Event<FormData>) + 'static
+    where
+        Model: 'static,
+        Value: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |event: Event<FormData>| binding.on_change(event.value())
+    }
+
+    /// Returns a ready-made `onblur` handler for this select.
+    pub fn onblur(&self) -> impl FnMut(Event<FocusData>) + 'static
+    where
+        Model: 'static,
+        Value: 'static,
+        Error: 'static,
+    {
+        let binding = self.clone();
+        move |_event: Event<FocusData>| {
+            binding.on_commit();
+            binding.on_focus_exit();
+        }
+    }
+}
+
 /// Controlled text input behavior for a typed `String` field.
 pub struct TextBinding<Model, Error = String> {
     base: FieldBindingCore<Model, String, Error>,
@@ -12872,6 +13180,120 @@ impl<Model, Error> SelectBinding<Model, String, Error> {
     }
 }
 
+/// Headless controlled select behavior for an `Option<Value>` field.
+///
+/// The widget's unselected state maps directly onto the field's `None`: selecting writes
+/// `Some(value)` and clearing writes `None`. This is the direct-mapping counterpart of
+/// [`SelectBinding`] for fields whose value type already represents "nothing selected"
+/// (ADR-0054).
+pub struct OptionalSelectBinding<Model, Value, Error = String> {
+    base: FieldBindingCore<Model, Option<Value>, Error>,
+}
+
+impl<Model, Value, Error> Clone for OptionalSelectBinding<Model, Value, Error> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+        }
+    }
+}
+
+impl<Model, Value, Error> PartialEq for OptionalSelectBinding<Model, Value, Error> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+}
+
+impl<Model, Value, Error> OptionalSelectBinding<Model, Value, Error> {
+    /// Returns the rendered select name derived from the typed field path.
+    pub fn name(&self) -> &str {
+        self.base.name()
+    }
+
+    /// Returns headless accessibility IDs and ARIA state for this select.
+    pub fn accessibility(&self) -> FieldAccessibility {
+        self.base.accessibility()
+    }
+
+    /// Returns tracked user interaction metadata for this field.
+    pub fn metadata(&self) -> FieldMetadata {
+        self.base.metadata()
+    }
+
+    /// Returns whether this field has received user interaction.
+    pub fn is_touched(&self) -> bool {
+        self.base.is_touched()
+    }
+
+    /// Returns whether this field has lost focus at least once.
+    pub fn is_blurred(&self) -> bool {
+        self.base.is_blurred()
+    }
+
+    /// Returns the current controlled select value, `None` while nothing is selected.
+    pub fn value(&self) -> Option<Value>
+    where
+        Value: Clone,
+    {
+        self.base.value()
+    }
+
+    /// Returns whether an option value should be rendered as selected.
+    pub fn is_selected(&self, value: &Value) -> bool
+    where
+        Value: PartialEq,
+    {
+        self.base
+            .read_value(|current| current.as_ref() == Some(value))
+    }
+
+    /// Replaces the controlled select value.
+    pub fn set_value(&self, value: Option<Value>) {
+        controlled_choice::set_value(&self.base, value);
+    }
+
+    /// Applies a committed user select choice, where `None` is a user clear.
+    pub fn on_change(&self, value: Option<Value>) {
+        controlled_choice::select(&self.base, value);
+    }
+
+    /// Applies a committed user select choice.
+    pub fn select(&self, value: Value) {
+        self.on_change(Some(value));
+    }
+
+    /// Applies a committed user clear, writing `None`.
+    pub fn clear(&self) {
+        self.on_change(None);
+    }
+
+    /// Records the end of one interaction unit and runs configured Commit validation.
+    pub fn on_commit(&self) {
+        self.base.commit();
+    }
+
+    /// Reports that focus left this field's logical focus scope.
+    pub fn on_focus_exit(&self) {
+        self.base.focus_exit();
+    }
+
+    /// Returns validation errors for this field.
+    pub fn validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.validation_errors()
+    }
+
+    /// Returns visible validation errors for this field.
+    pub fn visible_validation_errors(&self) -> Vec<ValidationErrorSnapshot<Error>>
+    where
+        Error: Clone,
+    {
+        self.base.visible_validation_errors()
+    }
+}
+
 /// Headless controlled radio group behavior for a typed field.
 pub struct RadioGroupBinding<Model, Value, Error = String> {
     base: FieldBindingCore<Model, Value, Error>,
@@ -13353,7 +13775,7 @@ mod field_convention {
     ///
     /// This is the same text [`OptionalTextBinding::value`] returns — `""` for `None`, the string
     /// itself for `Some` (ADR-0046). The text is derived rather than stored, so each read refreshes
-    /// it into the form-owned [`RenderedOptionalTextSlot`] for the field and hands out a reference
+    /// it into the form-owned [`DerivedFieldSlot`] for the field and hands out a reference
     /// to that. The slot is shared across every mount and every conversion of the field, which is
     /// exact because rendered text is a pure function of the field value (ADR-0053).
     struct RenderedOptionalText<Model, Error> {
@@ -13506,13 +13928,234 @@ mod field_convention {
         }
     }
 
+    /// The wrapped selection one required-valued select binding shows, behind the [`Readable`]
+    /// contract a `Binding<Option<Value>>` read needs.
+    ///
+    /// Field Convention selection widgets resolve `Binding<Option<Value>>` because a selection
+    /// widget can be on nothing, while a required select field always has a value, so the read is
+    /// total: always `Some` of the field value (ADR-0054). The wrapped value is derived rather
+    /// than stored, so each read refreshes it into the form-owned [`DerivedFieldSlot`] for the
+    /// field and hands out a reference to that. The slot is shared across every mount and every
+    /// conversion of the field, which is exact because the wrapped value is a pure function of the
+    /// field value.
+    struct SelectedValue<Model, Value, Error> {
+        field: FieldHandle<Model, Value, Error>,
+    }
+
+    impl<Model, Value, Error> Readable for SelectedValue<Model, Value, Error>
+    where
+        Model: 'static,
+        Value: Clone + PartialEq + 'static,
+    {
+        type Target = Option<Value>;
+        type Storage = UnsyncStorage;
+
+        fn try_read_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            let slot = self.field.handle.selected_value_slot(&self.field.path);
+            let read = slot.refresh(&self.field.handle)?;
+            slot.subscribers.track_read();
+            Ok(read)
+        }
+
+        /// Reads the slot without subscribing, keeping the [`Readable::peek`] promise.
+        ///
+        /// The slot's subscription is a separate [`ReactiveSubscribers::track_read`] call, so a
+        /// peek simply skips it — exactly as [`RenderedOptionalText`] does.
+        fn try_peek_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            self.field
+                .handle
+                .selected_value_slot(&self.field.path)
+                .refresh(&self.field.handle)
+        }
+
+        /// Returns the slot's real subscriber list, which the dirty callback notifies.
+        fn subscribers(&self) -> Subscribers {
+            self.field
+                .handle
+                .selected_value_slot(&self.field.path)
+                .subscribers
+                .subscribers
+                .clone()
+        }
+    }
+
+    impl<Model, Value, Error> FieldHandle<Model, Value, Error> {
+        /// Produces the Field Convention binding wrapping this required field's value as the
+        /// optional selection widgets resolve (ADR-0054).
+        ///
+        /// The read is total — always `Some` of the field value. A write of `Some(next)` is the
+        /// ordinary selection write with its Change Origin preserved. A write of `None` is
+        /// refused: the field's value type has no unselected state, so the draft stays untouched
+        /// and the widget's subsequent commit proceeds normally — committing an unchanged value
+        /// is already dioform-normal. No shipped selection widget emits `None` from user
+        /// interaction at the pinned upstream revision, so any hit means upstream behavior
+        /// changed; the refusal is loud for exactly that reason.
+        fn wrapped_selection_binding(&self) -> Binding<Option<Value>>
+        where
+            Model: 'static,
+            Value: Clone + PartialEq + 'static,
+            Error: 'static,
+        {
+            let read = ReadSignal::new(SelectedValue {
+                field: self.clone(),
+            });
+            // With no parser or formatter to vary, the field handle alone proves
+            // interchangeability.
+            let identity = self.clone();
+            let writer = self.clone();
+            let committer = self.clone();
+            let focus_exiter = self.clone();
+            let write = Callback::new(move |(value, origin): (Option<Value>, ChangeOrigin)| {
+                let Some(value) = value else {
+                    let value_type = std::any::type_name::<Value>();
+                    tracing::error!(
+                        target: "dioform",
+                        field_name = writer.path.field_name(),
+                        value_type,
+                        "refused a Field Convention write of `None` to a required select \
+                         binding: the field's value type has no unselected state (ADR-0054)"
+                    );
+                    return;
+                };
+                match origin {
+                    ChangeOrigin::User => writer.handle.set_user_field(writer.path.clone(), value),
+                    ChangeOrigin::Programmatic => {
+                        writer.handle.set_field(writer.path.clone(), value)
+                    }
+                }
+            });
+            let commit =
+                Callback::new(move |()| committer.handle.commit_field(committer.path.clone()));
+            let focus_exit = Callback::new(move |()| {
+                focus_exiter
+                    .handle
+                    .mark_field_blurred(focus_exiter.path.clone());
+            });
+
+            Binding::new_with_identity(read, write, commit, identity)
+                .with_focus_exit_using_identity(focus_exit)
+        }
+
+        /// Produces Field Convention metadata for a required-valued select binding.
+        ///
+        /// `required` is true — truthful clearability metadata for the wrapped conversion, whose
+        /// `None` write is refused (ADR-0054): a clearable widget honoring it can suppress its
+        /// clear affordance. This overrides the hardcoded `required: false` in
+        /// [`FieldHandle::convention_meta_values`], per the [`ParsedTextBinding`] override
+        /// precedent.
+        fn selection_meta_values(&self, formatter: impl Fn(&Error) -> String) -> FieldMetaValues
+        where
+            Value: PartialEq,
+            Error: Clone,
+        {
+            let mut values = self.convention_meta_values(formatter);
+            values.required = true;
+            values
+        }
+    }
+
+    /// Joins a required-valued select binding to the Field Convention as optional selection
+    /// (ADR-0054).
+    ///
+    /// Selection widgets resolve `Binding<Option<Value>>`, so the `FieldContext` carries the
+    /// wrapped conversion: a total read of `Some(value)`, a refused `None` write, and metadata
+    /// reporting `required: true`. The typed `From<_> for Binding<Value>` conversion stays as the
+    /// policy-free direct-wiring interface — a consumer taking it has a total read and no `None`
+    /// branch.
+    macro_rules! impl_selection_field_convention {
+        ($binding:ty) => {
+            impl<Model, Value, Error> $binding {
+                /// Produces signal-backed presentation metadata for the Field Convention.
+                ///
+                /// A required-valued select reports `required: true` (ADR-0054). Visible
+                /// validation errors are formatted with [`fmt::Display`]. This method is a Dioxus
+                /// hook and must be called unconditionally from a component render.
+                pub fn meta(&self) -> FieldMeta
+                where
+                    Value: PartialEq,
+                    Error: Clone + fmt::Display,
+                {
+                    self.meta_with_error_formatter(ToString::to_string)
+                }
+
+                /// Produces Field Convention metadata using an application-defined error
+                /// formatter.
+                ///
+                /// This method is a Dioxus hook and must be called unconditionally from a
+                /// component render.
+                pub fn meta_with_error_formatter(
+                    &self,
+                    formatter: impl Fn(&Error) -> String,
+                ) -> FieldMeta
+                where
+                    Value: PartialEq,
+                    Error: Clone,
+                {
+                    use_convention_meta(self.base.field_handle().selection_meta_values(formatter))
+                }
+            }
+
+            /// The typed conversion for consumers wired directly to the field's value type. It is
+            /// policy-free: a required select read is total and a consumer holding it has no
+            /// `None` branch. The Field Convention context carries the wrapped
+            /// `Binding<Option<Value>>` instead (ADR-0054).
+            impl<Model, Value, Error> From<$binding> for Binding<Value>
+            where
+                Model: 'static,
+                Value: Clone + PartialEq + 'static,
+                Error: 'static,
+            {
+                fn from(binding: $binding) -> Self {
+                    binding.base.field_handle().convention_binding()
+                }
+            }
+
+            /// The wrapped conversion selection widgets resolve: a total read of `Some(value)`
+            /// and a refused `None` write (ADR-0054).
+            impl<Model, Value, Error> From<$binding> for Binding<Option<Value>>
+            where
+                Model: 'static,
+                Value: Clone + PartialEq + 'static,
+                Error: 'static,
+            {
+                fn from(binding: $binding) -> Self {
+                    binding.base.field_handle().wrapped_selection_binding()
+                }
+            }
+
+            impl<Model, Value, Error> From<$binding> for FieldContext
+            where
+                Model: 'static,
+                Value: Clone + PartialEq + 'static,
+                Error: Clone + fmt::Display + 'static,
+            {
+                fn from(binding: $binding) -> Self {
+                    let field = binding.base.field_handle();
+                    let meta = field.selection_meta_values(ToString::to_string);
+                    let binding = field.wrapped_selection_binding();
+
+                    FieldContext::new(binding).with_meta_values(meta)
+                }
+            }
+        };
+    }
+
     impl_scalar_field_convention!([] TextBinding<Model, Error> => String);
     impl_scalar_field_convention!([] TextareaBinding<Model, Error> => String);
     impl_scalar_field_convention!([] CheckboxBinding<Model, Error> => bool);
     impl_scalar_field_convention!([] TriStateCheckboxBinding<Model, Error> => Option<bool>);
-    impl_scalar_field_convention!([Value] SelectBinding<Model, Value, Error> => Value);
-    impl_scalar_field_convention!([Value] RenderedSelectBinding<Model, Value, Error> => Value);
+    impl_selection_field_convention!(SelectBinding<Model, Value, Error>);
+    impl_selection_field_convention!(RenderedSelectBinding<Model, Value, Error>);
     impl_scalar_field_convention!([Value] RadioGroupBinding<Model, Value, Error> => Value);
+    // An `Option`-valued select field is the one select shape whose widget-side `None` *is* the
+    // field's `None`, so its conversion is the direct mapping with no wrapping and no write
+    // policy (ADR-0054).
+    impl_scalar_field_convention!([Value] OptionalSelectBinding<Model, Value, Error> => Option<Value>);
+    impl_scalar_field_convention!([Value] RenderedOptionalSelectBinding<Model, Value, Error> => Option<Value>);
 }
 
 /// Controlled text input behavior for a field parsed from rendered text.
@@ -14817,6 +15460,277 @@ mod tests {
             probe.form.set_field(nickname(), None);
             dom.render_immediate_to_vec();
             assert_eq!(probe.rendered.borrow().last().map(String::as_str), Some(""));
+        }
+    }
+
+    /// The ADR-0054 wrapped selection conversion: a required select binding reaches the Field
+    /// Convention as `Binding<Option<Value>>` through a form-owned [`DerivedFieldSlot`], with a
+    /// `None` write refused.
+    #[cfg(feature = "dioxus-field")]
+    mod selected_value {
+        use dioxus_field::{Binding, ChangeOrigin};
+
+        use super::*;
+
+        #[derive(Clone, Debug, PartialEq)]
+        struct Registration {
+            seats: i32,
+            attendance: String,
+        }
+
+        fn seats() -> FieldPath<Registration, i32> {
+            FieldPath::direct(
+                FieldIdentity::new("seats"),
+                "seats",
+                |registration: &Registration| &registration.seats,
+                |registration: &mut Registration| &mut registration.seats,
+            )
+        }
+
+        fn attendance() -> FieldPath<Registration, String> {
+            FieldPath::direct(
+                FieldIdentity::new("attendance"),
+                "attendance",
+                |registration: &Registration| &registration.attendance,
+                |registration: &mut Registration| &mut registration.attendance,
+            )
+        }
+
+        fn registration_form() -> FormHandle<Registration> {
+            FormHandle::new(Registration {
+                seats: 7,
+                attendance: "remote".to_owned(),
+            })
+        }
+
+        struct WrappedSlotProbe {
+            form: FormHandle<Registration>,
+            rerender: RefCell<Option<Signal<u32>>>,
+            rendered: RefCell<Vec<Option<i32>>>,
+        }
+
+        fn wrapped_slot_probe() -> Rc<WrappedSlotProbe> {
+            Rc::new(WrappedSlotProbe {
+                form: registration_form(),
+                rerender: RefCell::new(None),
+                rendered: RefCell::new(Vec::new()),
+            })
+        }
+
+        /// Converts through both constructors — the hook and the per-render handle accessor — and
+        /// through both select binding shapes, and reads them all, so slot growth from any of
+        /// them would show in `slot_count`.
+        fn wrapped_selection_probe(probe: Rc<WrappedSlotProbe>) -> Element {
+            let rerender = use_signal(|| 0);
+            let _ = rerender();
+            probe.rerender.borrow_mut().replace(rerender);
+
+            let hooked: Binding<Option<i32>> = use_select(&probe.form, seats()).into();
+            let per_render: Binding<Option<i32>> = probe.form.select(seats()).into();
+            let rendered_select: Binding<Option<i32>> = probe
+                .form
+                .select_with(seats(), str::parse::<i32>, i32::to_string)
+                .into();
+
+            assert_eq!((hooked.read)(), (per_render.read)());
+            assert_eq!((hooked.read)(), (rendered_select.read)());
+            probe.rendered.borrow_mut().push((hooked.read)());
+
+            VNode::empty()
+        }
+
+        #[test]
+        fn wrapped_slots_are_shared_across_constructors_and_stable_across_renders() {
+            let probe = wrapped_slot_probe();
+            let mut dom = VirtualDom::new_with_props(wrapped_selection_probe, Rc::clone(&probe));
+
+            dom.rebuild_in_place();
+            assert_eq!(probe.form.field_signals.slot_count(), 1);
+            assert_eq!(probe.rendered.borrow().last().copied(), Some(Some(7)));
+
+            for render in 1..=3 {
+                probe
+                    .rerender
+                    .borrow()
+                    .expect("the probe should expose its render signal")
+                    .set(render);
+                dom.render_immediate_to_vec();
+                assert_eq!(probe.form.field_signals.slot_count(), 1);
+            }
+        }
+
+        /// The slot's dirty callback must register under the field's identity, or a typed write
+        /// that never goes through the convention binding leaves the wrapped read silently stale.
+        #[test]
+        fn an_out_of_band_typed_write_refreshes_the_wrapped_selection() {
+            let probe = wrapped_slot_probe();
+            let mut dom = VirtualDom::new_with_props(wrapped_selection_probe, Rc::clone(&probe));
+            dom.rebuild_in_place();
+
+            probe.form.set_field(seats(), 12);
+            dom.render_immediate_to_vec();
+            assert_eq!(probe.rendered.borrow().last().copied(), Some(Some(12)));
+        }
+
+        /// Captures the two wrapped conversions of one form so tests can drive them from outside
+        /// the render, exactly as a Field Convention widget's event handlers would.
+        struct ConversionProbe {
+            form: FormHandle<Registration>,
+            seats: RefCell<Option<Binding<Option<i32>>>>,
+            attendance: RefCell<Option<Binding<Option<String>>>>,
+            rendered_seats: RefCell<Vec<Option<i32>>>,
+        }
+
+        fn conversion_probe_component(probe: Rc<ConversionProbe>) -> Element {
+            let seats_binding: Binding<Option<i32>> = probe.form.select(seats()).into();
+            let attendance_binding: Binding<Option<String>> =
+                probe.form.select(attendance()).into();
+
+            probe
+                .rendered_seats
+                .borrow_mut()
+                .push((seats_binding.read)());
+            let _ = (attendance_binding.read)();
+            probe.seats.borrow_mut().replace(seats_binding);
+            probe.attendance.borrow_mut().replace(attendance_binding);
+
+            VNode::empty()
+        }
+
+        fn conversion_probe() -> (Rc<ConversionProbe>, VirtualDom) {
+            let probe = Rc::new(ConversionProbe {
+                form: registration_form(),
+                seats: RefCell::new(None),
+                attendance: RefCell::new(None),
+                rendered_seats: RefCell::new(Vec::new()),
+            });
+            let mut dom = VirtualDom::new_with_props(conversion_probe_component, Rc::clone(&probe));
+            dom.rebuild_in_place();
+
+            (probe, dom)
+        }
+
+        /// The registry downcasts by the slot's `(Source, Derived)` types, so wrapped slots over
+        /// different `Value` types must coexist under one field registry.
+        #[test]
+        fn wrapped_slots_over_two_value_types_coexist_under_one_field_registry() {
+            let (probe, mut dom) = conversion_probe();
+
+            assert_eq!(probe.form.field_signals.slot_count(), 2);
+            assert_eq!(probe.rendered_seats.borrow().last().copied(), Some(Some(7)));
+
+            probe.form.set_field(seats(), 12);
+            probe.form.set_field(attendance(), "in-person".to_owned());
+            dom.render_immediate_to_vec();
+
+            assert_eq!(probe.form.field_signals.slot_count(), 2);
+            assert_eq!(
+                probe.rendered_seats.borrow().last().copied(),
+                Some(Some(12))
+            );
+            let attendance_binding = probe.attendance.borrow().clone().expect("a binding");
+            assert_eq!((attendance_binding.read)(), Some("in-person".to_owned()));
+        }
+
+        #[test]
+        fn a_convention_write_of_some_is_the_ordinary_selection_write() {
+            let (probe, mut dom) = conversion_probe();
+            let binding = probe.seats.borrow().clone().expect("a binding");
+
+            binding.write(Some(12), ChangeOrigin::User);
+            dom.render_immediate_to_vec();
+
+            assert_eq!(probe.form.field_value(seats()), 12);
+            assert!(probe.form.is_field_touched(seats()));
+            assert_eq!(
+                probe.rendered_seats.borrow().last().copied(),
+                Some(Some(12))
+            );
+
+            binding.write(Some(3), ChangeOrigin::Programmatic);
+
+            assert_eq!(probe.form.field_value(seats()), 3);
+        }
+
+        /// The ADR-0054 policy branch: a `None` write to a required select is refused — the draft
+        /// stays untouched for either Change Origin — and the widget's subsequent commit still
+        /// proceeds normally, since committing an unchanged value is already dioform-normal.
+        #[test]
+        fn a_convention_write_of_none_is_refused_and_the_commit_still_proceeds() {
+            let (probe, mut dom) = conversion_probe();
+            let binding = probe.seats.borrow().clone().expect("a binding");
+
+            binding.write(None, ChangeOrigin::User);
+            dom.render_immediate_to_vec();
+
+            assert_eq!(probe.form.field_value(seats()), 7);
+            assert!(!probe.form.is_field_touched(seats()));
+            assert!(!probe.form.is_field_dirty(seats()));
+            assert_eq!(probe.rendered_seats.borrow().last().copied(), Some(Some(7)));
+
+            binding.write(None, ChangeOrigin::Programmatic);
+
+            assert_eq!(probe.form.field_value(seats()), 7);
+            assert!(!probe.form.is_field_dirty(seats()));
+
+            binding.commit();
+
+            assert!(probe.form.is_field_committed(seats()));
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        struct Signup {
+            track: Option<i32>,
+        }
+
+        fn track() -> FieldPath<Signup, Option<i32>> {
+            FieldPath::direct(
+                FieldIdentity::new("track"),
+                "track",
+                |signup: &Signup| &signup.track,
+                |signup: &mut Signup| &mut signup.track,
+            )
+        }
+
+        struct OptionalSelectProbe {
+            form: FormHandle<Signup>,
+            binding: RefCell<Option<Binding<Option<i32>>>>,
+        }
+
+        fn optional_select_probe_component(probe: Rc<OptionalSelectProbe>) -> Element {
+            let binding: Binding<Option<i32>> = probe.form.optional_select(track()).into();
+            let rendered: Binding<Option<i32>> = probe
+                .form
+                .optional_select_with(track(), str::parse::<i32>, i32::to_string)
+                .into();
+
+            assert_eq!((binding.read)(), (rendered.read)());
+            probe.binding.borrow_mut().replace(binding);
+
+            VNode::empty()
+        }
+
+        /// An `Option`-valued select field maps directly: the widget's `None` *is* the field's
+        /// `None`, with no double wrap (ADR-0054) — so a `None` write is a real clear here.
+        #[test]
+        fn an_optional_select_converts_without_double_wrapping() {
+            let probe = Rc::new(OptionalSelectProbe {
+                form: FormHandle::new(Signup { track: None }),
+                binding: RefCell::new(None),
+            });
+            let mut dom =
+                VirtualDom::new_with_props(optional_select_probe_component, Rc::clone(&probe));
+            dom.rebuild_in_place();
+            let binding = probe.binding.borrow().clone().expect("a binding");
+
+            binding.write(Some(2), ChangeOrigin::User);
+
+            assert_eq!(probe.form.field_value(track()), Some(2));
+            assert!(probe.form.is_field_touched(track()));
+
+            binding.write(None, ChangeOrigin::User);
+
+            assert_eq!(probe.form.field_value(track()), None);
         }
     }
 }

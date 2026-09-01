@@ -946,6 +946,298 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Choice {
+        InPerson,
+        Remote,
+    }
+
+    #[derive(Clone, dioform::Form)]
+    struct AttendanceForm {
+        attendance: Choice,
+    }
+
+    fn parse_choice(value: &str) -> Result<Choice, String> {
+        match value {
+            "in-person" => Ok(Choice::InPerson),
+            "remote" => Ok(Choice::Remote),
+            other => Err(format!("unknown choice `{other}`")),
+        }
+    }
+
+    fn format_choice(value: &Choice) -> String {
+        match value {
+            Choice::InPerson => "in-person",
+            Choice::Remote => "remote",
+        }
+        .to_owned()
+    }
+
+    struct SelectionProbe {
+        form: FormHandle<AttendanceForm>,
+        binding: RefCell<Option<Binding<Option<Choice>>>>,
+        rendered_select_binding: RefCell<Option<Binding<Option<Choice>>>>,
+        rendered: RefCell<Vec<Option<Choice>>>,
+        required: Cell<bool>,
+    }
+
+    #[derive(Clone, Props)]
+    struct SelectionWidgetProps {
+        probe: Rc<SelectionProbe>,
+        #[props(default = false)]
+        from_rendered_select: bool,
+    }
+
+    impl PartialEq for SelectionWidgetProps {
+        fn eq(&self, other: &Self) -> bool {
+            Rc::ptr_eq(&self.probe, &other.probe)
+                && self.from_rendered_select == other.from_rendered_select
+        }
+    }
+
+    /// A Field Convention selection widget: it resolves `Binding<Option<Choice>>` from the
+    /// context, which is the composition where a required select context used to raise a
+    /// `BindingTypeMismatch`.
+    #[allow(non_snake_case)]
+    fn SelectionWidget(props: SelectionWidgetProps) -> Element {
+        let binding = use_binding::<Option<Choice>>(None, None);
+        let meta = use_field_meta(None);
+
+        if props.from_rendered_select {
+            props
+                .probe
+                .rendered_select_binding
+                .borrow_mut()
+                .replace(binding);
+        } else {
+            props.probe.rendered.borrow_mut().push((binding.read)());
+            props.probe.required.set(meta.required());
+            props.probe.binding.borrow_mut().replace(binding);
+        }
+
+        VNode::empty()
+    }
+
+    fn selection_field(probe: Rc<SelectionProbe>) -> Element {
+        let attendance = dioform::use_select(&probe.form, AttendanceForm::fields().attendance());
+        let rendered_attendance = dioform::use_select_with(
+            &probe.form,
+            AttendanceForm::fields().attendance(),
+            parse_choice,
+            format_choice,
+        );
+
+        rsx! {
+            Field { context: attendance,
+                SelectionWidget { probe: Rc::clone(&probe) }
+            }
+            Field { context: rendered_attendance,
+                SelectionWidget { probe, from_rendered_select: true }
+            }
+        }
+    }
+
+    fn selection_probe() -> (Rc<SelectionProbe>, VirtualDom) {
+        let probe = Rc::new(SelectionProbe {
+            form: FormHandle::new(AttendanceForm {
+                attendance: Choice::Remote,
+            }),
+            binding: RefCell::new(None),
+            rendered_select_binding: RefCell::new(None),
+            rendered: RefCell::new(Vec::new()),
+            required: Cell::new(false),
+        });
+        let mut dom = VirtualDom::new_with_props(selection_field, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        (probe, dom)
+    }
+
+    #[test]
+    fn select_context_resolves_an_optional_selection_binding_for_a_selection_widget() {
+        let (probe, mut dom) = selection_probe();
+        let binding = convention_binding(&probe.binding);
+
+        binding.write(Some(Choice::InPerson), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe
+                .form
+                .field_value(AttendanceForm::fields().attendance()),
+            Choice::InPerson
+        );
+        assert!(
+            probe
+                .form
+                .is_field_touched(AttendanceForm::fields().attendance())
+        );
+        assert_eq!(
+            probe.rendered.borrow().first().copied(),
+            Some(Some(Choice::Remote))
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().copied(),
+            Some(Some(Choice::InPerson))
+        );
+    }
+
+    /// The same resolution for the rendered twin: a `use_select_with` context also carries the
+    /// wrapped `Binding<Option<Choice>>` a selection widget resolves, and both conversions over
+    /// one field stay in step.
+    #[test]
+    fn rendered_select_context_resolves_an_optional_selection_binding_for_a_selection_widget() {
+        let (probe, mut dom) = selection_probe();
+        let binding = convention_binding(&probe.rendered_select_binding);
+
+        binding.write(Some(Choice::InPerson), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe
+                .form
+                .field_value(AttendanceForm::fields().attendance()),
+            Choice::InPerson
+        );
+        assert!(
+            probe
+                .form
+                .is_field_touched(AttendanceForm::fields().attendance())
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().copied(),
+            Some(Some(Choice::InPerson))
+        );
+    }
+
+    /// The wrapped conversion carries truthful clearability metadata: a required-valued select
+    /// reports `required: true` through the Field Convention (ADR-0054).
+    #[test]
+    fn select_context_reports_the_field_as_required() {
+        let (probe, _dom) = selection_probe();
+
+        assert!(probe.required.get());
+    }
+
+    /// The ADR-0054 `None`-write policy: a required select field has no unselected state, so the
+    /// write is refused and the draft stays untouched.
+    #[test]
+    fn select_context_refuses_a_none_write_and_keeps_the_draft() {
+        let (probe, mut dom) = selection_probe();
+        let binding = convention_binding(&probe.binding);
+
+        binding.write(None, ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe
+                .form
+                .field_value(AttendanceForm::fields().attendance()),
+            Choice::Remote
+        );
+        assert!(
+            !probe
+                .form
+                .is_field_touched(AttendanceForm::fields().attendance())
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().copied(),
+            Some(Some(Choice::Remote))
+        );
+    }
+
+    #[derive(Clone, dioform::Form)]
+    struct RegistrationForm {
+        track: Option<Choice>,
+    }
+
+    struct OptionalSelectionProbe {
+        form: FormHandle<RegistrationForm>,
+        binding: RefCell<Option<Binding<Option<Choice>>>>,
+        rendered: RefCell<Vec<Option<Choice>>>,
+        required: Cell<bool>,
+    }
+
+    #[derive(Clone, Props)]
+    struct OptionalSelectionWidgetProps {
+        probe: Rc<OptionalSelectionProbe>,
+    }
+
+    impl PartialEq for OptionalSelectionWidgetProps {
+        fn eq(&self, other: &Self) -> bool {
+            Rc::ptr_eq(&self.probe, &other.probe)
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn OptionalSelectionWidget(props: OptionalSelectionWidgetProps) -> Element {
+        let binding = use_binding::<Option<Choice>>(None, None);
+        let meta = use_field_meta(None);
+        props.probe.rendered.borrow_mut().push((binding.read)());
+        props.probe.required.set(meta.required());
+        props.probe.binding.borrow_mut().replace(binding);
+
+        VNode::empty()
+    }
+
+    fn optional_selection_field(probe: Rc<OptionalSelectionProbe>) -> Element {
+        let track = dioform::use_optional_select(&probe.form, RegistrationForm::fields().track());
+
+        rsx! {
+            Field { context: track,
+                OptionalSelectionWidget { probe }
+            }
+        }
+    }
+
+    fn optional_selection_probe(
+        initial: Option<Choice>,
+    ) -> (Rc<OptionalSelectionProbe>, VirtualDom) {
+        let probe = Rc::new(OptionalSelectionProbe {
+            form: FormHandle::new(RegistrationForm { track: initial }),
+            binding: RefCell::new(None),
+            rendered: RefCell::new(Vec::new()),
+            required: Cell::new(true),
+        });
+        let mut dom = VirtualDom::new_with_props(optional_selection_field, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        (probe, dom)
+    }
+
+    /// An `Option`-valued select field reaches the same selection widget through the direct
+    /// mapping — one `Option`, not two (ADR-0054) — and the widget's `None` is a real clear.
+    #[test]
+    fn optional_select_context_resolves_the_field_option_without_double_wrapping() {
+        let (probe, mut dom) = optional_selection_probe(None);
+        let binding = convention_binding(&probe.binding);
+
+        assert_eq!(probe.rendered.borrow().first().copied(), Some(None));
+        assert!(!probe.required.get());
+
+        binding.write(Some(Choice::InPerson), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(RegistrationForm::fields().track()),
+            Some(Choice::InPerson)
+        );
+        assert!(
+            probe
+                .form
+                .is_field_touched(RegistrationForm::fields().track())
+        );
+
+        binding.write(None, ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(RegistrationForm::fields().track()),
+            None
+        );
+        assert_eq!(probe.rendered.borrow().last().copied(), Some(None));
+    }
+
     #[derive(Clone, dioform::Form)]
     struct ScalarForm {
         text: String,
@@ -953,6 +1245,7 @@ mod tests {
         checked: bool,
         tri_state: Option<bool>,
         choice: i32,
+        optional_choice: Option<i32>,
     }
 
     struct ScalarBindingsProbe {
@@ -973,9 +1266,21 @@ mod tests {
         let checked: Binding<bool> = form.checkbox(fields.checked()).into();
         let same_checked: Binding<bool> = form.checkbox(fields.checked()).into();
         let tri_state: Binding<Option<bool>> = form.tri_state_checkbox(fields.tri_state()).into();
+        // The typed select conversions stay as the policy-free direct-wiring interface; the
+        // wrapped `Binding<Option<i32>>` conversions are what the Field Context carries
+        // (ADR-0054). With both impls available, every `.into()` site needs its annotation.
         let select: Binding<i32> = form.select(fields.choice()).into();
+        let wrapped_select: Binding<Option<i32>> = form.select(fields.choice()).into();
         let rendered_select: Binding<i32> = form
             .select_with(fields.choice(), str::parse::<i32>, i32::to_string)
+            .into();
+        let wrapped_rendered_select: Binding<Option<i32>> = form
+            .select_with(fields.choice(), str::parse::<i32>, i32::to_string)
+            .into();
+        let optional_select: Binding<Option<i32>> =
+            form.optional_select(fields.optional_choice()).into();
+        let rendered_optional_select: Binding<Option<i32>> = form
+            .optional_select_with(fields.optional_choice(), str::parse::<i32>, i32::to_string)
             .into();
         let radio: Binding<i32> = form.radio_group(fields.choice()).into();
 
@@ -987,7 +1292,11 @@ mod tests {
                 && (checked.read)()
                 && (tri_state.read)().is_none()
                 && (select.read)() == 7
+                && (wrapped_select.read)() == Some(7)
                 && (rendered_select.read)() == 7
+                && (wrapped_rendered_select.read)() == Some(7)
+                && (optional_select.read)() == Some(3)
+                && (rendered_optional_select.read)() == Some(3)
                 && (radio.read)() == 7,
         );
         probe.equal_bindings_match.set(checked == same_checked);
@@ -1004,6 +1313,7 @@ mod tests {
                 checked: true,
                 tri_state: None,
                 choice: 7,
+                optional_choice: Some(3),
             }),
             values_match: Cell::new(false),
             equal_bindings_match: Cell::new(false),
