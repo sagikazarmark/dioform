@@ -83,7 +83,7 @@ dioxus-code = { version = "0.1.2", optional = true }
 # What the daisyUI components vendored into `src/components/daisyui` are built
 # from. Both entries are written by `dx components add`, which
 # `dagger generate demo:components` re-runs to pull the vendored copies forward.
-dioxus-field = { version = "0.6.0", default-features = false, optional = true }
+dioxus-field = { version = "0.7.0", default-features = false, optional = true }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "bf007c15d0cf4d04d3181cc46cf12325aa773955", version = "0.0.1", default-features = false, features = ["router"], optional = true }
 garde = { version = "0.23", default-features = false, features = [
     "derive",

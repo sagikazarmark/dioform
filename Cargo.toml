@@ -17,7 +17,7 @@ dioform = { path = "crates/dioform", version = "0.4.0" }
 dioform-core = { path = "crates/dioform-core", version = "0.4.0" }
 dioform-derive = { path = "crates/dioform-derive", version = "0.4.0" }
 dioform-validation-adapter = { path = "crates/dioform-validation-adapter", version = "0.4.0" }
-dioxus-field = "0.6.0"
+dioxus-field = "0.7.0"
 
 dioxus-core = "0.7"
 dioxus-hooks = "=0.7.10"
