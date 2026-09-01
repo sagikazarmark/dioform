@@ -128,6 +128,13 @@ impl InputAppearance {
 /// Classes passed by the caller concatenate with the input's own; every other
 /// attribute the caller passes overrides the input's. Event handlers are
 /// explicit because Dioxus' extended attributes do not include them.
+///
+/// When `prefix` or `suffix` is set — `Some(rsx! {})` included — the Component
+/// emits daisyUI's wrapper structure instead of the bare element: a `span.input`
+/// holding the leading slot, the native `input` as a direct child, and the
+/// trailing slot. The typed axes then style the wrapper; caller `attributes`,
+/// the Binding contract, and Field metadata keep targeting the native input,
+/// and `wrapper_attributes` is the surface for the wrapper's own box (ADR-0031).
 #[component]
 pub fn Input(
     /// An explicit colour, or `None` to derive error colour from Field metadata.
@@ -158,6 +165,21 @@ pub fn Input(
     /// Whether the native input is disabled.
     #[props(default)]
     disabled: Option<bool>,
+    /// A non-interactive adornment rendered inside the control box, before the
+    /// native input. Its presence — an empty `Some` included — selects the
+    /// wrapper structure; toggle content inside `Some` rather than the option.
+    prefix: Option<Element>,
+    /// A non-interactive adornment rendered inside the control box, after the
+    /// native input. Its presence — an empty `Some` included — selects the
+    /// wrapper structure; toggle content inside `Some` rather than the option.
+    suffix: Option<Element>,
+    /// Attributes for the adorned `span.input` wrapper, which owns the visible
+    /// box: width and responsive-size utilities, `join-item`. Classes
+    /// concatenate with the wrapper's own exactly as caller `class` does on the
+    /// input. Written with `attributes!(span { .. })`; unused without an
+    /// adornment.
+    #[props(default)]
+    wrapper_attributes: Vec<Attribute>,
     #[props(extends = GlobalAttributes)]
     #[props(extends = input)]
     attributes: Vec<Attribute>,
@@ -185,9 +207,19 @@ pub fn Input(
     });
     use_focus_registration(focus_control);
 
-    let base = attributes!(input {
-        class: "input {color} {size} {appearance}",
-    });
+    // Adorned means the wrapper arm, even for `Some(rsx! {})`: an empty stable
+    // slot keeps the tree shape, where collapsing it back to the bare arm would
+    // remount the native input mid-session (ADR-0031).
+    let adorned = prefix.is_some() || suffix.is_some();
+    let base = if adorned {
+        // The wrapper owns the box, so the axis classes relocate to it and the
+        // native input is styled by daisyUI's `.input input` rules alone.
+        Vec::new()
+    } else {
+        attributes!(input {
+            class: "input {color} {size} {appearance}",
+        })
+    };
     let meta_attributes = meta.attributes_for(
         &FieldControlOptions::new()
             .disabled(disabled)
@@ -198,36 +230,85 @@ pub fn Input(
     let change_binding = binding.clone();
     let commit_binding = binding.clone();
     let focus_exit_binding = binding;
+    let handle_mounted = move |event: MountedEvent| control.set(Some(event.data()));
+    let handle_focus_in = move |_| focus_exit_reported.set(false);
+    let handle_input = move |event: FormEvent| {
+        let next = event.value();
+        change_binding.write(next.clone(), ChangeOrigin::User);
+        if let Some(handler) = &on_change {
+            handler.call(next);
+        }
+    };
+    let handle_change = move |_| {
+        commit_binding.commit();
+        if let Some(handler) = &on_commit {
+            handler.call(());
+        }
+    };
+    let handle_focus_out = move |_| {
+        if focus_exit_reported() {
+            return;
+        }
+        focus_exit_reported.set(true);
+        focus_exit_binding.focus_exit();
+        if let Some(handler) = &on_focus_exit {
+            handler.call(());
+        }
+    };
 
-    rsx! {
-        input {
-            value: resolved_value,
-            onmounted: move |event: MountedEvent| control.set(Some(event.data())),
-            onfocusin: move |_| focus_exit_reported.set(false),
-            oninput: move |event| {
-                let next = event.value();
-                change_binding.write(next.clone(), ChangeOrigin::User);
-                if let Some(handler) = &on_change {
-                    handler.call(next);
+    if adorned {
+        let wrapper = merge_attributes(vec![
+            attributes!(span {
+                class: "input {color} {size} {appearance}",
+            }),
+            wrapper_attributes,
+        ]);
+
+        rsx! {
+            // Mousedown on the wrapper is only ever a padding or adornment
+            // click — the input's own handler stops propagation — so the
+            // browser's blur-and-refocus default is cancelled and focus is
+            // forwarded to the native input instead, keeping Focus Exit out of
+            // mid-edit adornment clicks (ADR-0031).
+            span {
+                onmousedown: move |event: MouseEvent| {
+                    event.prevent_default();
+                    focus_control.call(());
+                },
+                ..wrapper,
+                span {
+                    class: "empty:hidden",
+                    onmousedown: move |event: MouseEvent| event.prevent_default(),
+                    {prefix}
                 }
-            },
-            onchange: move |_| {
-                commit_binding.commit();
-                if let Some(handler) = &on_commit {
-                    handler.call(());
+                input {
+                    value: resolved_value,
+                    onmounted: handle_mounted,
+                    onfocusin: handle_focus_in,
+                    oninput: handle_input,
+                    onchange: handle_change,
+                    onfocusout: handle_focus_out,
+                    onmousedown: move |event: MouseEvent| event.stop_propagation(),
+                    ..merged,
                 }
-            },
-            onfocusout: move |_| {
-                if focus_exit_reported() {
-                    return;
+                span {
+                    class: "empty:hidden",
+                    onmousedown: move |event: MouseEvent| event.prevent_default(),
+                    {suffix}
                 }
-                focus_exit_reported.set(true);
-                focus_exit_binding.focus_exit();
-                if let Some(handler) = &on_focus_exit {
-                    handler.call(());
-                }
-            },
-            ..merged,
+            }
+        }
+    } else {
+        rsx! {
+            input {
+                value: resolved_value,
+                onmounted: handle_mounted,
+                onfocusin: handle_focus_in,
+                oninput: handle_input,
+                onchange: handle_change,
+                onfocusout: handle_focus_out,
+                ..merged,
+            }
         }
     }
 }
@@ -284,6 +365,16 @@ pub fn InputField(
     /// Whether the native input is disabled.
     #[props(default)]
     disabled: Option<bool>,
+    /// A non-interactive adornment rendered inside the control box, before the
+    /// native input, forwarded to [`Input`].
+    prefix: Option<Element>,
+    /// A non-interactive adornment rendered inside the control box, after the
+    /// native input, forwarded to [`Input`].
+    suffix: Option<Element>,
+    /// Attributes for the adorned `span.input` wrapper, forwarded to
+    /// [`Input`]; unused without an adornment.
+    #[props(default)]
+    wrapper_attributes: Vec<Attribute>,
     #[props(extends = GlobalAttributes)]
     #[props(extends = input)]
     attributes: Vec<Attribute>,
@@ -303,6 +394,9 @@ pub fn InputField(
                 on_focus_exit,
                 required,
                 disabled,
+                prefix,
+                suffix,
+                wrapper_attributes,
                 attributes,
             }
             if let Some(description) = description {
