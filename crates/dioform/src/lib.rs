@@ -2180,6 +2180,57 @@ where
     }
 }
 
+/// Form-owned storage for the rendered text an optional-text field shows.
+///
+/// A Field Convention `Binding<String>` read hands out a `'static` reference over a value that is
+/// *derived* from the field — `Option<String>` rendered as text, `""` for `None` (ADR-0046) — so
+/// it needs somewhere to live. Unlike a parsed binding, an [`OptionalTextBinding`] has no mount to
+/// own that storage, and it is also produced per render by [`FormHandle::optional_text`], so the
+/// storage is form-owned and keyed like every other field signal slot. Rendered text is a pure
+/// function of the field value with no per-mount state, so every mount of the field sharing one
+/// slot is exact.
+#[cfg(feature = "dioxus-field")]
+struct RenderedOptionalTextSlot<Model> {
+    path: FieldPath<Model, Option<String>>,
+    cache: CopyValue<String>,
+    dirty: Cell<bool>,
+    subscribers: ReactiveSubscribers,
+}
+
+#[cfg(feature = "dioxus-field")]
+impl<Model> RenderedOptionalTextSlot<Model> {
+    fn refresh<Error>(
+        &self,
+        form: &FormHandle<Model, Error>,
+    ) -> Result<ReadableRef<'static, CopyValue<String>>, dioxus_signals::BorrowError> {
+        let read = self.cache.try_peek_unchecked()?;
+        if !self.dirty.replace(false) {
+            return Ok(read);
+        }
+        drop(read);
+
+        let rendered = form
+            .core
+            .borrow()
+            .field_value(self.path.clone())
+            .clone()
+            .unwrap_or_default();
+        let cached = self.cache.try_peek_unchecked()?;
+        if *cached != rendered {
+            drop(cached);
+            let mut cache = self.cache;
+            cache.set(rendered);
+        }
+
+        self.cache.try_peek_unchecked()
+    }
+
+    fn mark_dirty(&self) {
+        self.dirty.set(true);
+        self.subscribers.notify_changed();
+    }
+}
+
 struct ErasedFieldSignalSlot {
     slot: Rc<dyn Any>,
     mark_dirty: Rc<dyn Fn()>,
@@ -2251,6 +2302,49 @@ impl<Model: 'static> FieldSignalRegistry<Model> {
 
         let cache = with_owner(self.owner.clone(), || CopyValue::new(initial()));
         let slot = Rc::new(FieldSignalSlot {
+            path: path.clone(),
+            cache,
+            dirty: Cell::new(false),
+            subscribers: ReactiveSubscribers::default(),
+        });
+        let slot_for_dirty = Rc::clone(&slot);
+        slots.push(ErasedFieldSignalSlot {
+            slot: Rc::clone(&slot) as Rc<dyn Any>,
+            mark_dirty: Rc::new(move || slot_for_dirty.mark_dirty()),
+        });
+        slot
+    }
+
+    /// Resolves the form's rendered-text slot for one optional-text field, creating it on the
+    /// first Field Convention read.
+    ///
+    /// Lookup follows [`FieldSignalRegistry::slot`] exactly: interchangeable paths (ADR-0047)
+    /// share one slot, so every conversion from [`FormHandle::optional_text`] and
+    /// [`use_optional_text`] over one field reads the same storage instead of accumulating one
+    /// allocation per render. The dirty callback registers under the field's identity, so the
+    /// type-blind notification fanout refreshes it like any typed slot.
+    #[cfg(feature = "dioxus-field")]
+    fn rendered_optional_text_slot(
+        &self,
+        path: &FieldPath<Model, Option<String>>,
+        initial: impl FnOnce() -> String,
+    ) -> Rc<RenderedOptionalTextSlot<Model>> {
+        let identity = path.identity();
+        let mut fields = self.fields.borrow_mut();
+        let slots = fields.entry(identity).or_default();
+
+        for entry in slots.iter() {
+            let Ok(slot) = Rc::clone(&entry.slot).downcast::<RenderedOptionalTextSlot<Model>>()
+            else {
+                continue;
+            };
+            if slot.path.eq(path) {
+                return slot;
+            }
+        }
+
+        let cache = with_owner(self.owner.clone(), || CopyValue::new(initial()));
+        let slot = Rc::new(RenderedOptionalTextSlot {
             path: path.clone(),
             cache,
             dirty: Cell::new(false),
@@ -8097,6 +8191,23 @@ impl<Model, Error> FormHandle<Model, Error> {
         })
     }
 
+    #[cfg(feature = "dioxus-field")]
+    fn rendered_optional_text_slot(
+        &self,
+        path: &FieldPath<Model, Option<String>>,
+    ) -> Rc<RenderedOptionalTextSlot<Model>>
+    where
+        Model: 'static,
+    {
+        self.field_signals.rendered_optional_text_slot(path, || {
+            self.core
+                .borrow()
+                .field_value(path.clone())
+                .clone()
+                .unwrap_or_default()
+        })
+    }
+
     /// Returns whether managed submit validation is waiting or a submission has started and not
     /// completed yet.
     pub fn is_submitting(&self) -> bool {
@@ -13237,8 +13348,165 @@ mod field_convention {
         }
     }
 
+    /// The rendered text one optional-text binding shows, behind the [`Readable`] contract a
+    /// [`Binding<String>`] read needs.
+    ///
+    /// This is the same text [`OptionalTextBinding::value`] returns — `""` for `None`, the string
+    /// itself for `Some` (ADR-0046). The text is derived rather than stored, so each read refreshes
+    /// it into the form-owned [`RenderedOptionalTextSlot`] for the field and hands out a reference
+    /// to that. The slot is shared across every mount and every conversion of the field, which is
+    /// exact because rendered text is a pure function of the field value (ADR-0053).
+    struct RenderedOptionalText<Model, Error> {
+        field: FieldHandle<Model, Option<String>, Error>,
+    }
+
+    impl<Model, Error> Readable for RenderedOptionalText<Model, Error>
+    where
+        Model: 'static,
+    {
+        type Target = String;
+        type Storage = UnsyncStorage;
+
+        fn try_read_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            let slot = self
+                .field
+                .handle
+                .rendered_optional_text_slot(&self.field.path);
+            let read = slot.refresh(&self.field.handle)?;
+            slot.subscribers.track_read();
+            Ok(read)
+        }
+
+        /// Reads the slot without subscribing, keeping the [`Readable::peek`] promise.
+        ///
+        /// Unlike [`RenderedText`], which reads through the form's selectors and cannot help
+        /// subscribing, this view reads a slot whose subscription is a separate
+        /// [`ReactiveSubscribers::track_read`] call, so a peek simply skips it — exactly as
+        /// [`FieldHandle`]'s own [`Readable`] impl does.
+        fn try_peek_unchecked(
+            &self,
+        ) -> Result<ReadableRef<'static, Self>, dioxus_signals::BorrowError> {
+            self.field
+                .handle
+                .rendered_optional_text_slot(&self.field.path)
+                .refresh(&self.field.handle)
+        }
+
+        /// Returns the slot's real subscriber list, which the dirty callback notifies.
+        fn subscribers(&self) -> Subscribers {
+            self.field
+                .handle
+                .rendered_optional_text_slot(&self.field.path)
+                .subscribers
+                .subscribers
+                .clone()
+        }
+    }
+
+    impl<Model, Error> OptionalTextBinding<Model, Error> {
+        /// Produces the Field Convention binding over this field's rendered text.
+        ///
+        /// The read renders `None` as `""`; a write applies the ADR-0046 presence rule — exactly
+        /// empty writes `None`, anything else writes `Some` — with the Change Origin mapped to the
+        /// same user or programmatic typed write [`OptionalTextBinding::on_input`] and
+        /// [`OptionalTextBinding::set_value`] use. The presence rule travels with the write
+        /// regardless of origin, so `Some("")` stays unreachable through the convention channel.
+        fn convention_binding(&self) -> Binding<String>
+        where
+            Model: 'static,
+            Error: 'static,
+        {
+            let read = ReadSignal::new(RenderedOptionalText {
+                field: self.base.field_handle(),
+            });
+            // With no parser or formatter to vary, the field handle alone proves
+            // interchangeability.
+            let identity = self.base.field_handle();
+            let writer = self.clone();
+            let committer = self.clone();
+            let focus_exiter = self.clone();
+            let write = Callback::new(move |(value, origin): (String, ChangeOrigin)| {
+                let value = (!value.is_empty()).then_some(value);
+                match origin {
+                    ChangeOrigin::User => writer.base.set_user(value),
+                    ChangeOrigin::Programmatic => writer.base.set_programmatic(value),
+                }
+            });
+            let commit = Callback::new(move |()| committer.on_commit());
+            let focus_exit = Callback::new(move |()| focus_exiter.on_focus_exit());
+
+            Binding::new_with_identity(read, write, commit, identity)
+                .with_focus_exit_using_identity(focus_exit)
+        }
+
+        /// Produces signal-backed presentation metadata for the Field Convention.
+        ///
+        /// Visible validation errors are formatted with [`fmt::Display`]. This method is a Dioxus
+        /// hook and must be called unconditionally from a component render.
+        pub fn meta(&self) -> FieldMeta
+        where
+            Error: Clone + fmt::Display,
+        {
+            self.meta_with_error_formatter(ToString::to_string)
+        }
+
+        /// Produces Field Convention metadata using an application-defined error formatter.
+        ///
+        /// This method is a Dioxus hook and must be called unconditionally from a component
+        /// render.
+        pub fn meta_with_error_formatter(&self, formatter: impl Fn(&Error) -> String) -> FieldMeta
+        where
+            Error: Clone,
+        {
+            use_convention_meta(self.base.field_handle().convention_meta_values(formatter))
+        }
+    }
+
+    /// An optional-text binding joins the Field Convention as rendered text (ADR-0053): text
+    /// controls resolve `Binding<String>`, and the rendered-text form is what the binding itself
+    /// speaks under ADR-0046.
+    impl<Model, Error> From<OptionalTextBinding<Model, Error>> for Binding<String>
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        fn from(binding: OptionalTextBinding<Model, Error>) -> Self {
+            binding.convention_binding()
+        }
+    }
+
+    /// The presence-typed conversion for consumers that want the `Option` itself, such as a
+    /// custom control distinguishing absence from presence. The Field Convention context carries
+    /// the rendered-text binding instead.
+    impl<Model, Error> From<OptionalTextBinding<Model, Error>> for Binding<Option<String>>
+    where
+        Model: 'static,
+        Error: 'static,
+    {
+        fn from(binding: OptionalTextBinding<Model, Error>) -> Self {
+            binding.base.field_handle().convention_binding()
+        }
+    }
+
+    impl<Model, Error> From<OptionalTextBinding<Model, Error>> for FieldContext
+    where
+        Model: 'static,
+        Error: Clone + fmt::Display + 'static,
+    {
+        fn from(binding: OptionalTextBinding<Model, Error>) -> Self {
+            let meta = binding
+                .base
+                .field_handle()
+                .convention_meta_values(ToString::to_string);
+            let binding = binding.convention_binding();
+
+            FieldContext::new(binding).with_meta_values(meta)
+        }
+    }
+
     impl_scalar_field_convention!([] TextBinding<Model, Error> => String);
-    impl_scalar_field_convention!([] OptionalTextBinding<Model, Error> => Option<String>);
     impl_scalar_field_convention!([] TextareaBinding<Model, Error> => String);
     impl_scalar_field_convention!([] CheckboxBinding<Model, Error> => bool);
     impl_scalar_field_convention!([] TriStateCheckboxBinding<Model, Error> => Option<bool>);
@@ -14432,5 +14700,123 @@ mod tests {
 
         adopter.cleanup();
         owner.cleanup();
+    }
+
+    /// The rendered-text slot behind the optional-text Field Convention conversion is form-owned
+    /// (ADR-0053), so these tests inspect the same private registry the field signal slot tests
+    /// above do.
+    ///
+    /// The feature gate does not keep these out of CI: a workspace-root `cargo test` — which is
+    /// what the CI check runs — unifies features across members, and `dioform-integration-tests`
+    /// enables `dioform/dioxus-field`, so this crate's own test target compiles with the feature.
+    /// A per-package `cargo test -p dioform` without `--features dioxus-field` skips them.
+    #[cfg(feature = "dioxus-field")]
+    mod rendered_optional_text {
+        use dioxus_field::Binding;
+
+        use super::*;
+
+        #[derive(Clone, Debug, PartialEq)]
+        struct Profile {
+            nickname: Option<String>,
+        }
+
+        fn nickname() -> FieldPath<Profile, Option<String>> {
+            FieldPath::direct(
+                FieldIdentity::new("nickname"),
+                "nickname",
+                |profile: &Profile| &profile.nickname,
+                |profile: &mut Profile| &mut profile.nickname,
+            )
+        }
+
+        struct RenderedSlotProbe {
+            form: FormHandle<Profile>,
+            rerender: RefCell<Option<Signal<u32>>>,
+            rendered: RefCell<Vec<String>>,
+        }
+
+        fn rendered_slot_probe(initial: Option<String>) -> Rc<RenderedSlotProbe> {
+            Rc::new(RenderedSlotProbe {
+                form: FormHandle::new(Profile { nickname: initial }),
+                rerender: RefCell::new(None),
+                rendered: RefCell::new(Vec::new()),
+            })
+        }
+
+        /// Converts through both constructors — the hook and the per-render handle accessor — and
+        /// reads both, so slot growth from either would show in `slot_count`.
+        fn rendered_optional_text_probe(probe: Rc<RenderedSlotProbe>) -> Element {
+            let rerender = use_signal(|| 0);
+            let _ = rerender();
+            probe.rerender.borrow_mut().replace(rerender);
+
+            let hooked: Binding<String> = use_optional_text(&probe.form, nickname()).into();
+            let per_render: Binding<String> = probe.form.optional_text(nickname()).into();
+
+            assert_eq!((hooked.read)(), (per_render.read)());
+            probe.rendered.borrow_mut().push((hooked.read)());
+
+            VNode::empty()
+        }
+
+        #[test]
+        fn rendered_slots_are_shared_across_constructors_and_stable_across_renders() {
+            let probe = rendered_slot_probe(Some("ada".to_owned()));
+            let mut dom =
+                VirtualDom::new_with_props(rendered_optional_text_probe, Rc::clone(&probe));
+
+            dom.rebuild_in_place();
+            assert_eq!(probe.form.field_signals.slot_count(), 1);
+
+            for render in 1..=3 {
+                probe
+                    .rerender
+                    .borrow()
+                    .expect("the probe should expose its render signal")
+                    .set(render);
+                dom.render_immediate_to_vec();
+                assert_eq!(probe.form.field_signals.slot_count(), 1);
+            }
+        }
+
+        /// Two mounts of one field share the one form-owned slot, which is the deliberate
+        /// divergence from ADR-0052's per-mount storage: rendered text has no per-mount state.
+        #[test]
+        fn two_mounts_of_one_field_share_one_rendered_slot() {
+            let probe = rendered_slot_probe(Some("ada".to_owned()));
+            let mut first =
+                VirtualDom::new_with_props(rendered_optional_text_probe, Rc::clone(&probe));
+            let mut second =
+                VirtualDom::new_with_props(rendered_optional_text_probe, Rc::clone(&probe));
+
+            first.rebuild_in_place();
+            second.rebuild_in_place();
+
+            assert_eq!(probe.form.field_signals.slot_count(), 1);
+            assert_eq!(probe.rendered.borrow().as_slice(), ["ada", "ada"]);
+        }
+
+        /// The riskiest seam: the slot's dirty callback must register under the field's identity,
+        /// or a typed write that never goes through the convention binding compiles fine and the
+        /// rendered text silently goes stale.
+        #[test]
+        fn an_out_of_band_typed_write_refreshes_the_rendered_text() {
+            let probe = rendered_slot_probe(Some("ada".to_owned()));
+            let mut dom =
+                VirtualDom::new_with_props(rendered_optional_text_probe, Rc::clone(&probe));
+            dom.rebuild_in_place();
+
+            probe.form.set_field(nickname(), Some("grace".to_owned()));
+            dom.render_immediate_to_vec();
+            assert_eq!(
+                probe.rendered.borrow().last().map(String::as_str),
+                Some("grace")
+            );
+
+            probe.form.set_field(nickname(), None);
+            dom.render_immediate_to_vec();
+            assert_eq!(probe.rendered.borrow().last().map(String::as_str), Some(""));
+        }
     }
 }

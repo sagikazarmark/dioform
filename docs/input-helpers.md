@@ -109,6 +109,30 @@ without owning Raw Input State, Parse Error, or Parse Blocker.
 In the narrower API sense it is not a parsed binding: presence has no fallible parse to retain.
 [ADR-0046](adr/0046-bind-optional-text-as-controlled-scalar-presence.md) records this choice.
 
+With the `dioxus-field` feature, an optional-text binding converts into a
+`dioxus_field::Binding<String>` or a `dioxus_field::FieldContext` over its *rendered text*, so a
+Widget Registry text input binds an `Option<String>` field with no per-field wiring:
+
+```rust
+let nickname = use_optional_text(&form, fields.nickname());
+
+rsx! {
+    TextField { context: nickname, label: "Nickname" }
+}
+```
+
+The convention read renders `None` as `""`, and a convention write applies the same presence rule
+as `on_input`: exactly empty writes `None`, anything else writes `Some(value)`, for user and
+programmatic writes alike. A typed
+`Binding<Option<String>>` conversion also exists for controls that consume the presence type
+directly; with both conversions available, a `let binding: Binding<_> = nickname.into()` site
+needs an explicit type annotation. A control that resolves `Option<String>` *through the context*
+— a generic `Select<String>` over presence, say — gets a `BindingTypeMismatch` instead of the
+rendered-text binding; hand it the presence type through the select helpers or the typed
+conversion. Prop-position `context:` sites compile unchanged under the rendered-text behavior, so
+code migrating from dioform 0.4 finds them by grep rather than by compile error. See
+[ADR-0053](adr/0053-bind-optional-text-to-the-field-convention-as-rendered-text.md).
+
 ## Parsed Helpers
 
 Parsed helpers are for rendered text-like input that may temporarily fail conversion into the typed
@@ -172,6 +196,10 @@ registry's own error region renders it. It does not become a Validation Error, a
 Validation Error it does not wait for a Commit to become visible: it clears on the keystroke that
 makes the text parse. See
 [ADR-0052](adr/0052-bind-parsed-fields-to-the-field-convention-as-rendered-text.md).
+
+`use_optional_text` reaches text controls the same way — as rendered text, though with no parse
+state to carry; see [Optional Scalar Text](#optional-scalar-text) above and
+[ADR-0053](adr/0053-bind-optional-text-to-the-field-convention-as-rendered-text.md).
 
 Collection item bindings, including the parsed ones, stay outside the Field Convention.
 

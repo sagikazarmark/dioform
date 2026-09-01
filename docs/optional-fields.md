@@ -97,6 +97,13 @@ Optional scalar input helpers use this same direct write. `optional_text` delibe
 empty rendered input to `None`: `None` and `Some("")` both render as `""`, but the next empty input
 writes `None`. That collapse is scalar presence semantics, not traversal or implicit construction.
 
+With the `dioxus-field` feature, that same collapse is what an optional-text binding speaks to the
+Field Convention: `TextField { context: use_optional_text(&form, path) }` binds a Widget Registry
+text control in one line, with `None` rendered as `""` and empty input written back as `None` —
+alongside `use_optional_number` and `use_optional_date`, which reach text controls as rendered text
+too. See [Dioxus Adapter Input Helpers](input-helpers.md#optional-scalar-text) and
+[ADR-0053](adr/0053-bind-optional-text-to-the-field-convention-as-rendered-text.md).
+
 ## Materialization is a ratchet
 
 Materialization is one-way, and this is the price of the design rather than a defect. Clearing an inner value does not un-materialize the parent.
