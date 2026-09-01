@@ -85,12 +85,60 @@ typed draft; `try_on_change(...)` returns the parser error when the application 
 case. Select conversion failures do not register Parse Blockers because select options are
 application-owned committed choices rather than free-form Raw Input State.
 
+Use `FormHandle::optional_select(path)` for an `Option<Value>` field bound to a select-like
+control. The widget's unselected state maps directly onto the field's `None`: `select(value)`
+writes `Some(value)` and `clear()` writes `None`. Its rendered twin,
+`FormHandle::optional_select_with(path, parser, formatter)`, reserves the empty rendered value
+`""` for the unselected state — render the placeholder option with `value: ""` — so the parser and
+formatter only ever see the inner `Value`. Use these instead of `select`/`select_with` whenever
+the field value is itself an `Option`.
+
 Use `FormHandle::radio_group(path)` for one typed field rendered as a radio group or any
 radio-like custom UI. The application renders every option and calls `is_selected(...)` and
 `select(value)` for each candidate. Radio helpers do not own option lists or visual components.
 
-Hook variants are available for component code: `use_select`,
-`use_select_with`, and `use_radio_group`.
+Hook variants are available for component code: `use_select`, `use_select_with`,
+`use_optional_select`, `use_optional_select_with`, and `use_radio_group`.
+
+## Choice Helpers and the Field Convention
+
+With the `dioxus-field` feature, a select binding converts into a
+`dioxus_field::Binding<Option<Value>>` or a `dioxus_field::FieldContext` carrying one, so a Widget
+Registry selection widget binds a select field with no per-field wiring — the select happy path
+beside the text one:
+
+```rust
+let attendance = use_select(&form, fields.attendance()); // attendance: Attendance
+let track = use_optional_select(&form, fields.track()); // track: Option<Track>
+
+rsx! {
+    SelectField { context: attendance, label: "Attendance" }
+    SelectField { context: track, label: "Track (optional)" }
+}
+```
+
+The two helpers split on whether the field's value type represents "nothing selected"
+([ADR-0054](adr/0054-bind-select-bindings-to-the-field-convention-as-optional-selection.md)):
+
+- **Required-valued fields** (`use_select` / `use_select_with` over a non-`Option` field) convert
+  as a *wrapped* optional selection. The read is total — always `Some` of the field value — and a
+  convention write of `None` is **refused**: the Form Draft stays untouched, the widget's
+  subsequent Commit proceeds normally, and the refusal is reported through `tracing::error!`. The
+  conversion's Field Meta reports `required: true`, so a clearable widget can suppress its clear
+  affordance. The refusal lives in the conversion, not in any widget, so every `Option`-resolving
+  widget over such a field behaves the same.
+- **`Option`-valued fields** (`use_optional_select` / `use_optional_select_with`) convert as the
+  *direct* mapping — one `Option`, not two. The widget's `None` is the field's `None`, so
+  clearing is a real write and `required` stays false.
+
+One caveat: a widget may forward its widget-level `None` to the application's own `on_change`
+prop even when the model refuses the write — daisyui's `Select` does exactly this — so
+applications must not read `on_change(None)` as evidence the field was cleared.
+
+The typed `Binding<Value>` conversion also exists for consumers wired directly to the field's
+value type; with both conversions available, a `let binding: Binding<_> = select.into()` site
+needs an explicit type annotation. Radio groups are unaffected: `RadioGroupBinding` still converts
+to the plain `Binding<Value>` its widget shape resolves.
 
 ## Optional Scalar Text
 

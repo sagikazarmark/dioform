@@ -185,7 +185,11 @@ pub fn HappyPathExample() -> Element {
                         }
 
                         DaisyField {
-                            context: form.select(fields.track()),
+                            // `track` is `Option<Track>`, so the direct-mapping optional-select
+                            // helper applies: the widget's cleared state is the field's `None`
+                            // (ADR-0054). A required-valued field would use `form.select` and get
+                            // the wrapped conversion instead.
+                            context: form.optional_select(fields.track()),
                             class: "min-w-0 grid-cols-1",
                             FieldLabel { class: "font-medium", "Track (optional)" }
                             Select::<Track> { class: "w-full",

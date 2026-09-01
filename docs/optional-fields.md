@@ -104,6 +104,13 @@ alongside `use_optional_number` and `use_optional_date`, which reach text contro
 too. See [Dioxus Adapter Input Helpers](input-helpers.md#optional-scalar-text) and
 [ADR-0053](adr/0053-bind-optional-text-to-the-field-convention-as-rendered-text.md).
 
+An `Option<Value>` select field speaks its presence to the Field Convention directly:
+`use_optional_select(&form, path)` maps the widget's unselected state onto the field's `None`, so
+clearing the selection is a real `None` write. A *required*-valued select converts differently —
+its `None` write is refused — so the split matters; see
+[Choice Helpers and the Field Convention](input-helpers.md#choice-helpers-and-the-field-convention)
+and [ADR-0054](adr/0054-bind-select-bindings-to-the-field-convention-as-optional-selection.md).
+
 ## Materialization is a ratchet
 
 Materialization is one-way, and this is the price of the design rather than a defect. Clearing an inner value does not un-materialize the parent.
