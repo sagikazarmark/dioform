@@ -796,6 +796,157 @@ mod tests {
     }
 
     #[derive(Clone, dioform::Form)]
+    struct NicknameForm {
+        nickname: Option<String>,
+    }
+
+    struct OptionalTextProbe {
+        form: FormHandle<NicknameForm>,
+        binding: RefCell<Option<Binding<String>>>,
+        rendered: RefCell<Vec<String>>,
+    }
+
+    #[derive(Clone, Props)]
+    struct OptionalTextInputProps {
+        probe: Rc<OptionalTextProbe>,
+    }
+
+    impl PartialEq for OptionalTextInputProps {
+        fn eq(&self, other: &Self) -> bool {
+            Rc::ptr_eq(&self.probe, &other.probe)
+        }
+    }
+
+    /// A Field Convention text control: it resolves `Binding<String>` from the context, which is
+    /// the composition where an optional-text context used to raise a `BindingTypeMismatch`.
+    #[allow(non_snake_case)]
+    fn OptionalTextInput(props: OptionalTextInputProps) -> Element {
+        let binding = use_binding::<String>(None, String::new());
+        props.probe.rendered.borrow_mut().push((binding.read)());
+        props.probe.binding.borrow_mut().replace(binding);
+
+        VNode::empty()
+    }
+
+    fn optional_text_field(probe: Rc<OptionalTextProbe>) -> Element {
+        let nickname = dioform::use_optional_text(&probe.form, NicknameForm::fields().nickname());
+
+        rsx! {
+            Field { context: nickname,
+                OptionalTextInput { probe }
+            }
+        }
+    }
+
+    fn optional_text_probe(initial: Option<String>) -> (Rc<OptionalTextProbe>, VirtualDom) {
+        let probe = Rc::new(OptionalTextProbe {
+            form: FormHandle::new(NicknameForm { nickname: initial }),
+            binding: RefCell::new(None),
+            rendered: RefCell::new(Vec::new()),
+        });
+        let mut dom = VirtualDom::new_with_props(optional_text_field, Rc::clone(&probe));
+        dom.rebuild_in_place();
+
+        (probe, dom)
+    }
+
+    #[test]
+    fn optional_text_context_resolves_a_rendered_text_binding_for_a_text_control() {
+        let (probe, mut dom) = optional_text_probe(Some("ada".to_owned()));
+        let binding = convention_binding(&probe.binding);
+
+        binding.write("grace".to_owned(), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(NicknameForm::fields().nickname()),
+            Some("grace".to_owned())
+        );
+        assert!(
+            probe
+                .form
+                .is_field_touched(NicknameForm::fields().nickname())
+        );
+        assert_eq!(
+            probe.rendered.borrow().first().map(String::as_str),
+            Some("ada")
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().map(String::as_str),
+            Some("grace")
+        );
+    }
+
+    #[test]
+    fn optional_text_binding_renders_an_absent_value_as_empty_text() {
+        let (probe, _dom) = optional_text_probe(None);
+
+        assert_eq!(
+            probe.rendered.borrow().first().map(String::as_str),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn optional_text_binding_writes_empty_user_input_as_absent() {
+        let (probe, mut dom) = optional_text_probe(Some("ada".to_owned()));
+        let binding = convention_binding(&probe.binding);
+
+        binding.write(String::new(), ChangeOrigin::User);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(NicknameForm::fields().nickname()),
+            None
+        );
+        assert!(
+            probe
+                .form
+                .is_field_touched(NicknameForm::fields().nickname())
+        );
+        assert_eq!(probe.rendered.borrow().last().map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn optional_text_binding_applies_the_presence_rule_to_programmatic_writes() {
+        let (probe, mut dom) = optional_text_probe(Some("ada".to_owned()));
+        let binding = convention_binding(&probe.binding);
+
+        binding.write(String::new(), ChangeOrigin::Programmatic);
+        render_reactive_updates(&mut dom);
+
+        // A Programmatic convention write of "" lands as `None`, never as `Some("")`: the
+        // ADR-0046 presence rule travels with the rendered-text write regardless of origin.
+        assert_eq!(
+            probe.form.field_value(NicknameForm::fields().nickname()),
+            None
+        );
+        assert!(
+            !probe
+                .form
+                .is_field_touched(NicknameForm::fields().nickname())
+        );
+        assert!(probe.form.is_field_dirty(NicknameForm::fields().nickname()));
+
+        binding.write("grace".to_owned(), ChangeOrigin::Programmatic);
+        render_reactive_updates(&mut dom);
+
+        assert_eq!(
+            probe.form.field_value(NicknameForm::fields().nickname()),
+            Some("grace".to_owned())
+        );
+        assert!(
+            !probe
+                .form
+                .is_field_touched(NicknameForm::fields().nickname())
+        );
+        assert_eq!(
+            probe.rendered.borrow().last().map(String::as_str),
+            Some("grace")
+        );
+    }
+
+    #[derive(Clone, dioform::Form)]
     struct ScalarForm {
         text: String,
         optional_text: Option<String>,
@@ -817,6 +968,8 @@ mod tests {
         let textarea: Binding<String> = form.textarea(fields.text()).into();
         let optional_text: Binding<Option<String>> =
             form.optional_text(fields.optional_text()).into();
+        let rendered_optional_text: Binding<String> =
+            form.optional_text(fields.optional_text()).into();
         let checked: Binding<bool> = form.checkbox(fields.checked()).into();
         let same_checked: Binding<bool> = form.checkbox(fields.checked()).into();
         let tri_state: Binding<Option<bool>> = form.tri_state_checkbox(fields.tri_state()).into();
@@ -830,6 +983,7 @@ mod tests {
             (text.read)().as_str() == "text"
                 && (textarea.read)().as_str() == "text"
                 && (optional_text.read)() == Some("optional".to_owned())
+                && (rendered_optional_text.read)().as_str() == "optional"
                 && (checked.read)()
                 && (tri_state.read)().is_none()
                 && (select.read)() == 7
