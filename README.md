@@ -83,6 +83,19 @@ assert_eq!(last_name().field_name(), "family-name");
 
 Supported `rename_all` values: `"camelCase"`. Field-level `#[form(name = "...")]` takes precedence over the form-level policy. Serde rename attributes are intentionally not used for form field names.
 
+Use `field_name_owned()` for an owned **Field Name** that can outlive a temporary
+path, including inline RSX attributes:
+
+```rust
+rsx! {
+    input { name: ProfileForm::fields().first_name().field_name_owned() }
+}
+```
+
+The accessor copies the name into a `String`, preserving field-name overrides
+and policies. Dioxus 0.7 accepts `String` directly as an attribute value. Use
+`field_name()` for a borrowed `&str` when the path remains in scope.
+
 ### Core-only Models
 
 The derives generate paths through `::dioform` by default. For server validation

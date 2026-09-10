@@ -609,8 +609,18 @@ impl<Model, Value> FieldPath<Model, Value> {
     }
 
     /// Returns the rendered field name for HTML interoperability.
+    ///
+    /// Use [`Self::field_name_owned`] when the name must outlive this path.
     pub fn field_name(&self) -> &str {
         &self.field_name
+    }
+
+    /// Returns an owned rendered field name for HTML interoperability.
+    ///
+    /// Copies the name into a [`String`] that can outlive this path and be used directly in
+    /// Dioxus RSX attributes, such as `Model::fields().email().field_name_owned()`.
+    pub fn field_name_owned(&self) -> String {
+        self.field_name.to_string()
     }
 
     /// Reads this field from a model value.

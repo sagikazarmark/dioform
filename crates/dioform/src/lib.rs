@@ -1252,6 +1252,7 @@ impl<Model: fmt::Debug, Error> fmt::Debug for FormConfig<Model, Error> {
             .field("validation_mode", &self.validation_mode)
             .field("error_visibility_policy", &self.error_visibility_policy)
             .field("registrations", &self.registrations.len())
+            .field("browser_rejection", &self.browser_rejection.is_some())
             .finish()
     }
 }
