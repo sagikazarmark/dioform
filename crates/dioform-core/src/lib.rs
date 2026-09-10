@@ -10,6 +10,8 @@
 //! async form validators privately pair that model snapshot with only the registered collection
 //! identity sequences needed to resolve external row diagnostics.
 
+#![doc = include_str!("../README.md")]
+
 use std::{
     any::Any,
     borrow::Cow,

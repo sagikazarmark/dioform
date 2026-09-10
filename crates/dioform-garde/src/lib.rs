@@ -10,6 +10,44 @@
 //! Context-aware validation translates Dioform's [`FormValidatorContext`] into the separate
 //! external `garde::Validate::Context` value passed to `garde::Validate::validate_with`.
 //! See `docs/validation-adapters.md` in the workspace for usage patterns and dependency guidance.
+//!
+//! # Core-only string errors
+//!
+//! Add `dioform-core`, `dioform-derive`, and `dioform-garde` at version `0.6`, plus
+//! `garde = { version = "0.23", default-features = false, features = ["derive", "email"] }`.
+//! The trait and derive imports occupy separate namespaces. The crate-path attribute
+//! directs the derive to core instead of the default `::dioform` facade path.
+//!
+//! ```
+//! use dioform_core::{Form, FormCore, ValidationTrigger};
+//! use dioform_derive::Form;
+//! use dioform_garde::GardeValidationExt;
+//!
+//! #[derive(Clone, Default, Form, garde::Validate)]
+//! #[form(crate = "::dioform_core")]
+//! struct SignupForm {
+//!     #[form(name = "contact-email")]
+//!     #[garde(email)]
+//!     email: String,
+//! }
+//!
+//! let mut form = FormCore::new(SignupForm::default());
+//!
+//! form.garde_validation()
+//!     .triggers(ValidationTrigger::Submit)
+//!     .derived_path_map()
+//!     .register_string_errors();
+//!
+//! form.validate_all(ValidationTrigger::Submit);
+//!
+//! let errors = form.validation_errors();
+//! assert_eq!(errors.len(), 1);
+//! assert_eq!(errors[0].field_identity(), Some(SignupForm::fields().email().identity()));
+//! assert!(!errors[0].error().is_empty());
+//! ```
+//!
+//! This runs synchronous validation without recording a submit attempt. For submit
+//! lifecycle validation use [`FormCore::validate_for_submit`] or its intentful counterpart.
 
 use std::rc::Rc;
 

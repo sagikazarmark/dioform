@@ -1,8 +1,32 @@
+#![doc = include_str!("../README.md")]
+
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
 use crate::contract::{DeriveKind, NamedFormStructContract};
 
+/// Derives typed field paths and direct static field entries for a non-generic named struct.
+///
+/// Generated code targets `::dioform` by default. Set the model-level
+/// `#[form(crate = "::dioform_core")]` attribute for core-only use, or supply the
+/// path to a renamed dependency. Import the trait and macro separately:
+///
+/// ```
+/// use dioform_core::Form;
+/// use dioform_derive::Form;
+///
+/// #[derive(Clone, Form)]
+/// #[form(crate = "::dioform_core")]
+/// struct SignupForm {
+///     email: String,
+/// }
+///
+/// assert_eq!(SignupForm::fields().email().field_name(), "email");
+/// ```
+///
+/// This requires `dioform-core` and `dioform-derive` dependencies. The crate-path
+/// attribute is independent from `#[form(name = "...")]` field name overrides and
+/// the model-level `#[form(rename_all = "camelCase")]` rendered naming policy.
 #[proc_macro_derive(Form, attributes(form))]
 pub fn derive_form(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -13,6 +37,11 @@ pub fn derive_form(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Derives a typed field-group map for a non-generic named struct.
+///
+/// Like [`Form`], this defaults to generated paths through `::dioform`. Use
+/// `#[form(crate = "::dioform_core")]` on the struct for core-only use, or select
+/// a renamed dependency with the same attribute.
 #[proc_macro_derive(FieldGroup, attributes(form))]
 pub fn derive_field_group(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

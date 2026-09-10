@@ -71,6 +71,38 @@ assert_eq!(fields.last_name().field_name(), "family-name");
 
 Supported `rename_all` values: `"camelCase"`. Field-level `#[form(name = "...")]` takes precedence over the form-level policy. Serde rename attributes are intentionally not used for form field names.
 
+### Core-only Models
+
+The derives generate paths through `::dioform` by default. For server validation
+or another renderer, depend directly on core and the derive crate:
+
+```toml
+[dependencies]
+dioform-core = "0.6"
+dioform-derive = "0.6"
+```
+
+Use the model-level `#[form(crate = "…")]` attribute to select the generated
+crate path. Both `Form` and `FieldGroup` support it; a renamed dependency can be
+selected the same way. Core-only models use `::dioform_core`:
+
+```rust
+use dioform_core::Form;   // Trait providing fields().
+use dioform_derive::Form; // Derive macro, in a separate namespace.
+
+#[derive(Clone, Form)]
+#[form(crate = "::dioform_core")]
+struct SignupForm {
+    email: String,
+}
+
+assert_eq!(SignupForm::fields().email().field_name(), "email");
+```
+
+The same shared model can be consumed by the Dioxus facade in a client
+application. See [Validating on the Server with `dioform-core`](crates/dioform-core/README.md#validating-on-the-server-with-dioform-core)
+for validator registration, trigger selection, and owned diagnostic extraction.
+
 ## Reusable Field Groups
 
 `#[derive(FieldGroup)]` generates a typed field-group map for reusable groups of fields. A group can be mounted under a nested typed path, or explicitly mapped into a form with a different shape, while reusable rendering still receives an explicit `FormHandle<Model>`.

@@ -18,3 +18,7 @@ dioform-core = { workspace = true }
 dioform-validation-adapter = { workspace = true }
 
 garde = { version = "0.23", default-features = false }
+
+[dev-dependencies]
+dioform-derive = { workspace = true }
+garde = { version = "0.23", default-features = false, features = ["derive", "email"] }
