@@ -224,6 +224,7 @@ mod contract {
                 .map(|field| field.expand_static_field_entry(crate_path));
 
             quote! {
+                #[derive(Clone, Copy, Debug, Default)]
                 #visibility struct #fields_ident;
 
                 impl #fields_ident {

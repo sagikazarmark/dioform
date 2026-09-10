@@ -69,6 +69,18 @@ assert_eq!(fields.first_name().field_name(), "firstName");
 assert_eq!(fields.last_name().field_name(), "family-name");
 ```
 
+The generated `ProfileFormFields` accessor namespace implements `Copy`, `Clone`,
+`Debug`, and `Default` without requiring those traits on the form model or its
+field values. Bind it once with `let fields = ProfileForm::fields();` and capture
+it in multiple `move` closures:
+
+```rust
+let first_name = move || fields.first_name();
+let last_name = move || fields.last_name();
+assert_eq!(first_name().field_name(), "firstName");
+assert_eq!(last_name().field_name(), "family-name");
+```
+
 Supported `rename_all` values: `"camelCase"`. Field-level `#[form(name = "...")]` takes precedence over the form-level policy. Serde rename attributes are intentionally not used for form field names.
 
 ### Core-only Models
