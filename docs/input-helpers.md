@@ -48,6 +48,94 @@ write the current value again. Custom widgets can report the two events independ
 `on_commit()` and `on_focus_exit()`. When a handler needs extra logic, fall back to a plain
 `move |event| { ...; binding.on_input(event.value()) }` closure with an explicit `binding.clone()`.
 
+## Accessibility
+
+A binding's `accessibility()` returns `FieldAccessibility`, a headless Accessibility Helper. You can
+also obtain it through `FormHandle::field_accessibility(path)`. It derives IDs from the form's
+Form ID Namespace and the rendered Field Name:
+
+- `input_id()`: use as the control's `id` and its label's `for` attribute.
+- `help_id()`: use as the `id` of an optional help element.
+- `error_id()`: use as the `id` of the element displaying the field's visible validation or parse
+  errors.
+- `aria_invalid()`: reports whether the field has visible Validation Errors or mounted binding
+  Parse Errors. Use it for `aria-invalid` and to decide whether to render the error element.
+- `aria_describedby()`: always includes `help_id()`, and also includes `error_id()` when
+  `aria_invalid()` is true. **It assumes you render a help element.**
+- `aria_describedby_with_help(include_help)`: includes the help ID only when `include_help` is
+  `true`, and includes the error ID under the same `aria_invalid()` condition. With `false` and no
+  visible validation or parse errors, it returns `None`, omitting the attribute.
+
+**Include the help ID only if you render a help element.** Generating an ID does not establish that
+an element exists: these helpers do not inspect or render markup. Whenever either described-by
+helper includes the error ID, render the corresponding error element too.
+
+### With help text
+
+This example uses a plain text binding and displayable Validation Errors (such as `String`):
+
+```rust
+let email = form.text(fields.email());
+let accessibility = email.accessibility();
+let errors = email.visible_validation_errors();
+
+rsx! {
+    label { r#for: accessibility.input_id(), "Email" }
+    input {
+        id: accessibility.input_id(),
+        name: email.name(),
+        value: email.value(),
+        "aria-invalid": accessibility.aria_invalid().to_string(),
+        "aria-describedby": accessibility.aria_describedby(),
+        oninput: email.oninput(),
+        onblur: email.onblur(),
+    }
+    p { id: accessibility.help_id(), "Use an address you check regularly." }
+    if accessibility.aria_invalid() {
+        div { id: accessibility.error_id(),
+            for error in errors {
+                p { "{error.error()}" }
+            }
+        }
+    }
+}
+```
+
+### Without help text
+
+Use `aria_describedby_with_help(false)` when there is no help element. The error element still
+appears whenever the helper references it:
+
+```rust
+let email = form.text(fields.email());
+let accessibility = email.accessibility();
+let errors = email.visible_validation_errors();
+
+rsx! {
+    label { r#for: accessibility.input_id(), "Email" }
+    input {
+        id: accessibility.input_id(),
+        name: email.name(),
+        value: email.value(),
+        "aria-invalid": accessibility.aria_invalid().to_string(),
+        "aria-describedby": accessibility.aria_describedby_with_help(false),
+        oninput: email.oninput(),
+        onblur: email.onblur(),
+    }
+    if accessibility.aria_invalid() {
+        div { id: accessibility.error_id(),
+            for error in errors {
+                p { "{error.error()}" }
+            }
+        }
+    }
+}
+```
+
+For dynamically shown help, pass the same boolean to `aria_describedby_with_help(...)` that you use
+to render the help element. With parsed bindings, render the Parse Error in the error element as
+well as any visible Validation Errors; `aria_invalid()` can be true for either kind of error.
+
 ## Tri-State Checkboxes
 
 Use `FormHandle::tri_state_checkbox(path)` for an `Option<bool>` Field. Its `state()` and

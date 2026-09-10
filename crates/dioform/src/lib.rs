@@ -1761,12 +1761,23 @@ impl FieldAccessibility {
         self.has_visible_validation_errors || self.has_parse_errors
     }
 
-    /// Returns `aria-describedby` IDs, including help text and current error text when present.
+    /// Returns `aria-describedby` IDs, always including the help ID.
+    ///
+    /// This assumes the application renders a help element with [`help_id()`](Self::help_id).
+    /// Without help text, use [`aria_describedby_with_help(false)`](Self::aria_describedby_with_help).
+    /// When [`aria_invalid()`](Self::aria_invalid) is true, the error ID is also included, so the
+    /// application must render an error element with [`error_id()`](Self::error_id).
+    /// Generating an ID does not establish that the corresponding element exists.
     pub fn aria_describedby(&self) -> Option<String> {
         self.aria_describedby_with_help(true)
     }
 
     /// Returns `aria-describedby` IDs, optionally including help text.
+    ///
+    /// Pass `true` only when rendering a help element with [`help_id()`](Self::help_id).
+    /// When [`aria_invalid()`](Self::aria_invalid) is true, the error ID is included regardless of
+    /// `include_help`; render the corresponding error element with [`error_id()`](Self::error_id).
+    /// Returns `None` when help is excluded and the field is not marked invalid for ARIA.
     pub fn aria_describedby_with_help(&self, include_help: bool) -> Option<String> {
         let mut described_by = String::new();
 
