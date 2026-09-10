@@ -12,9 +12,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     mem,
+    rc::Rc,
 };
 
-use dioform_core::__private::CollectionItemFieldAddress;
+use dioform_core::__private::{CollectionItemFieldAddress, FieldAncestry};
 
 use crate::{CollectionItemIdentity, FieldIdentity, ParseError, SelectedFile};
 
@@ -31,25 +32,34 @@ pub(super) struct ParseBindingId(u64);
 struct ParseBindingState {
     field: FieldIdentity,
     parse_error: Option<ParseError>,
+    parser: Rc<RestoredTextParser>,
 }
+
+pub(super) type RestoredTextParser = dyn Fn(&str) -> Option<String>;
 
 /// Owns the adapter's mounted **Parse Errors**, keyed by parse binding.
 #[derive(Default)]
 pub(super) struct ParseState {
     next_id: Cell<u64>,
     bindings: RefCell<BTreeMap<ParseBindingId, ParseBindingState>>,
+    restored: RefCell<BTreeMap<FieldIdentity, String>>,
 }
 
 impl ParseState {
     /// Mounts a parse binding for a field and returns its identity.
-    pub(super) fn register_parse_binding(&self, field: FieldIdentity) -> ParseBindingId {
+    pub(super) fn register_parse_binding(
+        &self,
+        field: FieldIdentity,
+        parser: Rc<RestoredTextParser>,
+    ) -> ParseBindingId {
         let id = ParseBindingId(self.next_id.get());
         self.next_id.set(self.next_id.get() + 1);
         self.bindings.borrow_mut().insert(
             id,
             ParseBindingState {
+                parse_error: self.take_restored(&field, &parser),
                 field,
-                parse_error: None,
+                parser,
             },
         );
         id
@@ -67,6 +77,7 @@ impl ParseState {
         &self,
         id: ParseBindingId,
         field: FieldIdentity,
+        parser: Rc<RestoredTextParser>,
     ) -> Option<FieldIdentity> {
         let mut bindings = self.bindings.borrow_mut();
 
@@ -74,8 +85,9 @@ impl ParseState {
             bindings.insert(
                 id,
                 ParseBindingState {
+                    parse_error: self.take_restored(&field, &parser),
                     field,
-                    parse_error: None,
+                    parser,
                 },
             );
 
@@ -87,8 +99,84 @@ impl ParseState {
         }
 
         let previous = mem::replace(&mut binding.field, field);
+        let cleared = binding.parse_error.take().map(|_| previous);
+        binding.parser = parser;
+        binding.parse_error = self.take_restored(&binding.field, &binding.parser);
+        cleared
+    }
 
-        binding.parse_error.take().map(|_| previous)
+    fn take_restored(
+        &self,
+        field: &FieldIdentity,
+        parser: &Rc<RestoredTextParser>,
+    ) -> Option<ParseError> {
+        let raw_value = self.restored.borrow_mut().remove(field)?;
+        let message = parser(&raw_value)?;
+        Some(ParseError {
+            field: field.clone(),
+            raw_value,
+            message,
+        })
+    }
+
+    pub(super) fn restore_raw_input(&self, raw: BTreeMap<FieldIdentity, String>) {
+        *self.restored.borrow_mut() = raw;
+        for binding in self.bindings.borrow_mut().values_mut() {
+            binding.parse_error = self.take_restored(&binding.field, &binding.parser);
+        }
+    }
+
+    pub(super) fn retire_restored_raw_input(&self, field: &FieldIdentity) {
+        self.restored
+            .borrow_mut()
+            .retain(|target, _| !FieldAncestry::relates(target, field));
+    }
+
+    /// Retires deferred text on core value transitions, including advanced writes.
+    pub(super) fn on_core_transition(&self, event: &dioform_core::FormObserverEvent) {
+        use dioform_core::FormObserverEvent;
+        match event {
+            FormObserverEvent::FieldUpdated { field, .. } => {
+                self.retire_restored_raw_input(&field.identity());
+            }
+            FormObserverEvent::FieldReset { field, .. } => {
+                self.retire_restored_raw_input(&field.identity());
+                self.retire_collection_raw_input(&field.identity());
+            }
+            FormObserverEvent::CollectionItemRemoved {
+                collection, item, ..
+            }
+            | FormObserverEvent::CollectionItemReplaced {
+                collection, item, ..
+            } => {
+                self.restored.borrow_mut().retain(|field, _| {
+                    !CollectionItemFieldAddress::matches_item(field, collection, *item)
+                });
+            }
+            FormObserverEvent::CollectionCleared { collection, .. }
+            | FormObserverEvent::CollectionReplaced { collection, .. } => {
+                self.retire_collection_raw_input(collection);
+            }
+            FormObserverEvent::Reset { .. } | FormObserverEvent::Reinitialized { .. } => {
+                self.restored.borrow_mut().clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn retire_collection_raw_input(&self, collection: &FieldIdentity) {
+        self.restored
+            .borrow_mut()
+            .retain(|field, _| !CollectionItemFieldAddress::matches_collection(field, collection));
+    }
+
+    pub(super) fn reset_restored_input(&self, field: Option<&FieldIdentity>) {
+        if let Some(field) = field {
+            self.retire_restored_raw_input(field);
+            self.retire_collection_raw_input(field);
+        } else {
+            self.restored.borrow_mut().clear();
+        }
     }
 
     /// Returns whether one parse binding currently addresses a field.
@@ -122,6 +210,10 @@ impl ParseState {
         item: CollectionItemIdentity,
     ) -> Vec<FieldIdentity> {
         let mut changed_fields = Vec::new();
+
+        self.restored
+            .borrow_mut()
+            .retain(|field, _| !CollectionItemFieldAddress::matches_item(field, &collection, item));
 
         self.bindings.borrow_mut().retain(|_, binding| {
             let remove =
@@ -164,6 +256,7 @@ impl ParseState {
 
     /// Clears every mounted parse error.
     pub(super) fn clear_parse_errors(&self) {
+        self.restored.borrow_mut().clear();
         for binding in self.bindings.borrow_mut().values_mut() {
             binding.parse_error = None;
         }
@@ -187,6 +280,7 @@ impl ParseState {
         &self,
         collection: &FieldIdentity,
     ) -> Vec<FieldIdentity> {
+        self.retire_collection_raw_input(collection);
         let mut changed_fields = BTreeSet::new();
         for binding in self.bindings.borrow_mut().values_mut() {
             if CollectionItemFieldAddress::matches_collection(&binding.field, collection)

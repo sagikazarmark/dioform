@@ -1,4 +1,7 @@
 #[cfg(test)]
+mod browser_rejection;
+
+#[cfg(test)]
 mod tests {
     use std::{
         cell::{Cell, RefCell},

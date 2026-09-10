@@ -522,6 +522,10 @@ _Avoid_: Dioxus-managed submission, typed submission handler
 A browser-owned form submission that may be blocked by hydrated client-side form preflight, while still falling through to native browser posting when preflight allows it.
 _Avoid_: Dioxus-managed submission, async managed submit
 
+**Browser Rejection Restoration**:
+An explicit **Form Initialization** or **Reinitialization** from a rejected browser POST response, pairing the response's form values with typed field- and form-level rejection errors and its **Submit Intent**. It represents a prior rejected attempt, including a rejection before a **Submitted Value** existed, while unparsable **Raw Input State** remains separate from core validation state.
+_Avoid_: External-error injection, managed submission completion, form-state snapshot
+
 **Browser Submit Preflight**:
 A hydrated client-side check that may block **Progressive Submission** because current form state has known blockers such as **Parse Errors**, submit-scoped **Validation Errors**, pending submit-relevant validation, or an in-flight submission.
 _Avoid_: Final submit authorization, native server validation

@@ -3589,10 +3589,57 @@ pub struct FormCore<Model, Error = String> {
     validation_chains: ValidationChainRegistry<Model, Error>,
     submission: SubmissionState<Error>,
     observers: Vec<Box<FormObserver>>,
+    adapter_input_resets: Vec<Box<AdapterInputReset>>,
     error_visibility_policy: ErrorVisibilityPolicy,
 }
 
 type CollectionLength<Model> = Rc<dyn Fn(&Model) -> usize>;
+type AdapterInputReset = dyn Fn(Option<&FieldIdentity>) + 'static;
+
+/// Receiving-form addressing during **Browser Rejection Restoration**.
+///
+/// Response row indices are resolved only after response values replace the draft and baseline.
+/// This mapping boundary cannot edit values or start submission.
+pub struct BrowserRejectionTargets<'a, Model, Error> {
+    core: &'a mut FormCore<Model, Error>,
+}
+
+impl<Model: 'static, Error> BrowserRejectionTargets<'_, Model, Error> {
+    /// Resolves a response row to its receiving-form whole-item identity.
+    pub fn collection_item<Item: 'static>(
+        &mut self,
+        collection: FieldPath<Model, Vec<Item>>,
+        index: usize,
+    ) -> Option<FieldIdentity> {
+        let item = self
+            .core
+            .collection_items(collection.clone())
+            .get(index)?
+            .identity();
+        Some(FieldIdentity::collection_item_value(
+            collection
+                .identity()
+                .as_static_path()
+                .expect("collection must be a static field"),
+            item,
+        ))
+    }
+
+    /// Resolves a response row's typed descendant to its receiving-form identity.
+    pub fn collection_item_field<Item: 'static, Value>(
+        &mut self,
+        collection: FieldPath<Model, Vec<Item>>,
+        index: usize,
+        field: FieldPath<Item, Value>,
+    ) -> Option<FieldIdentity> {
+        let item = self
+            .core
+            .collection_items(collection.clone())
+            .get(index)?
+            .identity();
+        Some(collection_item_field_identity(&collection, item, &field))
+    }
+}
 
 /// Form-core operations scoped to one submit intent.
 pub struct FormCoreIntent<'form, Model, Error, Intent> {
@@ -3601,6 +3648,18 @@ pub struct FormCoreIntent<'form, Model, Error, Intent> {
 }
 
 impl<Model, Error> FormCore<Model, Error> {
+    /// Registers adapter input cleanup for explicit field reset and state-snapshot replacement.
+    ///
+    /// Unlike diagnostic observers, this includes a reset whose typed core state is unchanged.
+    /// `None` denotes whole-state replacement. The callback must not reenter this core.
+    #[doc(hidden)]
+    pub fn register_adapter_input_reset(
+        &mut self,
+        reset: impl Fn(Option<&FieldIdentity>) + 'static,
+    ) {
+        self.adapter_input_resets.push(Box::new(reset));
+    }
+
     /// Scopes submit-related operations to one explicit submit intent.
     pub fn intent<Intent>(&mut self, intent: Intent) -> FormCoreIntent<'_, Model, Error, Intent> {
         FormCoreIntent { core: self, intent }
@@ -3627,12 +3686,48 @@ impl<Model: Clone> FormCore<Model> {
             validation_chains: ValidationChainRegistry::new(),
             submission: SubmissionState::default(),
             observers: Vec::new(),
+            adapter_input_resets: Vec::new(),
             error_visibility_policy: ErrorVisibilityPolicy::default(),
         }
     }
 }
 
 impl<Model: Clone, Error> FormCore<Model, Error> {
+    /// Restores a rejected browser response as a new draft and baseline with one prior attempt.
+    ///
+    /// Supply `()` for a non-intentful form. The mapping runs against the receiving response's
+    /// collection order. Errors are immediately visible for this intent, without validation,
+    /// submit authorization, or an in-flight submission. A fresh submit-validation attempt clears
+    /// this batch; field writes clear related errors, and reset/reinitialization clears all of it.
+    /// Existing validation behavior is retained, while results and pending work are retired by
+    /// ordinary reinitialization. Explicit initialization validation may run afterwards.
+    pub fn restore_browser_rejection<Intent>(
+        &mut self,
+        values: Model,
+        intent: Intent,
+        map: impl FnOnce(&mut BrowserRejectionTargets<'_, Model, Error>) -> SubmitErrors<Model, Error>,
+    ) where
+        Intent: 'static,
+    {
+        self.reinitialize(values);
+        let errors = map(&mut BrowserRejectionTargets { core: self });
+        let (source, errors) = errors.into_parts();
+        let intent = SubmitIntentSnapshot::new(intent);
+        self.submission.set_errors(
+            errors
+                .into_iter()
+                .map(|error| StoredSubmitError {
+                    target: error.target,
+                    source: source.clone(),
+                    submit_intent: Some(intent.clone()),
+                    error: error.error,
+                })
+                .collect(),
+        );
+        self.submission.restore_attempt_count(1);
+        self.record_submit_status_snapshot(SubmitStatus::Rejected, intent);
+    }
+
     /// Returns an owned snapshot of the current draft value.
     pub fn snapshot(&self) -> Model {
         self.draft.current().clone()
@@ -3959,6 +4054,12 @@ impl<Model: Clone, Error> FormCore<Model, Error> {
         let field_identity = field.identity();
         let value_matches_baseline =
             path.get(self.draft.current()) == path.get(self.draft.baseline());
+
+        // Adapter raw state can exist even when this reset is a typed-core no-op. Notify the
+        // adapter without inventing a diagnostic state transition for observers.
+        for reset in &self.adapter_input_resets {
+            reset(Some(&field_identity));
+        }
 
         if value_matches_baseline
             && !self.field_store.has_reset_relevant_state(&field_identity)
@@ -4341,6 +4442,9 @@ impl<Model, Error> FormCore<Model, Error> {
             .saturating_add(1);
 
         self.draft = snapshot.draft;
+        for reset in &self.adapter_input_resets {
+            reset(None);
+        }
         self.validation_mode = snapshot.validation_mode;
         self.error_visibility_policy = snapshot.error_visibility_policy;
         self.form_version = restored_form_version;

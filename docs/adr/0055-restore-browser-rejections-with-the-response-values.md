@@ -1,0 +1,13 @@
+# Restore browser rejections with the response values
+
+**Browser Rejection Restoration** pairs a rejected browser POST response's values, typed rejection targets, and explicit **Submit Intent** during **Form Initialization** or explicit **Reinitialization**, rather than injecting arbitrary errors into an already-edited draft. It records one prior attempt with **Last Submit Status** `Rejected`, reveals errors for that intent, and activates submit-attempt-dependent validation modes without creating an **In-Flight Submission** or replaying submission listeners; receiving-form **Collection Item Identities** establish collection targets. This bounded transition gives the rejection a defined value correspondence without pretending the browser POST produced a validated **Submitted Value** or ran a managed submission.
+
+Restored field errors clear on writes across **Field Ancestry**, and reset or ordinary reinitialization clears the rejection without replaying it on rerender. Errors affect current **Submit Availability**, but a new attempt reaching submit validation clears the prior rejection before evaluating client blockers so server-only conditions can be retried; an earlier **Parse Blocker** refusal retains the rejection.
+
+Explicit restoration of a later rejected response performs ordinary **Reinitialization** before establishing the new rejection: response values replace both **Form Draft** and **Baseline Value**, interaction and prior rejection state are cleared, and the resulting form is clean with one recorded prior attempt. Normal explicitly configured initialization validation may still run and coexist with the restored errors; pending work from the previous lifecycle cannot update the replacement state.
+
+The **Dioxus Adapter** also provides a tested restoration path for unparsable **Raw Input State**, including bindings mounted later, without changing the last typed value or marking initialization as user interaction. A mounted unresolved binding establishes a **Parse Blocker** alongside the restored rejection; server parsing diagnostics remain application-owned, and exact server/client parsing-message parity and preservation of valid noncanonical text are outside this decision. Storing raw input as core **Validation Errors** remains excluded by ADR-0052.
+
+Deferred raw restoration belongs to one restored lifecycle and receiving **Field Identity**. A related value write, collection-item removal, reset, or reinitialization retires it; otherwise the first matching parsed binding consumes it once, and later unmount/remount does not replay it. An unmounted field's pending raw restoration does not establish a **Parse Blocker**.
+
+Origin: [issue #113](https://github.com/sagikazarmark/dioform/issues/113).

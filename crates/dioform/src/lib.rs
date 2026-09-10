@@ -36,6 +36,7 @@ use dioxus_signals::{
 
 mod adapter_input_state;
 mod adapter_runtime;
+mod browser_rejection;
 mod managed_submission;
 mod selector_notifications;
 
@@ -44,6 +45,8 @@ pub mod __private {
     pub use dioform_core::FieldIdentity;
 }
 
+pub use browser_rejection::BrowserRejection;
+pub use dioform_core::BrowserRejectionTargets;
 use dioform_core::{
     __private::{CollectionItemFieldAddress, FieldAncestry, validator_selection_reaches},
     AsyncValidatorContext, CollectionIdentityState, CollectionValidationTargetRule, FormCore,
@@ -67,28 +70,29 @@ pub use dioform_derive::{FieldGroup, Form};
 /// remain available from the crate root for adapter authors and advanced integrations.
 pub mod prelude {
     pub use crate::{
-        AsyncFileSelectionValidatorBuilder, BrowserSubmitBinding, CheckboxBinding,
-        CollectionBinding, CollectionItemBinding, CollectionItemIdentity, ErrorVisibilityPolicy,
-        FieldAccessibility, FieldBindingLifecycle, FieldBindingListenerContext,
-        FieldBlurListenerContext, FieldGroup, FieldHandle, FieldListenerContext, FieldMetadata,
-        FieldPath, FieldUpdateOrigin, FileData, FileFieldKey, FileSelectionBinding,
-        FileSelectionCardinality, FileSubmissionSnapshot, Form, FormBlurListenerContext,
-        FormConfig, FormContext, FormData, FormHandle, FormIdNamespace, FormListenerContext,
-        FormListenerEvent, FormSnapshot, FormValidationError, FormValidatorContext,
-        IntentFormHandle, IntentProgressiveSubmitBinding, IntentSubmitBinding, LastSubmitStatus,
-        ManagedSubmitContinuation, MultiSelectBinding, MultiSelectItem, MultiSelectOptionBinding,
-        NumericInputValue, OptionalSelectBinding, OptionalTextBinding, ParseError,
-        ParsedTextBinding, ProgressiveSubmitBinding, ProgressiveSubmitResult, RadioGroupBinding,
-        RenderedOptionalSelectBinding, RenderedSelectBinding, SelectBinding, SelectedFile,
-        SelectedFileMetadata, SerializedFileData, SubmissionSnapshot, SubmitAvailability,
-        SubmitBlocker, SubmitError, SubmitErrors, SubmitListenerContext, SubmitListenerEvent,
-        SubmitResult, SubmitStatus, SyncCollectionItemFieldValidatorBuilder,
-        SyncFieldValidatorBuilder, SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder,
-        TextBinding, TextareaBinding, TriStateCheckboxBinding, ValidationErrorSnapshot,
-        ValidationErrorView, ValidationMode, ValidationStatus, ValidationTarget, ValidationTrigger,
-        ValidationTriggers, ValidatorContext, debounce_duration, provide_form_context,
-        try_use_form_context, use_collection_item_checkbox, use_collection_item_date,
-        use_collection_item_date_with, use_collection_item_number, use_collection_item_number_with,
+        AsyncFileSelectionValidatorBuilder, BrowserRejection, BrowserRejectionTargets,
+        BrowserSubmitBinding, CheckboxBinding, CollectionBinding, CollectionItemBinding,
+        CollectionItemIdentity, ErrorVisibilityPolicy, FieldAccessibility, FieldBindingLifecycle,
+        FieldBindingListenerContext, FieldBlurListenerContext, FieldGroup, FieldHandle,
+        FieldListenerContext, FieldMetadata, FieldPath, FieldUpdateOrigin, FileData, FileFieldKey,
+        FileSelectionBinding, FileSelectionCardinality, FileSubmissionSnapshot, Form,
+        FormBlurListenerContext, FormConfig, FormContext, FormData, FormHandle, FormIdNamespace,
+        FormListenerContext, FormListenerEvent, FormSnapshot, FormValidationError,
+        FormValidatorContext, IntentFormHandle, IntentProgressiveSubmitBinding,
+        IntentSubmitBinding, LastSubmitStatus, ManagedSubmitContinuation, MultiSelectBinding,
+        MultiSelectItem, MultiSelectOptionBinding, NumericInputValue, OptionalSelectBinding,
+        OptionalTextBinding, ParseError, ParsedTextBinding, ProgressiveSubmitBinding,
+        ProgressiveSubmitResult, RadioGroupBinding, RenderedOptionalSelectBinding,
+        RenderedSelectBinding, SelectBinding, SelectedFile, SelectedFileMetadata,
+        SerializedFileData, SubmissionSnapshot, SubmitAvailability, SubmitBlocker, SubmitError,
+        SubmitErrors, SubmitListenerContext, SubmitListenerEvent, SubmitResult, SubmitStatus,
+        SyncCollectionItemFieldValidatorBuilder, SyncFieldValidatorBuilder,
+        SyncFileSelectionValidatorBuilder, SyncFormValidatorBuilder, TextBinding, TextareaBinding,
+        TriStateCheckboxBinding, ValidationErrorSnapshot, ValidationErrorView, ValidationMode,
+        ValidationStatus, ValidationTarget, ValidationTrigger, ValidationTriggers,
+        ValidatorContext, debounce_duration, provide_form_context, try_use_form_context,
+        use_collection_item_checkbox, use_collection_item_date, use_collection_item_date_with,
+        use_collection_item_number, use_collection_item_number_with,
         use_collection_item_parsed_text, use_collection_item_parsed_text_with,
         use_collection_item_radio_group, use_collection_item_select,
         use_collection_item_select_with, use_date, use_date_with, use_debounced_field_listener,
@@ -908,11 +912,10 @@ where
     // This render is the only place that sees the scope move from one item to another, so it is
     // where the mounted registration is re-addressed (ADR-0026). Re-addressing ends the blocker
     // held for the item the scope used to render; addressing the same item again is a no-op.
-    registration.re_address(CollectionItemFieldAddress::identity_for(
-        &item.collection_path,
-        item.item,
-        &path,
-    ));
+    registration.re_address(
+        CollectionItemFieldAddress::identity_for(&item.collection_path, item.item, &path),
+        parser.clone(),
+    );
 
     CollectionParsedTextBinding {
         base: CollectionFieldBindingCore::new(
@@ -1180,6 +1183,7 @@ pub struct FormConfig<Model, Error = String> {
     validation_mode: ValidationMode,
     error_visibility_policy: ErrorVisibilityPolicy,
     registrations: Vec<Rc<FormConfigRegistration<Model, Error>>>,
+    browser_rejection: Option<Rc<FormConfigRegistration<Model, Error>>>,
     _marker: PhantomData<fn() -> Error>,
 }
 
@@ -1233,6 +1237,7 @@ impl<Model: Clone, Error> Clone for FormConfig<Model, Error> {
             validation_mode: self.validation_mode,
             error_visibility_policy: self.error_visibility_policy,
             registrations: self.registrations.clone(),
+            browser_rejection: self.browser_rejection.clone(),
             _marker: PhantomData,
         }
     }
@@ -1260,6 +1265,7 @@ impl<Model, Error> FormConfig<Model, Error> {
             validation_mode: ValidationMode::default(),
             error_visibility_policy: ErrorVisibilityPolicy::default(),
             registrations: Vec::new(),
+            browser_rejection: None,
             _marker: PhantomData,
         }
     }
@@ -3210,15 +3216,24 @@ impl ParseBindingRegistration {
     /// Only the render sees the change, so the hook is the one that calls this. The transition is
     /// the part that must not be skipped: a blocker left behind belongs to no mounted binding, and
     /// no UI could see it to clear it.
-    fn re_address(&self, field: FieldIdentity) {
-        if let Some(previous) = self
-            .inner
-            .adapter
-            .re_address_parse_binding(self.inner.id, field)
-        {
+    fn re_address<Value: 'static>(&self, field: FieldIdentity, parser: Rc<TextParserFn<Value>>) {
+        if self.addresses(&field) {
+            return;
+        }
+        let current = field.clone();
+        if let Some(previous) = self.inner.adapter.re_address_parse_binding(
+            self.inner.id,
+            field,
+            Rc::new(move |raw| parser(raw).err()),
+        ) {
             self.inner
                 .reactivity
                 .notify_selector_transition(SelectorTransition::ParseChanged(previous));
+        }
+        if self.inner.adapter.parse_error(self.inner.id).is_some() {
+            self.inner
+                .reactivity
+                .notify_selector_transition(SelectorTransition::ParseChanged(current));
         }
     }
 
@@ -3301,8 +3316,9 @@ impl<Value> CollectionParsedTextHookState<Value> {
     {
         let field =
             CollectionItemFieldAddress::identity_for(&item.collection_path, item.item, &path);
-        let registration = item.handle.register_parse_binding(field);
-        let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let parser: Rc<TextParserFn<Value>> =
+            Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let registration = item.handle.register_parse_binding(field, parser.clone());
 
         Self {
             registration,
@@ -6156,8 +6172,9 @@ impl<Model, Item, Error> CollectionItemBinding<Model, Item, Error> {
     {
         let field =
             CollectionItemFieldAddress::identity_for(&self.collection_path, self.item, &path);
-        let registration = self.handle.register_parse_binding(field);
-        let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let parser: Rc<TextParserFn<Value>> =
+            Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let registration = self.handle.register_parse_binding(field, parser.clone());
 
         CollectionParsedTextBinding {
             base: CollectionFieldBindingCore::new(
@@ -6375,6 +6392,7 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
             validation_mode,
             error_visibility_policy,
             registrations,
+            browser_rejection,
             _marker: _,
         } = config;
         let core = FormCore::new_with_error_type::<Error>(initial)
@@ -6386,6 +6404,9 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
             None => handle,
         };
 
+        if let Some(restore) = browser_rejection {
+            restore(&handle);
+        }
         for registration in registrations {
             registration(&handle);
         }
@@ -6395,13 +6416,8 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
 
     /// Restores the form to its baseline value and clears interaction and validation state.
     pub fn reset(&self) {
-        self.adapter.cancel_validation_tasks();
-        self.adapter.invalidate_managed_async_submission();
-        self.clear_active_submit_intent();
-        self.advance_submit_generation();
+        self.retire_adapter_lifecycle();
         self.write_core(FormCore::reset);
-        self.adapter.clear_parse_errors();
-        self.adapter.clear_file_selections();
         self.notify_changed();
     }
 
@@ -6433,6 +6449,7 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
     {
         let field = path.identity();
         let effects = self.write_core(|core| core.reset_field_with_effects(path));
+        self.adapter.retire_restored_raw_input(&field);
         for effect in effects.into_collections() {
             let (collection, dropped_items) = effect.into_parts();
             for item in dropped_items {
@@ -6471,13 +6488,8 @@ impl<Model: Clone, Error> FormHandle<Model, Error> {
 
     /// Explicitly replaces the form baseline and current draft, clearing interaction and validation state.
     pub fn reinitialize(&self, initial: Model) {
-        self.adapter.cancel_validation_tasks();
-        self.adapter.invalidate_managed_async_submission();
-        self.clear_active_submit_intent();
-        self.advance_submit_generation();
+        self.retire_adapter_lifecycle();
         self.write_core(|core| core.reinitialize(initial));
-        self.adapter.clear_parse_errors();
-        self.adapter.clear_file_selections();
         self.notify_changed();
     }
 
@@ -7120,10 +7132,12 @@ impl<Model: Clone, Intent, Error> IntentFormHandle<Model, Intent, Error> {
 
 impl<Model, Error> FormHandle<Model, Error> {
     /// Wraps renderer-agnostic form state in a Dioxus-facing handle.
-    pub fn from_core(core: FormCore<Model, Error>) -> Self {
+    pub fn from_core(mut core: FormCore<Model, Error>) -> Self {
+        let adapter = AdapterRuntime::default();
+        adapter.observe_raw_input_lifecycle(&mut core);
         Self {
             core: Rc::new(RefCell::new(core)),
-            adapter: AdapterRuntime::default(),
+            adapter,
             runtime: Rc::new(RefCell::new(ValidationRuntime::default())),
             reactivity: Rc::new(FormReactivity::default()),
             field_signals: Rc::new(FieldSignalRegistry::default()),
@@ -9084,6 +9098,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         let updated =
             self.write_core(|core| core.set_collection_item_field(collection, item, field, value));
         if updated {
+            self.adapter.retire_restored_raw_input(&identity);
             self.notify_collection_item_field_changed(collection_identity, identity.clone());
             self.dispatch_value_replacement_listeners(
                 identity,
@@ -9111,6 +9126,7 @@ impl<Model, Error> FormHandle<Model, Error> {
         let updated = self
             .write_core(|core| core.set_user_collection_item_field(collection, item, field, value));
         if updated {
+            self.adapter.retire_restored_raw_input(&identity);
             self.notify_collection_item_field_user_changed(collection_identity, identity.clone());
             self.dispatch_value_replacement_listeners(
                 identity,
@@ -9268,6 +9284,7 @@ impl<Model, Error> FormHandle<Model, Error> {
             .expect("collection fields in the first slice must have static identities")
             .to_owned();
         let item_field = FieldIdentity::collection_item_value(collection_path, retained_item);
+        self.adapter.retire_restored_raw_input(&item_field);
 
         self.notify_selectors(SelectorTransition::CollectionItemReplaced {
             collection,
@@ -10582,6 +10599,10 @@ impl<Model, Error> FormHandle<Model, Error> {
             dispatch,
         } = mutation;
 
+        if matches!(&dispatch, FieldMutationDispatch::ValueReplacement(_)) {
+            self.adapter.retire_restored_raw_input(&field);
+        }
+
         for transition in selectors {
             self.notify_selectors(transition);
         }
@@ -10797,8 +10818,17 @@ impl<Model, Error> FormHandle<Model, Error> {
         self.adapter.has_parse_blockers()
     }
 
-    fn register_parse_binding(&self, field: FieldIdentity) -> ParseBindingRegistration {
-        let id = self.adapter.register_parse_binding(field);
+    fn register_parse_binding<Value: 'static>(
+        &self,
+        field: FieldIdentity,
+        parser: Rc<TextParserFn<Value>>,
+    ) -> ParseBindingRegistration {
+        let id = self
+            .adapter
+            .register_parse_binding(field.clone(), Rc::new(move |raw| parser(raw).err()));
+        if self.adapter.parse_error(id).is_some() {
+            self.notify_selectors(SelectorTransition::ParseChanged(field));
+        }
         ParseBindingRegistration::new(self.adapter.clone(), Rc::clone(&self.reactivity), id)
     }
 
@@ -11008,8 +11038,9 @@ impl<Model, Error> FormHandle<Model, Error> {
         ParserError: fmt::Display + 'static,
         Formatter: Fn(&Value) -> String + 'static,
     {
-        let registration = self.register_parse_binding(path.identity());
-        let parser = Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let parser: Rc<TextParserFn<Value>> =
+            Rc::new(move |value: &str| parser(value).map_err(|error| error.to_string()));
+        let registration = self.register_parse_binding(path.identity(), parser.clone());
 
         ParsedTextBinding {
             base: FieldBindingCore::new(self.clone(), path),
