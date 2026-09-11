@@ -11,7 +11,6 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
-    mem,
     rc::Rc,
 };
 
@@ -33,9 +32,19 @@ struct ParseBindingState {
     field: FieldIdentity,
     parse_error: Option<ParseError>,
     parser: Rc<RestoredTextParser>,
+    restoration: Option<Rc<()>>,
 }
 
 pub(super) type RestoredTextParser = dyn Fn(&str) -> Option<String>;
+
+/// Owned callback work whose result is valid only while its binding retains the same token.
+struct RestoredParse {
+    id: ParseBindingId,
+    field: FieldIdentity,
+    raw_value: String,
+    parser: Rc<RestoredTextParser>,
+    token: Rc<()>,
+}
 
 /// Owns the adapter's mounted **Parse Errors**, keyed by parse binding.
 #[derive(Default)]
@@ -57,11 +66,13 @@ impl ParseState {
         self.bindings.borrow_mut().insert(
             id,
             ParseBindingState {
-                parse_error: self.take_restored(&field, &parser),
+                parse_error: None,
                 field,
                 parser,
+                restoration: None,
             },
         );
+        self.apply_restored(id);
         id
     }
 
@@ -81,52 +92,110 @@ impl ParseState {
     ) -> Option<FieldIdentity> {
         let mut bindings = self.bindings.borrow_mut();
 
-        let Some(binding) = bindings.get_mut(&id) else {
-            bindings.insert(
-                id,
-                ParseBindingState {
-                    parse_error: self.take_restored(&field, &parser),
-                    field,
-                    parser,
-                },
-            );
-
-            return None;
-        };
-
-        if binding.field == field {
+        if bindings
+            .get(&id)
+            .is_some_and(|binding| binding.field == field)
+        {
             return None;
         }
 
-        let previous = mem::replace(&mut binding.field, field);
-        let cleared = binding.parse_error.take().map(|_| previous);
-        binding.parser = parser;
-        binding.parse_error = self.take_restored(&binding.field, &binding.parser);
+        let previous = bindings.insert(
+            id,
+            ParseBindingState {
+                field,
+                parser,
+                parse_error: None,
+                restoration: None,
+            },
+        );
+        let cleared = previous.and_then(|binding| binding.parse_error.map(|_| binding.field));
+        drop(bindings);
+        self.apply_restored(id);
         cleared
     }
 
-    fn take_restored(
+    fn prepare_restored(
         &self,
-        field: &FieldIdentity,
-        parser: &Rc<RestoredTextParser>,
-    ) -> Option<ParseError> {
-        let raw_value = self.restored.borrow_mut().remove(field)?;
-        let message = parser(&raw_value)?;
-        Some(ParseError {
-            field: field.clone(),
+        id: ParseBindingId,
+        binding: &mut ParseBindingState,
+    ) -> Option<RestoredParse> {
+        let raw_value = self.restored.borrow_mut().remove(&binding.field)?;
+        let token = Rc::new(());
+        binding.restoration = Some(token.clone());
+        Some(RestoredParse {
+            id,
+            field: binding.field.clone(),
             raw_value,
-            message,
+            parser: binding.parser.clone(),
+            token,
         })
+    }
+
+    fn apply_restored(&self, id: ParseBindingId) {
+        let work = self
+            .bindings
+            .borrow_mut()
+            .get_mut(&id)
+            .and_then(|binding| self.prepare_restored(id, binding));
+        if let Some(work) = work {
+            self.run_restored(work);
+        }
+    }
+
+    fn run_restored(&self, work: RestoredParse) {
+        let is_current = |binding: &ParseBindingState| {
+            binding.field == work.field
+                && binding
+                    .restoration
+                    .as_ref()
+                    .is_some_and(|token| Rc::ptr_eq(token, &work.token))
+        };
+        if !self.bindings.borrow().get(&work.id).is_some_and(is_current) {
+            return;
+        }
+        // Application code may read or change parse state. Hold no borrow across this call.
+        let message = (work.parser)(&work.raw_value);
+        let mut bindings = self.bindings.borrow_mut();
+        if let Some(binding) = bindings
+            .get_mut(&work.id)
+            .filter(|binding| is_current(binding))
+        {
+            binding.restoration = None;
+            binding.parse_error = message.map(|message| ParseError {
+                field: work.field,
+                raw_value: work.raw_value,
+                message,
+            });
+        }
     }
 
     pub(super) fn restore_raw_input(&self, raw: BTreeMap<FieldIdentity, String>) {
         *self.restored.borrow_mut() = raw;
+        let work: Vec<_> = self
+            .bindings
+            .borrow_mut()
+            .iter_mut()
+            .filter_map(|(&id, binding)| {
+                binding.parse_error = None;
+                binding.restoration = None;
+                self.prepare_restored(id, binding)
+            })
+            .collect();
+        for work in work {
+            self.run_restored(work);
+        }
+    }
+
+    fn retire_pending_restorations(&self, matches: impl Fn(&FieldIdentity) -> bool) {
         for binding in self.bindings.borrow_mut().values_mut() {
-            binding.parse_error = self.take_restored(&binding.field, &binding.parser);
+            if matches(&binding.field) {
+                binding.restoration = None;
+            }
         }
     }
 
     pub(super) fn retire_restored_raw_input(&self, field: &FieldIdentity) {
+        self.retire_pending_restorations(|target| FieldAncestry::relates(target, field));
         self.restored
             .borrow_mut()
             .retain(|target, _| !FieldAncestry::relates(target, field));
@@ -149,6 +218,9 @@ impl ParseState {
             | FormObserverEvent::CollectionItemReplaced {
                 collection, item, ..
             } => {
+                self.retire_pending_restorations(|field| {
+                    CollectionItemFieldAddress::matches_item(field, collection, *item)
+                });
                 self.restored.borrow_mut().retain(|field, _| {
                     !CollectionItemFieldAddress::matches_item(field, collection, *item)
                 });
@@ -158,6 +230,7 @@ impl ParseState {
                 self.retire_collection_raw_input(collection);
             }
             FormObserverEvent::Reset { .. } | FormObserverEvent::Reinitialized { .. } => {
+                self.retire_pending_restorations(|_| true);
                 self.restored.borrow_mut().clear();
             }
             _ => {}
@@ -165,6 +238,9 @@ impl ParseState {
     }
 
     fn retire_collection_raw_input(&self, collection: &FieldIdentity) {
+        self.retire_pending_restorations(|field| {
+            CollectionItemFieldAddress::matches_collection(field, collection)
+        });
         self.restored
             .borrow_mut()
             .retain(|field, _| !CollectionItemFieldAddress::matches_collection(field, collection));
@@ -175,6 +251,7 @@ impl ParseState {
             self.retire_restored_raw_input(field);
             self.retire_collection_raw_input(field);
         } else {
+            self.retire_pending_restorations(|_| true);
             self.restored.borrow_mut().clear();
         }
     }
@@ -240,6 +317,7 @@ impl ParseState {
             return;
         };
 
+        binding.restoration = None;
         binding.parse_error = Some(ParseError {
             field: binding.field.clone(),
             raw_value,
@@ -250,6 +328,7 @@ impl ParseState {
     /// Clears the parse error for one binding.
     pub(super) fn clear_parse_error(&self, id: ParseBindingId) {
         if let Some(binding) = self.bindings.borrow_mut().get_mut(&id) {
+            binding.restoration = None;
             binding.parse_error = None;
         }
     }
@@ -258,6 +337,7 @@ impl ParseState {
     pub(super) fn clear_parse_errors(&self) {
         self.restored.borrow_mut().clear();
         for binding in self.bindings.borrow_mut().values_mut() {
+            binding.restoration = None;
             binding.parse_error = None;
         }
     }
@@ -266,6 +346,9 @@ impl ParseState {
     pub(super) fn clear_field_parse_errors(&self, field: &FieldIdentity) -> bool {
         let mut cleared = false;
         for binding in self.bindings.borrow_mut().values_mut() {
+            if &binding.field == field {
+                binding.restoration = None;
+            }
             if &binding.field == field && binding.parse_error.is_some() {
                 binding.parse_error = None;
                 cleared = true;
@@ -334,6 +417,105 @@ impl ParseState {
             .borrow()
             .values()
             .any(|binding| binding.parse_error.is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readdressed_and_reregistered_parsers_can_read_parse_state() {
+        for remove in [false, true] {
+            let state = Rc::new(ParseState::default());
+            let old = FieldIdentity::new("old");
+            let target = FieldIdentity::new("target");
+            let id = state.register_parse_binding(old, Rc::new(|_| None));
+            if remove {
+                state.unregister_parse_binding(id);
+            }
+            state.restore_raw_input(BTreeMap::from([(target.clone(), "raw".into())]));
+            let weak = Rc::downgrade(&state);
+            state.re_address_parse_binding(
+                id,
+                target.clone(),
+                Rc::new(move |_| {
+                    assert!(weak.upgrade().unwrap().parse_errors().is_empty());
+                    Some("invalid".into())
+                }),
+            );
+            let error = state.parse_error(id).unwrap();
+            assert_eq!(error.field, target);
+            assert_eq!(error.raw_value, "raw");
+        }
+    }
+
+    #[test]
+    fn restored_result_cannot_survive_readdressing_away_and_back() {
+        let state = Rc::new(ParseState::default());
+        let target = FieldIdentity::new("target");
+        let other = FieldIdentity::new("other");
+        let id = state.register_parse_binding(other.clone(), Rc::new(|_| None));
+        state.restore_raw_input(BTreeMap::from([(target.clone(), "old raw".into())]));
+        let weak = Rc::downgrade(&state);
+        let target_again = target.clone();
+        state.re_address_parse_binding(
+            id,
+            target.clone(),
+            Rc::new(move |_| {
+                let state = weak.upgrade().unwrap();
+                state.re_address_parse_binding(id, other.clone(), Rc::new(|_| None));
+                state.re_address_parse_binding(id, target_again.clone(), Rc::new(|_| None));
+                Some("old error".into())
+            }),
+        );
+        assert!(state.parse_binding_addresses(id, &target));
+        assert!(state.parse_errors().is_empty());
+    }
+
+    #[test]
+    fn restored_result_cannot_overwrite_new_input_at_the_same_address() {
+        let state = Rc::new(ParseState::default());
+        let target = FieldIdentity::new("target");
+        let id = state.register_parse_binding(FieldIdentity::new("old"), Rc::new(|_| None));
+        state.restore_raw_input(BTreeMap::from([(target.clone(), "old raw".into())]));
+        let weak = Rc::downgrade(&state);
+        state.re_address_parse_binding(
+            id,
+            target.clone(),
+            Rc::new(move |_| {
+                weak.upgrade()
+                    .unwrap()
+                    .set_parse_error(id, "new raw".into(), "new error".into());
+                Some("old error".into())
+            }),
+        );
+        let error = state.parse_error(id).unwrap();
+        assert_eq!(error.field, target);
+        assert_eq!(error.raw_value, "new raw");
+        assert_eq!(error.message, "new error");
+    }
+
+    #[test]
+    fn restored_result_cannot_resurrect_an_unregistered_binding() {
+        let state = Rc::new(ParseState::default());
+        let id_slot = Rc::new(Cell::new(None));
+        let callback_id = id_slot.clone();
+        let weak = Rc::downgrade(&state);
+        let field = FieldIdentity::new("field");
+        let id = state.register_parse_binding(
+            field.clone(),
+            Rc::new(move |_| {
+                weak.upgrade()
+                    .unwrap()
+                    .unregister_parse_binding(callback_id.get().unwrap());
+                Some("invalid".into())
+            }),
+        );
+        id_slot.set(Some(id));
+        state.restore_raw_input(BTreeMap::from([(field.clone(), "raw".into())]));
+        assert!(!state.parse_binding_addresses(id, &field));
+        assert!(state.parse_errors().is_empty());
     }
 }
 

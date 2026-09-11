@@ -18,6 +18,108 @@ fn response() -> Model {
     }
 }
 
+#[test]
+fn restored_parser_can_read_parse_state_during_registration() {
+    let form: FormHandle<Model> =
+        FormHandle::from_config(FormConfig::new(response()).browser_rejection((), |_| {
+            BrowserRejection::new(SubmitErrors::none()).raw_field(Model::fields().count(), "abc")
+        }));
+    let reader = form.clone();
+    let binding = form.parsed_text_with(
+        Model::fields().count(),
+        move |raw| {
+            assert!(reader.parse_errors().is_empty());
+            raw.parse::<u32>()
+        },
+        u32::to_string,
+    );
+    assert_eq!(binding.value(), "abc");
+    assert_eq!(form.parse_errors().len(), 1);
+}
+
+#[test]
+fn restored_parser_can_read_parse_state_during_restoration() {
+    let form = FormHandle::new(response());
+    let reader = form.clone();
+    let binding = form.parsed_text_with(
+        Model::fields().count(),
+        move |raw| {
+            assert!(reader.parse_errors().is_empty());
+            raw.parse::<u32>()
+        },
+        u32::to_string,
+    );
+    form.restore_browser_rejection(response(), (), |_| {
+        BrowserRejection::new(SubmitErrors::none()).raw_field(Model::fields().count(), "abc")
+    });
+    assert_eq!(binding.value(), "abc");
+    assert_eq!(form.parse_errors().len(), 1);
+}
+
+#[test]
+fn restored_parser_cannot_reinstall_raw_text_after_reentrant_reset_or_write() {
+    for reset in [true, false] {
+        let form = FormHandle::new(response());
+        let writer = form.clone();
+        let binding = form.parsed_text_with(
+            Model::fields().count(),
+            move |raw| {
+                if reset {
+                    writer.reset();
+                } else {
+                    writer.set_field(Model::fields().count(), 9);
+                }
+                raw.parse::<u32>()
+            },
+            u32::to_string,
+        );
+        form.restore_browser_rejection(response(), (), |_| {
+            BrowserRejection::new(SubmitErrors::none()).raw_field(Model::fields().count(), "abc")
+        });
+        assert_eq!(binding.value(), if reset { "7" } else { "9" });
+        assert!(form.parse_errors().is_empty());
+    }
+}
+
+#[test]
+fn reentrant_restoration_supersedes_the_entire_outer_raw_input_batch() {
+    let form = FormHandle::new(response());
+    let writer = form.clone();
+    let count = form.parsed_text_with(
+        Model::fields().count(),
+        move |raw| {
+            if raw == "outer count" {
+                writer.restore_browser_rejection(response(), (), |_| {
+                    BrowserRejection::new(SubmitErrors::none())
+                        .raw_field(Model::fields().count(), "inner count")
+                        .raw_field(Model::fields().name(), "inner name")
+                });
+            }
+            raw.parse::<u32>()
+        },
+        u32::to_string,
+    );
+    let parsed_names = Rc::new(RefCell::new(Vec::new()));
+    let calls = parsed_names.clone();
+    let name = form.parsed_text_with(
+        Model::fields().name(),
+        move |raw| {
+            calls.borrow_mut().push(raw.to_owned());
+            Err::<String, _>("invalid")
+        },
+        String::clone,
+    );
+    form.restore_browser_rejection(response(), (), |_| {
+        BrowserRejection::new(SubmitErrors::none())
+            .raw_field(Model::fields().count(), "outer count")
+            .raw_field(Model::fields().name(), "outer name")
+    });
+    assert_eq!(count.value(), "inner count");
+    assert_eq!(name.value(), "inner name");
+    assert_eq!(&*parsed_names.borrow(), &["inner name"]);
+    assert_eq!(form.parse_errors().len(), 2);
+}
+
 #[derive(Clone, Debug, PartialEq, Form)]
 struct Rows {
     rows: Vec<Model>,
