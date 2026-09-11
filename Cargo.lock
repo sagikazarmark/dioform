@@ -629,6 +629,7 @@ dependencies = [
 name = "dioform-core"
 version = "0.6.0"
 dependencies = [
+ "dioform-derive",
  "serde",
 ]
 
@@ -636,6 +637,7 @@ dependencies = [
 name = "dioform-derive"
 version = "0.6.0"
 dependencies = [
+ "dioform-core",
  "proc-macro2",
  "quote",
  "syn 3.0.4",
@@ -657,6 +659,7 @@ name = "dioform-garde"
 version = "0.6.0"
 dependencies = [
  "dioform-core",
+ "dioform-derive",
  "dioform-validation-adapter",
  "garde",
 ]
@@ -1409,7 +1412,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d7f479d28d1daedf23970890723b8774d120aa627abcb33c1d7c93d0965e6c3"
 dependencies = [
  "compact_str",
+ "garde_derive",
+ "once_cell",
+ "regex",
  "smallvec",
+]
+
+[[package]]
+name = "garde_derive"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b0252cacdca8e6f30a900e6d436fbf294e23f674b9288ca4a5bd35976bef87c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
 ]
 
 [[package]]

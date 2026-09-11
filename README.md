@@ -69,7 +69,64 @@ assert_eq!(fields.first_name().field_name(), "firstName");
 assert_eq!(fields.last_name().field_name(), "family-name");
 ```
 
+The generated `ProfileFormFields` accessor namespace implements `Copy`, `Clone`,
+`Debug`, and `Default` without requiring those traits on the form model or its
+field values. Bind it once with `let fields = ProfileForm::fields();` and capture
+it in multiple `move` closures:
+
+```rust
+let first_name = move || fields.first_name();
+let last_name = move || fields.last_name();
+assert_eq!(first_name().field_name(), "firstName");
+assert_eq!(last_name().field_name(), "family-name");
+```
+
 Supported `rename_all` values: `"camelCase"`. Field-level `#[form(name = "...")]` takes precedence over the form-level policy. Serde rename attributes are intentionally not used for form field names.
+
+Use `field_name_owned()` for an owned **Field Name** that can outlive a temporary
+path, including inline RSX attributes:
+
+```rust
+rsx! {
+    input { name: ProfileForm::fields().first_name().field_name_owned() }
+}
+```
+
+The accessor copies the name into a `String`, preserving field-name overrides
+and policies. Dioxus 0.7 accepts `String` directly as an attribute value. Use
+`field_name()` for a borrowed `&str` when the path remains in scope.
+
+### Core-only Models
+
+The derives generate paths through `::dioform` by default. For server validation
+or another renderer, depend directly on core and the derive crate:
+
+```toml
+[dependencies]
+dioform-core = "0.6"
+dioform-derive = "0.6"
+```
+
+Use the model-level `#[form(crate = "…")]` attribute to select the generated
+crate path. Both `Form` and `FieldGroup` support it; a renamed dependency can be
+selected the same way. Core-only models use `::dioform_core`:
+
+```rust
+use dioform_core::Form;   // Trait providing fields().
+use dioform_derive::Form; // Derive macro, in a separate namespace.
+
+#[derive(Clone, Form)]
+#[form(crate = "::dioform_core")]
+struct SignupForm {
+    email: String,
+}
+
+assert_eq!(SignupForm::fields().email().field_name(), "email");
+```
+
+The same shared model can be consumed by the Dioxus facade in a client
+application. See [Validating on the Server with `dioform-core`](crates/dioform-core/README.md#validating-on-the-server-with-dioform-core)
+for validator registration, trigger selection, and owned diagnostic extraction.
 
 ## Reusable Field Groups
 

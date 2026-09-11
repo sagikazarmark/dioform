@@ -15581,6 +15581,48 @@ struct ManagedAsyncSubmitValidationProbe {
     events: RefCell<Vec<SubmitListenerEvent>>,
 }
 
+#[test]
+fn browser_rejection_retires_pending_managed_validation_and_submission() {
+    for finish_validation_first in [false, true] {
+        let probe = Rc::new(ManagedAsyncSubmitValidationProbe::default());
+        let mut dom =
+            VirtualDom::new_with_props(managed_async_submit_validation_probe, probe.clone());
+        dom.rebuild_in_place();
+        let form = probe.handle.borrow().as_ref().unwrap().clone();
+        assert_eq!(probe.validation_calls.get(), 1);
+        if finish_validation_first {
+            probe.validation.complete(Vec::new());
+            dom.render_immediate_to_vec();
+            assert_eq!(probe.submit_calls.get(), 1);
+        }
+        let events_before = probe.events.borrow().clone();
+        form.restore_browser_rejection(
+            SignupForm {
+                email: "response@example.com".into(),
+            },
+            (),
+            |_| {
+                dioform::BrowserRejection::new(SubmitErrors::new([SubmitError::form(
+                    "new rejection",
+                )]))
+            },
+        );
+        assert!(!form.is_submitting());
+        assert_eq!(form.submit_attempt_count(), 1);
+        if finish_validation_first {
+            probe.submit.complete(());
+        } else {
+            probe.validation.complete(vec!["old validation"]);
+        }
+        dom.render_immediate_to_vec();
+        assert_eq!(form.last_submit_status(), Some(SubmitStatus::Rejected));
+        assert_eq!(form.validation_errors().len(), 1);
+        assert_eq!(form.validation_errors()[0].error(), &"new rejection");
+        assert_eq!(probe.submit_calls.get(), u32::from(finish_validation_first));
+        assert_eq!(*probe.events.borrow(), events_before);
+    }
+}
+
 fn managed_async_submit_validation_probe(probe: Rc<ManagedAsyncSubmitValidationProbe>) -> Element {
     let validation = probe.validation.clone();
     let validation_probe = Rc::clone(&probe);

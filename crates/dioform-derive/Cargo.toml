@@ -17,3 +17,6 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["derive"] }
+
+[dev-dependencies]
+dioform-core = { workspace = true }

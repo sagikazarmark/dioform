@@ -305,16 +305,47 @@ impl AdapterRuntime {
         self.spawner.spawn_detached(Box::pin(future));
     }
 
-    pub(super) fn register_parse_binding(&self, field: FieldIdentity) -> ParseBindingId {
-        self.parse.register_parse_binding(field)
+    pub(super) fn register_parse_binding(
+        &self,
+        field: FieldIdentity,
+        parser: Rc<super::adapter_input_state::RestoredTextParser>,
+    ) -> ParseBindingId {
+        self.parse.register_parse_binding(field, parser)
+    }
+
+    pub(super) fn restore_raw_input(&self, raw: BTreeMap<FieldIdentity, String>) {
+        self.parse.restore_raw_input(raw);
+    }
+
+    pub(super) fn retire_restored_raw_input(&self, field: &FieldIdentity) {
+        self.parse.retire_restored_raw_input(field);
+    }
+
+    pub(super) fn observe_raw_input_lifecycle<Model, Error>(
+        &self,
+        core: &mut dioform_core::FormCore<Model, Error>,
+    ) {
+        let parse = Rc::downgrade(&self.parse);
+        core.observe(move |event| {
+            if let Some(parse) = parse.upgrade() {
+                parse.on_core_transition(event);
+            }
+        });
+        let parse = Rc::downgrade(&self.parse);
+        core.register_adapter_input_reset(move |field| {
+            if let Some(parse) = parse.upgrade() {
+                parse.reset_restored_input(field);
+            }
+        });
     }
 
     pub(super) fn re_address_parse_binding(
         &self,
         id: ParseBindingId,
         field: FieldIdentity,
+        parser: Rc<super::adapter_input_state::RestoredTextParser>,
     ) -> Option<FieldIdentity> {
-        self.parse.re_address_parse_binding(id, field)
+        self.parse.re_address_parse_binding(id, field, parser)
     }
 
     pub(super) fn parse_binding_addresses(

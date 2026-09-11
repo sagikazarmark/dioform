@@ -144,9 +144,18 @@ fn assert_has_no_dependencies(crate_name: &str, manifest: &str, dependencies: &[
 
 fn manifest_has_dependency(manifest: &str, dependency: &str) -> bool {
     let dependency_prefix = format!("{dependency} =");
+    let mut is_dev_dependency = false;
 
-    manifest
-        .lines()
-        .map(str::trim_start)
-        .any(|line| line.starts_with(&dependency_prefix))
+    // Executable documentation may use another layer without adding it to the
+    // published library's dependency graph. Keep checking normal/build dependencies.
+    manifest.lines().map(str::trim_start).any(|line| {
+        if line.starts_with('[') {
+            is_dev_dependency = line == "[dev-dependencies]"
+                || line.contains(".dev-dependencies]")
+                || line.contains(".dev-dependencies.")
+                || line.starts_with("[dev-dependencies.");
+        }
+
+        !is_dev_dependency && line.starts_with(&dependency_prefix)
+    })
 }

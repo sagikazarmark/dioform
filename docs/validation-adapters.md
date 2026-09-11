@@ -17,12 +17,19 @@ Choose the derive and rule features your application needs:
 
 ```toml
 [dependencies]
-dioform-core = "0.2"
-dioform-garde = "0.2"
+dioform-core = "0.6"
+dioform-derive = "0.6"
+dioform-garde = "0.6"
 garde = { version = "0.23", default-features = false, features = ["derive", "email"] }
 ```
 
 Use `garde/full` only when your application wants that larger dependency set. The adapter does not require it.
+
+These dependencies support the complete core-only example under
+[String Convenience](#string-convenience). Import `Form` from `dioform-core` for
+the trait and from `dioform-derive` for the macro, and set
+`#[form(crate = "::dioform_core")]` on the model. Without that attribute, the
+derive targets `::dioform`. Dioxus examples additionally need the `dioform` facade.
 
 ## Dioxus Form Configuration
 
@@ -58,8 +65,17 @@ application needs explicit live Form Core mutation.
 Simple forms whose shared validation error type is `String` can register the adapter without writing a mapper closure:
 
 ```rust
-use dioform_core::{FormCore, ValidationTrigger};
+use dioform_core::{Form, FormCore, ValidationTrigger};
+use dioform_derive::Form;
 use dioform_garde::GardeValidationExt;
+
+#[derive(Clone, Default, Form, garde::Validate)]
+#[form(crate = "::dioform_core")]
+struct SignupForm {
+    #[form(name = "contact-email")]
+    #[garde(email)]
+    email: String,
+}
 
 let mut form = FormCore::new(SignupForm::default());
 
@@ -67,9 +83,25 @@ form.garde_validation()
     .triggers(ValidationTrigger::Submit)
     .derived_path_map()
     .register_string_errors();
+
+form.validate_all(ValidationTrigger::Submit);
+
+let errors = form.validation_errors();
+assert_eq!(errors.len(), 1);
+assert_eq!(errors[0].field_identity(), Some(SignupForm::fields().email().identity()));
+assert!(!errors[0].error().is_empty());
 ```
 
-This assumes `SignupForm` derives Dioform's `Form`, which also implements `EnumerableStaticFields`. `register_string_errors` stores `garde::Error::to_string()` as the validation error value. It still uses the derived path map for field or form attachment, but the `String` itself does not preserve the original external path or selected target.
+This complete example is also exercised as a `dioform-garde` crate doctest without
+the facade. Dioform's `Form` derive also implements `EnumerableStaticFields`.
+`register_string_errors` stores `garde::Error::to_string()` as the validation error
+value. The derived path map attaches the diagnostic to the `email` **Field
+Identity**, even though its rendered **Field Name** is `contact-email`. The
+`String` itself does not preserve the original external path or selected target.
+
+For submit-lifecycle trigger choices and conversion of borrowed error views into
+owned, rendered diagnostics, see
+[Validating on the Server with `dioform-core`](../crates/dioform-core/README.md#validating-on-the-server-with-dioform-core).
 
 Use this path for small forms where display text is enough. Use a custom enum or struct for richer applications.
 
