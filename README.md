@@ -103,8 +103,8 @@ or another renderer, depend directly on core and the derive crate:
 
 ```toml
 [dependencies]
-dioform-core = "0.6"
-dioform-derive = "0.6"
+dioform-core = "0.7"
+dioform-derive = "0.7"
 ```
 
 Use the model-level `#[form(crate = "…")]` attribute to select the generated

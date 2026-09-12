@@ -19,4 +19,5 @@ quote = "1"
 syn = { version = "3", features = ["derive"] }
 
 [dev-dependencies]
-dioform-core = { workspace = true }
+# Workspace-only doctests must not create a publication cycle with dioform-core.
+dioform-core = { path = "../dioform-core" }

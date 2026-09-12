@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "dioform"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-core",
  "dioform-derive",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-derive",
  "serde",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-derive"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-core",
  "proc-macro2",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-fullstack"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform",
  "dioxus-core",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-garde"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-core",
  "dioform-derive",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-integration-tests"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform",
  "dioform-garde",
@@ -678,14 +678,14 @@ dependencies = [
 
 [[package]]
 name = "dioform-validation-adapter"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-core",
 ]
 
 [[package]]
 name = "dioform-validator"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dioform-core",
  "dioform-validation-adapter",

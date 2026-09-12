@@ -13,7 +13,7 @@
 //!
 //! # Core-only string errors
 //!
-//! Add `dioform-core`, `dioform-derive`, and `dioform-garde` at version `0.6`, plus
+//! Add `dioform-core`, `dioform-derive`, and `dioform-garde` at version `0.7`, plus
 //! `garde = { version = "0.23", default-features = false, features = ["derive", "email"] }`.
 //! The trait and derive imports occupy separate namespaces. The crate-path attribute
 //! directs the derive to core instead of the default `::dioform` facade path.
