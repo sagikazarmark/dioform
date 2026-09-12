@@ -125,9 +125,179 @@ struct Rows {
     rows: Vec<Model>,
 }
 
+#[test]
+fn collection_insertion_retires_deferred_collection_text() {
+    let form = FormHandle::new(Rows {
+        rows: vec![response()],
+    });
+    form.restore_browser_rejection(form.snapshot(), (), |_| {
+        BrowserRejection::new(SubmitErrors::none())
+            .raw_field(Rows::fields().rows(), "old invalid response")
+    });
+    form.collection(Rows::fields().rows())
+        .append_programmatic(response());
+    let binding = form.parsed_text_with(
+        Rows::fields().rows(),
+        |_| Err::<Vec<Model>, _>("invalid rows"),
+        |rows| rows.len().to_string(),
+    );
+    assert_eq!(binding.value(), "2");
+    assert!(form.parse_errors().is_empty());
+}
+
+#[derive(Clone, Debug, PartialEq, Form)]
+struct NestedRows {
+    child: Rows,
+}
+
+#[test]
+fn collection_mutations_retire_containing_text_and_preserve_unaffected_item_text() {
+    for operation in [
+        "append", "move", "swap", "reorder", "replace", "remove", "clear",
+    ] {
+        let form = FormHandle::new(NestedRows {
+            child: Rows {
+                rows: vec![response(), response()],
+            },
+        });
+        let rows = NestedRows::fields().child().join(Rows::fields().rows());
+        form.restore_browser_rejection(form.snapshot(), (), |targets| {
+            let first = targets
+                .collection_item_field(rows.clone(), 0, Model::fields().count())
+                .unwrap();
+            let second = targets
+                .collection_item_field(rows.clone(), 1, Model::fields().count())
+                .unwrap();
+            BrowserRejection::new(SubmitErrors::none())
+                .raw_field(rows.clone(), "old collection")
+                .raw_field(NestedRows::fields().child(), "old parent")
+                .raw_field_identity(first, "first invalid")
+                .raw_field_identity(second, "second invalid")
+        });
+        let collection = form.collection(rows.clone());
+        let first = collection.items()[0].clone();
+        let second = collection.items()[1].clone();
+        match operation {
+            "append" => {
+                collection.append_programmatic(response());
+            }
+            "move" => {
+                assert!(collection.move_to_index_programmatic(first.identity(), 1));
+            }
+            "swap" => {
+                assert!(collection.swap_programmatic(0, 1));
+            }
+            "reorder" => {
+                assert!(collection.reorder_programmatic(&[second.identity(), first.identity()]));
+            }
+            "replace" => {
+                assert!(collection.replace_programmatic(0, response()));
+            }
+            "remove" => {
+                assert!(collection.remove_programmatic(first.identity()).is_some());
+            }
+            "clear" => {
+                assert!(collection.clear_programmatic());
+            }
+            _ => unreachable!(),
+        }
+        let root = form.parsed_text_with(
+            rows,
+            |_| Err::<Vec<Model>, _>("invalid collection"),
+            |_| "current collection".to_owned(),
+        );
+        let parent = form.parsed_text_with(
+            NestedRows::fields().child(),
+            |_| Err::<Rows, _>("invalid parent"),
+            |_| "current parent".to_owned(),
+        );
+        assert_eq!(root.value(), "current collection", "{operation}");
+        assert_eq!(parent.value(), "current parent", "{operation}");
+        assert!(form.parse_errors().is_empty(), "{operation}");
+        if operation != "clear" {
+            assert_eq!(
+                second.number(Model::fields().count()).value(),
+                "second invalid"
+            );
+            if operation == "replace" {
+                assert_eq!(first.number(Model::fields().count()).value(), "7");
+            } else if operation != "remove" {
+                assert_eq!(
+                    first.number(Model::fields().count()).value(),
+                    "first invalid"
+                );
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Form)]
 struct Nested {
     child: Model,
+}
+
+#[test]
+fn item_field_writes_retire_containing_text_even_during_restored_parsing() {
+    for during_parser in [false, true] {
+        let form = FormHandle::new(Rows {
+            rows: vec![response(), response()],
+        });
+        form.restore_browser_rejection(form.snapshot(), (), |targets| {
+            let second = targets
+                .collection_item_field(Rows::fields().rows(), 1, Model::fields().count())
+                .unwrap();
+            BrowserRejection::new(SubmitErrors::none())
+                .raw_field(Rows::fields().rows(), "old collection")
+                .raw_field_identity(second, "unaffected item")
+        });
+        let collection = form.collection(Rows::fields().rows());
+        let first = collection.items()[0].clone();
+        if !during_parser {
+            first.select(Model::fields().count()).set_value(9);
+        }
+        let binding = form.parsed_text_with(
+            Rows::fields().rows(),
+            move |_| {
+                if during_parser {
+                    first.select(Model::fields().count()).set_value(9);
+                }
+                Err::<Vec<Model>, _>("invalid collection")
+            },
+            |rows| rows[0].count.to_string(),
+        );
+        assert_eq!(binding.value(), "9", "during parser: {during_parser}");
+        assert!(form.parse_errors().is_empty());
+        assert_eq!(
+            collection.items()[1]
+                .number(Model::fields().count())
+                .value(),
+            "unaffected item"
+        );
+    }
+}
+
+#[test]
+fn collection_parser_cannot_reinstall_text_after_reentrant_insertion() {
+    let form = FormHandle::new(Rows {
+        rows: vec![response()],
+    });
+    let writer = form.clone();
+    let binding = form.parsed_text_with(
+        Rows::fields().rows(),
+        move |_| {
+            writer
+                .collection(Rows::fields().rows())
+                .append_programmatic(response());
+            Err::<Vec<Model>, _>("invalid collection")
+        },
+        |rows| rows.len().to_string(),
+    );
+    form.restore_browser_rejection(form.snapshot(), (), |_| {
+        BrowserRejection::new(SubmitErrors::none())
+            .raw_field(Rows::fields().rows(), "old collection")
+    });
+    assert_eq!(binding.value(), "2");
+    assert!(form.parse_errors().is_empty());
 }
 
 #[test]
