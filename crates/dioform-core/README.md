@@ -22,8 +22,8 @@ a renderer other than Dioxus, a validation adapter, or server-side validation.
 
 ```toml
 [dependencies]
-dioform-core = "0.6"
-dioform-derive = "0.6"
+dioform-core = "0.7"
+dioform-derive = "0.7"
 ```
 
 `dioform-core` exports the `Form` trait; `dioform-derive` supplies the derive macro.

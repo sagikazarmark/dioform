@@ -19,8 +19,8 @@ For server validation or another renderer, depend on core and the macros directl
 
 ```toml
 [dependencies]
-dioform-core = "0.6"
-dioform-derive = "0.6"
+dioform-core = "0.7"
+dioform-derive = "0.7"
 ```
 
 ```rust

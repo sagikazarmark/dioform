@@ -18,4 +18,5 @@ serde = ["dep:serde"]
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-dioform-derive = { workspace = true }
+# Workspace-only doctests must not create a publication cycle with dioform-derive.
+dioform-derive = { path = "../dioform-derive" }

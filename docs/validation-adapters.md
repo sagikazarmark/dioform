@@ -17,9 +17,9 @@ Choose the derive and rule features your application needs:
 
 ```toml
 [dependencies]
-dioform-core = "0.6"
-dioform-derive = "0.6"
-dioform-garde = "0.6"
+dioform-core = "0.7"
+dioform-derive = "0.7"
+dioform-garde = "0.7"
 garde = { version = "0.23", default-features = false, features = ["derive", "email"] }
 ```
 

@@ -195,10 +195,22 @@ impl ParseState {
     }
 
     pub(super) fn retire_restored_raw_input(&self, field: &FieldIdentity) {
-        self.retire_pending_restorations(|target| FieldAncestry::relates(target, field));
+        // Raw text describes a value, including a collection's contents. Unlike value-reader
+        // notifications, retirement must cross the collection/item boundary in both directions.
+        let reaches = |target: &FieldIdentity| {
+            FieldAncestry::contains(target, field) || FieldAncestry::contains(field, target)
+        };
+        self.retire_pending_restorations(reaches);
         self.restored
             .borrow_mut()
-            .retain(|target, _| !FieldAncestry::relates(target, field));
+            .retain(|target, _| !reaches(target));
+    }
+
+    fn retire_containing_raw_input(&self, field: &FieldIdentity) {
+        self.retire_pending_restorations(|target| FieldAncestry::contains(target, field));
+        self.restored
+            .borrow_mut()
+            .retain(|target, _| !FieldAncestry::contains(target, field));
     }
 
     /// Retires deferred text on core value transitions, including advanced writes.
@@ -212,12 +224,21 @@ impl ParseState {
                 self.retire_restored_raw_input(&field.identity());
                 self.retire_collection_raw_input(&field.identity());
             }
+            FormObserverEvent::CollectionItemInserted { collection, .. }
+            | FormObserverEvent::CollectionItemMoved { collection, .. }
+            | FormObserverEvent::CollectionItemsSwapped { collection, .. }
+            | FormObserverEvent::CollectionItemsReordered { collection, .. } => {
+                // Structure changes replace containing values, but logical items retain their
+                // own response text when only their position changes.
+                self.retire_containing_raw_input(collection);
+            }
             FormObserverEvent::CollectionItemRemoved {
                 collection, item, ..
             }
             | FormObserverEvent::CollectionItemReplaced {
                 collection, item, ..
             } => {
+                self.retire_containing_raw_input(collection);
                 self.retire_pending_restorations(|field| {
                     CollectionItemFieldAddress::matches_item(field, collection, *item)
                 });
@@ -227,6 +248,7 @@ impl ParseState {
             }
             FormObserverEvent::CollectionCleared { collection, .. }
             | FormObserverEvent::CollectionReplaced { collection, .. } => {
+                self.retire_containing_raw_input(collection);
                 self.retire_collection_raw_input(collection);
             }
             FormObserverEvent::Reset { .. } | FormObserverEvent::Reinitialized { .. } => {
