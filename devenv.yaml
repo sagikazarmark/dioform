@@ -11,6 +11,8 @@ inputs:
     url: github:sagikazarmark/devenv-extras
     overlays:
       - default
+  nixpkgs-multiverse:
+    url: github:fzakaria/nixpkgs-multiverse
   dagger:
     url: github:dagger/nix
     overlays:

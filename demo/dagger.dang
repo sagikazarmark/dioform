@@ -41,7 +41,7 @@ type Demo {
   """
   Build the demo application.
   """
-  build: Directory! @check {
+  build: Directory! {
     self
       .dioxus
       .bundle(
@@ -50,6 +50,12 @@ type Demo {
         debugSymbols: false,
         clientArgs: ["--features", "fullstack-web"],
       )
+  }
+
+  buildCheck: Void @check {
+    self.build.sync
+
+    null
   }
 
   """
@@ -65,11 +71,17 @@ type Demo {
   """
   Run end-to-end tests.
   """
-  test: Directory! @check {
+  test: Directory! {
     self
       .playwright(self.testService)
       .withExec(["npm", "exec", "--", "playwright", "test", "--config", "playwright.config.ts"])
       .directory("build/playwright")
+  }
+
+  testCheck: Void @check {
+    self.test.sync
+
+    null
   }
 
   """
@@ -152,7 +164,7 @@ type Demo {
   """
   Build the Cloudflare Worker bundle.
   """
-  workerBundle: Directory! @check {
+  workerBundle: Directory! {
     let client = self
       .dioxus
       .bundle(
@@ -172,12 +184,9 @@ type Demo {
       .withDirectory("dist/worker", server)
   }
 
-  """
-  Cloudflare Worker bundle as a container.
+  workerBundleCheck: Void @check {
+    self.workerBundle.sync
 
-  This is a workaround until module wiring supports Directory.
-  """
-  workerBundleAsContainer: Container! {
-    Dagger.container.withDirectory("", self.workerBundle)
+    null
   }
 }
