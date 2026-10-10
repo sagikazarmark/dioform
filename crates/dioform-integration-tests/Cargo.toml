@@ -10,6 +10,6 @@ license.workspace = true
 dioform = { workspace = true, features = ["dioxus-field"] }
 dioform-garde = { path = "../dioform-garde" }
 dioxus-field = { workspace = true }
-dioxus = { version = "=0.7.10", default-features = false, features = ["minimal"] }
-dioxus-ssr = "=0.7.10"
+dioxus = { version = "0.7.10", default-features = false, features = ["minimal"] }
+dioxus-ssr = "0.7.10"
 garde = { version = "0.23", default-features = false }
