@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "dioform"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dioform-core",
  "dioform-derive",
@@ -766,11 +766,11 @@ dependencies = [
 
 [[package]]
 name = "dioform-core"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "dioform-derive"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-fullstack"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dioform",
  "dioxus-core",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-garde"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dioform-core",
  "dioform-validation-adapter",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "dioform-validation-adapter"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dioform-core",
 ]
@@ -1014,9 +1014,9 @@ dependencies = [
 
 [[package]]
 name = "dioxus-field"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad9469fcc2a21612f5dca5fe2120108b2ebebf5b334495ec4a9f4c6d99828968"
+checksum = "dd5260b30c6186f46fb499a639a31ac1fa70405327e1a3e49f4526033d40d587"
 dependencies = [
  "dioxus",
  "dioxus-core",
